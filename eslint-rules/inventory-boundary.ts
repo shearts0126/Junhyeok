@@ -24,7 +24,8 @@ import type { Linter } from 'eslint';
  * ├────────────────────────────────────────────┼──────┤
  * │ src/modules/inventory/infrastructure/**    │ ✅   │
  * │ Prisma 생성 코드 (src/generated/**)        │ ✅   │
- * │ 마이그레이션·전환 스크립트 (prisma/, scripts/) │ ✅   │
+ * │ 루트 prisma/** (마이그레이션·시드)          │ ✅   │
+ * │ 루트 scripts/{migration,data-migration,seed}/** │ ✅ │
  * │ 전용 테스트 fixture                        │ ✅   │
  * ├────────────────────────────────────────────┼──────┤
  * │ src/modules/inventory/domain/**            │ ❌   │
@@ -79,13 +80,43 @@ const TABLE_NAME_GROUPS = [
   '**/inventory_balance.*',
 ];
 
-/** 원장·잔고에 직접 접근할 수 있는 위치. */
+/**
+ * 원장·잔고에 직접 접근할 수 있는 위치.
+ *
+ * ⚠️ **저장소 루트 기준 경로만 쓴다.** 접미 glob(앞에 와일드카드를 둔 형태)을 쓰면
+ *    `src/modules/orders/prisma/` 같은 폴더를 만들어 경계를 우회할 수 있다.
+ *    아래 경로는 모두 루트에 고정되어 있어 중첩된 가짜 폴더가 매칭되지 않는다.
+ *
+ * `scripts/` 는 아직 저장소에 없다. 전환·시드 스크립트가 생길 위치를 미리
+ * 열어 둔 것이며, 폴더를 만들지는 않았다. 다른 경로가 필요해지면 여기에
+ * **명시적으로** 추가한다.
+ */
 export const INVENTORY_MODEL_ALLOWED_GLOBS = [
   // 재고 모듈의 영속성 계층 — 유일한 정상 접근 지점
+  'src/modules/inventory/infrastructure/**',
+  // 마이그레이션·시드 (루트 prisma 디렉터리)
+  'prisma/**',
+  // 전환·백필 스크립트 (루트 scripts 하위의 승인된 경로만)
+  'scripts/migration/**',
+  'scripts/data-migration/**',
+  'scripts/seed/**',
+];
+
+/**
+ * inventory infrastructure 모듈 경로.
+ *
+ * 재고 모델 이름이 import 문에 나타나지 않더라도, 다른 모듈이 infrastructure 를
+ * 직접 참조하면 application 공개 인터페이스 원칙이 무너진다.
+ * (`import { repository } from '@/modules/inventory/infrastructure/repository'`)
+ *
+ * 허용 위치에서는 규칙 자체가 off 이므로 infrastructure 내부의 상호 참조는
+ * 영향받지 않는다.
+ */
+const INVENTORY_INFRASTRUCTURE_GROUPS = [
+  '**/modules/inventory/infrastructure',
   '**/modules/inventory/infrastructure/**',
-  // 마이그레이션·시드·전환 스크립트
-  '**/prisma/**',
-  '**/scripts/**',
+  '**/inventory/infrastructure',
+  '**/inventory/infrastructure/**',
 ];
 
 const GUIDANCE =
@@ -94,6 +125,12 @@ const GUIDANCE =
   'InventoryPostingService 를 통과해야 합니다. ' +
   '재고 조회·명령은 inventory 모듈 application 계층의 공개 인터페이스를 사용하세요. ' +
   'Prisma 모델 직접 접근은 src/modules/inventory/infrastructure/** 에서만 허용됩니다.';
+
+const INFRASTRUCTURE_GUIDANCE =
+  'inventory infrastructure 를 다른 위치에서 직접 참조하지 마세요. ' +
+  '영속성 계층을 직접 가져오면 재고 모델 이름이 import 문에 없더라도 ' +
+  'InventoryLedgerEntry·InventoryBalance 에 도달할 수 있습니다. ' +
+  '재고 조회·명령은 inventory 모듈 application 계층의 공개 인터페이스를 사용하세요.';
 
 const DYNAMIC_GUIDANCE =
   'Prisma 생성 코드를 동적 import 하지 마세요. 동적 import 는 import 이름을 정적으로 ' +
@@ -130,6 +167,10 @@ export const inventoryBoundaryConfigs: Linter.Config[] = [
               group: TABLE_NAME_GROUPS,
               message: GUIDANCE,
             },
+            {
+              group: INVENTORY_INFRASTRUCTURE_GROUPS,
+              message: INFRASTRUCTURE_GUIDANCE,
+            },
           ],
         },
       ],
@@ -147,6 +188,10 @@ export const inventoryBoundaryConfigs: Linter.Config[] = [
           message: DYNAMIC_GUIDANCE,
         },
         {
+          selector: 'ImportExpression[source.value=/inventory\\u002Finfrastructure/]',
+          message: DYNAMIC_GUIDANCE,
+        },
+        {
           selector:
             "CallExpression[callee.name='require'][arguments.0.value=/generated\\u002Fprisma/]",
           message: REQUIRE_GUIDANCE,
@@ -154,6 +199,11 @@ export const inventoryBoundaryConfigs: Linter.Config[] = [
         {
           selector:
             "CallExpression[callee.name='require'][arguments.0.value=/inventory_(ledger_entry|balance)/]",
+          message: REQUIRE_GUIDANCE,
+        },
+        {
+          selector:
+            "CallExpression[callee.name='require'][arguments.0.value=/inventory\\u002Finfrastructure/]",
           message: REQUIRE_GUIDANCE,
         },
       ],

@@ -224,12 +224,30 @@ src/modules/<module>/
 |---|:-:|
 | `src/modules/inventory/infrastructure/**` | ✅ |
 | Prisma 생성 코드 (`src/generated/**`) | ✅ |
-| 마이그레이션·전환 스크립트 (`prisma/**`, `scripts/**`) | ✅ |
+| `prisma/**` (루트) | ✅ |
+| `scripts/migration/**`, `scripts/data-migration/**`, `scripts/seed/**` (루트) | ✅ |
 | 전용 테스트 fixture | ✅ |
 | `src/modules/inventory/domain/**` | ❌ |
 | `src/modules/inventory/application/**` | ❌ |
 | `src/modules/inventory/presentation/**` | ❌ |
 | 그 외 모든 모듈 | ❌ |
+
+**허용 경로는 모두 저장소 루트 기준입니다.** 앞에 와일드카드를 둔 접미 glob 을 쓰면
+`src/modules/orders/scripts/` 같은 폴더를 만들어 경계를 우회할 수 있습니다.
+
+```
+✅ prisma/seed.ts                                  루트
+✅ scripts/data-migration/backfill.ts              루트, 승인된 하위 경로
+❌ src/modules/orders/scripts/backfill.ts          중첩된 가짜 scripts
+❌ src/modules/orders/prisma/seed.ts               중첩된 가짜 prisma
+❌ src/modules/inventory/application/scripts/x.ts
+❌ src/shared/prisma/helper.ts
+❌ scripts/adhoc/backfill.ts                       승인되지 않은 하위 경로
+```
+
+> `scripts/` 는 아직 저장소에 없습니다. 전환·시드 스크립트가 생길 위치를 미리 열어 둔 것이며,
+> 폴더를 만들지는 않았습니다. 다른 경로가 필요해지면 `INVENTORY_MODEL_ALLOWED_GLOBS` 에
+> **명시적으로** 추가합니다.
 
 같은 inventory 모듈 안이어도 infrastructure 밖에서는 막습니다. 영속성 세부사항이 도메인 규칙으로
 새어 들어오면 계층 분리가 이름만 남습니다. 다른 업무 모듈은 inventory **application 계층의 공개
@@ -252,9 +270,19 @@ require('@/generated/prisma/client');
 import { Prisma, type PrismaClient } from '@/generated/prisma/client';
 import { Sku } from '@/generated/prisma/client';
 
+// ❌ 차단 — 재고 모델 이름이 없어도 infrastructure 직접 참조는 막힙니다
+import { repository } from '@/modules/inventory/infrastructure/repository';
+import { repository } from '../../inventory/infrastructure/repository';
+export * from '@/modules/inventory/infrastructure/repository';
+
 // ✅ 허용 — 다른 모듈은 application 공개 인터페이스로
 import { getAvailableStock } from '@/modules/inventory/application';
 ```
+
+**재고 모델 이름이 import 문에 나타나지 않아도** 다른 위치에서 inventory infrastructure 를 직접
+참조하면 차단됩니다. 영속성 계층을 직접 가져오면 결국 원장·잔고에 도달할 수 있고, application
+공개 인터페이스 원칙이 무너집니다. infrastructure 내부의 상호 참조는 그 위치에서 규칙이 off 이므로
+영향받지 않습니다.
 
 `namespace import` 를 막는 이유: 이후 속성 접근(`PrismaModels.InventoryBalance`)으로 이름 차단을
 그대로 우회할 수 있습니다. 동적 import 는 import 이름을 정적으로 확인할 수 없어 경로 전체를
