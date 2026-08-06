@@ -1,0 +1,7 @@
+# Vitest 가 의존하는 esbuild 는 네이티브 바이너리 준비를 위해 postinstall 이 필요하다.
+onlyBuiltDependencies:
+  - esbuild
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver
