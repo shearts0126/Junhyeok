@@ -101,6 +101,90 @@ describe('★ 라우트 활성화 조건', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// 비활성 404 도 공통 오류 응답 규약을 따른다
+//
+// 비활성 경로가 withErrorHandling 을 우회하면 이 라우트에서만
+// requestId·x-request-id 헤더가 빠진다. 두 비활성 조합 모두 검증한다.
+// ═══════════════════════════════════════════════════════════════
+describe('★ 비활성 404 의 공통 오류 응답 규약', () => {
+  const DISABLED_CASES: ReadonlyArray<[string, () => void]> = [
+    [
+      'NODE_ENV=production + ENABLE_ERROR_PREVIEW=true',
+      () => {
+        setNodeEnv('production');
+        vi.stubEnv('ENABLE_ERROR_PREVIEW', 'true');
+      },
+    ],
+    [
+      'NODE_ENV=development + ENABLE_ERROR_PREVIEW 미설정',
+      () => {
+        setNodeEnv('development');
+        vi.stubEnv('ENABLE_ERROR_PREVIEW', '');
+      },
+    ],
+  ];
+
+  it.each(DISABLED_CASES)(
+    '%s → 404 · JSON · requestId · 헤더 · no-store',
+    async (_label, setup) => {
+      setup();
+      const response = await GET(request('domain'));
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get('content-type')).toContain('application/json');
+      expect(response.headers.get('Cache-Control')).toBe('no-store');
+
+      const body = await response.json();
+      expect(body.errorCode).toBe('NOT_FOUND');
+      expect(body.requestId).toMatch(UUID_PATTERN);
+      expect(response.headers.get(REQUEST_ID_HEADER)).toBe(body.requestId);
+    },
+  );
+
+  it.each(DISABLED_CASES)(
+    '%s → 외부 x-request-id 와 서버 requestId 가 다르다',
+    async (_label, setup) => {
+      setup();
+      const response = await GET(request('domain', { [REQUEST_ID_HEADER]: 'external-404-trace' }));
+      const body = await response.json();
+
+      expect(body.requestId).not.toBe('external-404-trace');
+      expect(body.requestId).toMatch(UUID_PATTERN);
+      expect(JSON.stringify(body)).not.toContain('external-404-trace');
+      expect(response.headers.get(REQUEST_ID_HEADER)).toBe(body.requestId);
+    },
+  );
+
+  it.each(DISABLED_CASES)(
+    '%s → 외부 값은 로그의 correlationId 에만 남는다',
+    async (_label, setup) => {
+      setup();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+      const response = await GET(request('domain', { [REQUEST_ID_HEADER]: 'external-404-trace' }));
+      const body = await response.json();
+      const entry = JSON.parse(warn.mock.calls[0]?.[0] as string);
+
+      expect(entry.correlationId).toBe('external-404-trace');
+      expect(entry.requestId).toBe(body.requestId);
+      expect(entry.errorCode).toBe('NOT_FOUND');
+      expect(entry.route).toBe('/api/dev/error-preview');
+    },
+  );
+
+  it('★ 운영환경 404 응답에는 비활성 사유가 노출되지 않는다', async () => {
+    setNodeEnv('production');
+    vi.stubEnv('ENABLE_ERROR_PREVIEW', 'true');
+    const raw = JSON.stringify(await (await GET(request('domain'))).json());
+
+    expect(raw).not.toContain('reason');
+    expect(raw).not.toContain('NODE_ENV');
+    expect(raw).not.toContain('ENABLE_ERROR_PREVIEW');
+    expect(raw).not.toContain('비활성화');
+  });
+});
+
 describe('오류 응답 — 공통 포맷', () => {
   beforeEach(enablePreview);
 

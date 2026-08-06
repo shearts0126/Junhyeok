@@ -84,16 +84,24 @@ function buildError(kind: string | null): unknown {
 }
 
 export async function GET(request: Request): Promise<NextResponse> {
-  if (!isPreviewEnabled()) {
-    return NextResponse.json(
-      { errorCode: ERROR_CODES.NOT_FOUND, message: '요청한 대상을 찾을 수 없습니다.' },
-      { status: 404, headers: { 'Cache-Control': 'no-store' } },
-    );
-  }
-
   return withErrorHandling(
     request,
     async () => {
+      // 비활성 상태의 404 도 공통 오류 응답 규약을 따른다.
+      // 직접 NextResponse.json 을 만들면 requestId·x-request-id 헤더가 빠져
+      // "모든 공통 오류 응답에 request ID 포함" 조건이 이 경로에서만 깨진다.
+      if (!isPreviewEnabled()) {
+        throw new DomainError(ERROR_CODES.NOT_FOUND, {
+          message: '오류 미리보기 라우트가 비활성화되어 있습니다.',
+          context: {
+            reason:
+              process.env['NODE_ENV'] === 'production'
+                ? 'NODE_ENV=production'
+                : 'ENABLE_ERROR_PREVIEW!=true',
+          },
+        });
+      }
+
       const kind = new URL(request.url).searchParams.get('kind');
       throw buildError(kind);
     },
