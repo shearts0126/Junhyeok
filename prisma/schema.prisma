@@ -27,3 +27,81 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 인증·권한 (T0-6)
+//
+// 설계 문서 docs/03_ERD와_Prisma스키마_v0.2.md §인증·권한
+//
+// ⚠️ Supabase 가 관리하는 `auth.users` 테이블을 모델링하거나 relation 으로
+//    연결하지 않는다. 그 테이블은 Supabase 의 소유이고 스키마가 바뀔 수 있다.
+//    로컬 `user` 는 인증 사용자의 **미러**이자 SCM 권한 상태의 기준이며,
+//    `id` 만 `auth.users.id` 와 같은 UUID 를 공유한다.
+// ═══════════════════════════════════════════════════════════════
+
+/// SCM 시스템 사용자. Supabase 인증 사용자의 미러.
+/// 인증 성공만으로 자동 생성되지 않는다 — 승인된 사용자만 이 표에 들어온다.
+model User {
+  /// Supabase auth.users.id 와 동일한 UUID. 자동 생성하지 않는다.
+  id        String     @id @db.Uuid
+  email     String     @unique
+  name      String
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @db.Timestamptz
+  updatedAt DateTime   @updatedAt @db.Timestamptz
+  userRoles UserRole[]
+
+  @@map("user")
+}
+
+/// 역할. ADMIN / SCM_LEADER / SCM_STAFF / FINANCE / EXECUTIVE
+model Role {
+  id       String @id @default(uuid()) @db.Uuid
+  roleCode String @unique
+  roleName String
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("role")
+}
+
+/// 권한. "role.read", "sku.approve" 같은 점 표기 키.
+model Permission {
+  id            String  @id @default(uuid()) @db.Uuid
+  permissionKey String  @unique
+  description   String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permission")
+}
+
+/// 역할 ↔ 권한. ADMIN 도 여기에 행이 있어야 권한을 갖는다(코드상 예외 없음).
+model RolePermission {
+  roleId       String @db.Uuid
+  permissionId String @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+/// 사용자 ↔ 역할.
+model UserRole {
+  userId    String   @db.Uuid
+  roleId    String   @db.Uuid
+  grantedAt DateTime @default(now()) @db.Timestamptz
+  /// 부여한 사용자. 시스템 시드는 NULL.
+  grantedBy String?  @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_role")
+}

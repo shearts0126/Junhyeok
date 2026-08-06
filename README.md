@@ -2,8 +2,8 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-5` — 모듈 경계 lint 강제**
-> 인증과 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(테이블)도 아직 없습니다.
+> **현재 단계: `R1a-0 / T0-6` — 인증·권한**
+> 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(SKU·재고 등)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
 ---
@@ -22,7 +22,7 @@
 | 모듈 경계 | 재고 원장·잔고 직접 import 차단 (ESLint) | T0-5 ✅ |
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
 | 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
-| 인증 | Supabase Auth | T0-6 |
+| 인증·권한 | Supabase Auth + 2겹 권한 가드 | T0-6 ✅ |
 | 파일 저장 | Supabase Storage | T4-2 (R1a-4) |
 | 잡 큐 | pg-boss + 전용 워커 | T4-1 (R1a-4) |
 | 배포 | Vercel | — |
@@ -139,6 +139,7 @@ curl -s http://localhost:3000/api/health | jq
 | `pnpm prisma:migrate` | 개발용 마이그레이션 생성·적용 (`prisma migrate dev`) |
 | `pnpm prisma:deploy` | 운영용 마이그레이션 적용 (`prisma migrate deploy`) |
 | `pnpm prisma:studio` | Prisma Studio |
+| `pnpm db:seed` | 역할·권한 시드 (재실행 안전) |
 
 > `typecheck` 가 `next typegen` 을 선행하는 이유: Next.js 16은 `LayoutProps` / `PageProps` 등
 > 라우트 타입을 `.next/types` 에 생성합니다. `tsc` 단독 실행 시 이 타입을 찾지 못합니다.
@@ -646,6 +647,130 @@ toDecimalString(decimal);
 규칙 자체의 테스트는 [`tests/eslint-rules/no-decimal-to-number.test.ts`](tests/eslint-rules/no-decimal-to-number.test.ts)
 에 있습니다. 위반 예제 파일(`eslint-rules/__fixtures__/`)은 전체 lint 를 상시 실패시키지 않도록
 `globalIgnores` 에서 제외하고, 테스트가 ESLint API 로 직접 검사합니다.
+
+---
+
+## 인증과 권한
+
+Supabase Auth 로 인증하고, 권한은 **로컬 DB** 를 기준으로 판정합니다.
+
+### 모델
+
+| 테이블 | 내용 |
+|---|---|
+| `user` | SCM 사용자. `id` 는 Supabase `auth.users.id` 와 같은 UUID |
+| `role` | `ADMIN` / `SCM_LEADER` / `SCM_STAFF` / `FINANCE` / `EXECUTIVE` |
+| `permission` | `role.read` 같은 점 표기 권한 키 |
+| `role_permission` | 역할 ↔ 권한 (복합 PK) |
+| `user_role` | 사용자 ↔ 역할 (복합 PK, `grantedAt`·`grantedBy`) |
+
+> ⚠️ Supabase 가 관리하는 `auth.users` 를 **모델링하거나 relation 으로 연결하지 않습니다.**
+> 그 테이블은 Supabase 소유이고 스키마가 바뀔 수 있습니다. 로컬 `user` 는 인증 사용자의
+> **미러**이자 SCM 권한 상태의 기준이며, `id` 만 공유합니다.
+
+### 인증 성공 ≠ 사용 승인
+
+| 상황 | 응답 |
+|---|---|
+| 세션 없음 · 토큰 무효 | `UNAUTHORIZED` **401** |
+| 인증됐지만 로컬 `user` 행 없음 | `FORBIDDEN` **403** |
+| 인증됐지만 `active = false` | `FORBIDDEN` **403** |
+| 역할 없음 | `/api/me` 접근 가능, `permissions` 빈 배열 |
+| 권한 없음 | `FORBIDDEN` **403** |
+
+**인증 성공만으로 로컬 `user` 를 자동 생성하지 않습니다.** 그런 경로를 만들면 승인되지 않은
+Supabase 계정이 SCM 시스템 사용자가 됩니다. 사용자 생성·초대·비밀번호 초기화 API 는 T0-6 범위
+밖입니다.
+
+### 쿠키의 세션 객체를 신뢰하지 않습니다
+
+`auth.getSession()` 은 **쿠키에 담긴 세션 객체를 그대로** 돌려줍니다. 쿠키는 클라이언트가 보내는
+값이라 위조될 수 있고 서버가 서명을 확인하지 않습니다. 그 안의 `user.id` 로 권한을 판정하면 누구든
+아무 사용자로 행세할 수 있습니다.
+
+| 용도 | 사용 |
+|---|---|
+| 인증 검증 | `auth.getClaims()` — JWT 서명 검증 |
+| 최신 사용자 레코드가 꼭 필요할 때 | `auth.getUser()` — Supabase 왕복 |
+| 권한 판정 | ❌ `auth.getSession()` 금지 |
+
+소스 전체에 `getSession(` 이 없는지 테스트로 고정했습니다.
+
+### Supabase 클라이언트
+
+쿠키 접근 방식이 달라 셋으로 나눕니다 (`@supabase/ssr`).
+
+| 파일 | 용도 |
+|---|---|
+| `src/shared/supabase/browser.ts` | 클라이언트 컴포넌트 |
+| `src/shared/supabase/server.ts` | 서버 컴포넌트·Route Handler |
+| `src/shared/supabase/proxy.ts` | Proxy 의 세션 갱신 |
+
+**환경변수는 두 개뿐입니다.** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.
+T0-6 은 Admin API 를 쓰지 않으므로 secret / service-role 키가 필요 없습니다.
+`NEXT_PUBLIC_` 접두사가 붙은 값은 클라이언트 번들에 포함되므로 secret 키에는 절대 붙이지 마세요.
+
+### ActorContext
+
+```ts
+type ActorContext = {
+  userId: string;
+  email: string;
+  name: string;
+  roles: readonly string[];        // 중복 제거·사전순 정렬
+  permissions: readonly string[];  // 중복 제거·사전순 정렬
+  requestId: string;
+  sessionId?: string;
+  ipAddress?: string;
+};
+```
+
+**요청 본문이나 헤더에서 actor 정보를 받지 않습니다.** 검증된 Supabase 클레임과 DB 조회 결과로만
+만듭니다. `resolveActor` 의 요청 인자는 `requestId` 와 `ipAddress` 뿐이라 위조 필드가 들어갈 자리가
+없습니다. 비활성 사용자로는 `ActorContext` 자체를 만들 수 없습니다.
+
+### 2겹 권한 가드
+
+**1차 — `src/proxy.ts`**
+
+> ⚠️ Next.js 16 에서 요청 가로채기는 `middleware.ts` 가 아니라 **`proxy.ts`** 이고 함수명도
+> `proxy` 입니다. `middleware.ts` 를 만들지 마세요.
+
+- 공개 경로(`/api/health`, `/api/auth/login`, `/api/auth/logout`, `/login`, `/`)는 통과
+- **표에 없는 경로는 기본이 보호** — 새 라우트를 깜빡해도 열리는 게 아니라 닫힙니다
+- route policy 에 권한이 명시된 경로는 그 권한까지 확인
+- 실패 시 공통 형식의 JSON 401 / 403
+
+**2차 — Application Service**
+
+```ts
+export async function listRoles(actor: ActorContext, deps = {}) {
+  assertPermission(actor, 'role.read');   // ★ Proxy 통과를 신뢰하지 않는다
+  ...
+}
+```
+
+Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 액션·내부 호출·배치는 Proxy 를 거치지
+않습니다. **Proxy 를 우회해 서비스를 직접 호출해도 403 이 납니다** — 테스트로 고정했습니다.
+
+**ADMIN 예외가 없습니다.** ADMIN 도 `role_permission` 데이터로 권한을 취득합니다. 코드에 역할
+이름을 넣는 순간 권한 표가 실제 접근 권한을 설명하지 못하게 되고, 감사에서 근거를 댈 수 없습니다.
+
+### API
+
+| 엔드포인트 | 권한 |
+|---|---|
+| `POST /api/auth/login` | 공개 |
+| `POST /api/auth/logout` | 공개 (멱등) |
+| `GET /api/me` | 인증 |
+| `GET /api/roles` | `role.read` |
+
+```bash
+pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
+```
+
+시드는 T0-6 이 실제로 쓰는 최소 권한만 등록합니다. SKU·BOM·재고 권한을 미리 넣지 않습니다 —
+쓰이지 않는 권한 행은 "누가 무엇을 할 수 있는가"를 흐리게 만듭니다.
 
 ---
 
