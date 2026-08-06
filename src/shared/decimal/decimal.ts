@@ -1,6 +1,12 @@
 import type { Prisma } from '@/generated/prisma/client';
 
-import { ScmDecimal } from './context';
+import {
+  DECIMAL_MAX_FRACTION_DIGITS,
+  DECIMAL_MAX_INTEGER_DIGITS,
+  DECIMAL_MAX_SIGNIFICANT_DIGITS,
+  DECIMAL_MAX_STRING_LENGTH,
+  ScmDecimal,
+} from './context';
 
 /**
  * Decimal 안전 유틸.
@@ -247,6 +253,64 @@ export function roundToScale(value: DecimalInput, scale: number, rounding: Round
 }
 
 /**
+ * 값의 표현 규모. 문자열을 **만들기 전에** 계산한다.
+ *
+ * decimal.js 는 값을 (유효숫자 배열, 지수)로 들고 있으므로 `1e1000000000` 도
+ * 생성 자체는 싸다. 비싼 것은 `toFixed()` 로 펼치는 순간이다.
+ * 그래서 펼치기 전에 여기서 규모를 본다.
+ */
+function measure(value: Decimal): {
+  significantDigits: number;
+  integerDigits: number;
+  fractionDigits: number;
+  stringLength: number;
+} {
+  const fractionDigits = value.decimalPlaces();
+  // exponent + 1 이 정수부 자릿수다. |x| < 1 이면 정수부는 '0' 한 자리.
+  const integerDigits = value.e >= 0 ? value.e + 1 : 1;
+  const sign = value.isNegative() ? 1 : 0;
+  const point = fractionDigits > 0 ? 1 : 0;
+
+  return {
+    significantDigits: value.precision(),
+    integerDigits,
+    fractionDigits,
+    stringLength: sign + integerDigits + point + fractionDigits,
+  };
+}
+
+/**
+ * 일반 표기로 안전하게 펼칠 수 있는 값인지 검사한다.
+ *
+ * @throws {RangeError} 한도를 넘는 경우. **거대한 문자열을 만들지 않는다.**
+ */
+function assertRepresentable(value: Decimal): void {
+  const scale = measure(value);
+
+  const violations: string[] = [];
+  if (scale.significantDigits > DECIMAL_MAX_SIGNIFICANT_DIGITS) {
+    violations.push(`유효자릿수 ${scale.significantDigits} > ${DECIMAL_MAX_SIGNIFICANT_DIGITS}`);
+  }
+  if (scale.integerDigits > DECIMAL_MAX_INTEGER_DIGITS) {
+    violations.push(`정수부 ${scale.integerDigits}자리 > ${DECIMAL_MAX_INTEGER_DIGITS}`);
+  }
+  if (scale.fractionDigits > DECIMAL_MAX_FRACTION_DIGITS) {
+    violations.push(`소수부 ${scale.fractionDigits}자리 > ${DECIMAL_MAX_FRACTION_DIGITS}`);
+  }
+  if (scale.stringLength > DECIMAL_MAX_STRING_LENGTH) {
+    violations.push(`문자열 길이 ${scale.stringLength} > ${DECIMAL_MAX_STRING_LENGTH}`);
+  }
+
+  if (violations.length > 0) {
+    // ⚠️ 값 자체를 메시지에 넣지 않는다. 펼치는 순간이 바로 막으려던 그 비용이다.
+    throw new RangeError(
+      `일반 표기로 직렬화할 수 없는 규모입니다 (${violations.join(', ')}). ` +
+        `수량·금액의 정상 범위를 벗어났습니다.`,
+    );
+  }
+}
+
+/**
  * 문자열로 직렬화한다. **API·로그·파일 출력 경계에서 쓴다.**
  *
  * ⚠️ `Decimal.toString()` 을 쓰지 않는 이유: 지수가 크거나 작으면
@@ -262,15 +326,27 @@ export function roundToScale(value: DecimalInput, scale: number, rounding: Round
  * AS-IS 엑셀에서 바코드가 지수표기로 깨진 것과 같은 종류의 사고다.
  * `toFixed()` 는 항상 일반 표기를 낸다.
  *
+ * ⚠️ **펼치기 전에 규모를 검사한다.** `1e1000000000` 같은 값을 그대로 `toFixed()`
+ *    하면 10억 자리 문자열을 만들려다 메모리를 소진한다. 한도를 넘으면 문자열을
+ *    만들지 않고 `RangeError` 를 던진다 (`context.ts` 의 `DECIMAL_MAX_*`).
+ *
  * @param scale 지정하면 그 자릿수로 반올림해 고정 소수점으로 낸다.
  *              미지정 시 값이 가진 자릿수를 그대로 유지한다.
+ * @throws {RangeError} scale 이 잘못됐거나, 값이 표현 한도를 넘는 경우
  */
 export function toDecimalString(value: DecimalInput, scale?: number): string {
   const decimal = toDecimal(value);
-  if (scale === undefined) return decimal.toFixed();
+
+  if (scale === undefined) {
+    assertRepresentable(decimal);
+    return decimal.toFixed();
+  }
 
   if (!Number.isInteger(scale) || scale < 0) {
     throw new RangeError(`scale 은 0 이상의 정수여야 합니다: ${String(scale)}`);
   }
+  // scale 을 지정해도 정수부는 그대로 펼쳐지므로 검사가 필요하다.
+  // 반올림 후를 기준으로 본다.
+  assertRepresentable(decimal.toDecimalPlaces(scale, ROUNDING.HALF_UP));
   return decimal.toFixed(scale);
 }

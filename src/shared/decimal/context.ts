@@ -50,15 +50,41 @@ export const DECIMAL_PRECISION = 60;
 export const DECIMAL_ROUNDING = 4;
 
 /**
- * 지수표기 임계값.
+ * 지수표기 임계값 — decimal.js 기본값을 **명시적으로** 고정한다.
  *
- * decimal.js 기본값(`-7` / `21`)에서는 `toString()` 이 `1e+25`, `1e-7` 같은
- * 지수표기를 낸다. AS-IS 엑셀에서 바코드가 깨진 것과 같은 사고의 원인이다.
- * 임계값을 극단으로 밀어 **지수표기가 나오지 않게** 고정한다.
- * (decimal.js 허용 범위: `toExpNeg` -9e15~0, `toExpPos` 0~9e15)
+ * ⚠️ 임계값을 극단으로 밀어 "지수표기가 절대 안 나오게" 만들지 않는다.
+ *    그렇게 하면 `new Decimal('1e1000000000').toString()` 이 10억 자리 문자열을
+ *    만들려다 메모리를 소진한다. 거대한 지수 입력이 방어 없이 확장되는 셈이다.
+ *
+ * 지수표기 없는 **업무 출력은 `toDecimalString()` 이 보장한다.** 그 함수는
+ * 문자열을 만들기 전에 표현 가능 범위를 검사하고, 범위를 넘으면 거대한 문자열을
+ * 만드는 대신 `RangeError` 를 던진다.
+ *
+ * 따라서 `toString()` 은 범위 밖에서 지수표기를 쓸 수 있다. 출력 경계에서는
+ * 항상 `toDecimalString()` 을 쓴다.
  */
-export const DECIMAL_TO_EXP_NEG = -9e15;
-export const DECIMAL_TO_EXP_POS = 9e15;
+export const DECIMAL_TO_EXP_NEG = -7;
+export const DECIMAL_TO_EXP_POS = 21;
+
+/**
+ * `toDecimalString()` 이 허용하는 표현 범위.
+ *
+ * DB 수량 `DECIMAL(18,6)`·금액 `DECIMAL(18,4)` 과 유효자릿수 60 의 중간 계산
+ * 결과를 모두 수용하면서, 비정상적인 거대 지수 입력은 조기에 거부한다.
+ *
+ * ┌────────────────────┬─────┬──────────────────────────────────────┐
+ * │ 한도               │ 값  │ 근거                                 │
+ * ├────────────────────┼─────┼──────────────────────────────────────┤
+ * │ 최대 유효자릿수    │ 60  │ DECIMAL_PRECISION 과 동일            │
+ * │ 최대 정수부 자릿수 │ 60  │ 3항 연쇄 결과(≈36)의 여유 포함       │
+ * │ 최대 소수부 자릿수 │ 60  │ 나눗셈 중간 결과(최대 60자리) 수용   │
+ * │ 최대 문자열 길이   │ 128 │ 부호 1 + 정수 60 + '.' + 소수 60 = 122│
+ * └────────────────────┴─────┴──────────────────────────────────────┘
+ */
+export const DECIMAL_MAX_SIGNIFICANT_DIGITS = 60;
+export const DECIMAL_MAX_INTEGER_DIGITS = 60;
+export const DECIMAL_MAX_FRACTION_DIGITS = 60;
+export const DECIMAL_MAX_STRING_LENGTH = 128;
 
 /** 나머지 연산의 반올림 — `ROUND_DOWN`(절단). */
 export const DECIMAL_MODULO = 1;

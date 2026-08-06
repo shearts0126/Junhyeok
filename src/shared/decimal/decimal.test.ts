@@ -2,7 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { Prisma } from '@/generated/prisma/client';
 
-import { DECIMAL_PRECISION, readDecimalContext, ScmDecimal } from './context';
+import {
+  DECIMAL_MAX_FRACTION_DIGITS,
+  DECIMAL_MAX_INTEGER_DIGITS,
+  DECIMAL_PRECISION,
+  DECIMAL_TO_EXP_NEG,
+  DECIMAL_TO_EXP_POS,
+  readDecimalContext,
+  ScmDecimal,
+} from './context';
 import {
   ROUNDING,
   ZERO,
@@ -325,10 +333,15 @@ describe('★ 계산 컨텍스트 고정', () => {
     expect(context.precision).not.toBe(Prisma.Decimal.precision);
   });
 
-  it('지수표기 임계값이 극단으로 고정되어 있다', () => {
+  it('★ 지수표기 임계값은 안전한 기본값으로 명시 고정된다', () => {
     const context = readDecimalContext();
-    expect(context.toExpNeg).toBe(-9e15);
-    expect(context.toExpPos).toBe(9e15);
+
+    // 극단값(-9e15 / 9e15)으로 밀지 않는다. 그렇게 하면 거대한 지수 입력이
+    // toString() 에서 방어 없이 펼쳐진다.
+    expect(context.toExpNeg).toBe(DECIMAL_TO_EXP_NEG);
+    expect(context.toExpPos).toBe(DECIMAL_TO_EXP_POS);
+    expect(context.toExpNeg).toBe(-7);
+    expect(context.toExpPos).toBe(21);
   });
 
   it('★ 18자리 × 18자리 중간 계산이 절단 없이 보존된다', () => {
@@ -388,15 +401,18 @@ describe('★ 계산 컨텍스트 고정', () => {
   it('★ 동일 입력은 실행 순서와 무관하게 동일 결과를 낸다', () => {
     const inputs = ['0.1', '123456789012.345678', '1e-30', '-7.5'];
 
-    const forward = inputs.map((value) => toDecimalString(divide(value, '7')));
-    const backward = [...inputs].reverse().map((value) => toDecimalString(divide(value, '7')));
+    // 직렬화 한도와 무관하게 값 자체를 비교하도록 scale 을 고정한다
+    const key = (value: string): string => toDecimalString(divide(value, '7'), 50);
+
+    const forward = inputs.map(key);
+    const backward = [...inputs].reverse().map(key);
 
     expect(backward.reverse()).toEqual(forward);
 
     // 다른 연산을 사이에 끼워도 결과가 변하지 않는다
     divide('999', '7');
     multiply('3', '11');
-    expect(inputs.map((value) => toDecimalString(divide(value, '7')))).toEqual(forward);
+    expect(inputs.map(key)).toEqual(forward);
   });
 });
 
@@ -483,12 +499,15 @@ describe('★ roundToScale — rounding mode 필수', () => {
 });
 
 describe('★ 지수표기 없는 직렬화 (컨텍스트 반영)', () => {
-  it('전용 컨텍스트에서는 toString() 도 지수표기를 쓰지 않는다', () => {
-    // 전역 기본값이었다면 '1e+25' / '1e-7' 이 나온다
-    expect(new Prisma.Decimal('1e25').toString()).toBe('1e+25');
-    expect(toDecimal('1e25').toString()).toBe('10000000000000000000000000');
-    expect(toDecimal('1e-7').toString()).toBe('0.0000001');
-    expect(toDecimal('1e-30').toString()).toBe('0.000000000000000000000000000001');
+  it('★ toString() 은 지수표기를 쓸 수 있다 — 계약은 toDecimalString() 에만 있다', () => {
+    // 지수표기를 없애려고 임계값을 극단으로 밀지 않았으므로, toString() 은
+    // decimal.js 기본 동작대로 범위 밖에서 지수표기를 쓴다.
+    expect(toDecimal('1e25').toString()).toBe('1e+25');
+    expect(toDecimal('1e-30').toString()).toBe('1e-30');
+
+    // 업무 출력 경계의 보장은 toDecimalString() 이 한다.
+    expect(toDecimalString(toDecimal('1e25'))).toBe('10000000000000000000000000');
+    expect(toDecimalString(toDecimal('1e-30'))).toBe('0.000000000000000000000000000001');
   });
 
   it('toDecimalString 은 어떤 크기에서도 일반 표기를 낸다', () => {
@@ -500,5 +519,123 @@ describe('★ 지수표기 없는 직렬화 (컨텍스트 반영)', () => {
   it('연산 결과도 지수표기가 되지 않는다', () => {
     expect(toDecimalString(multiply('1e12', '1e12'))).toBe('1000000000000000000000000');
     expect(toDecimalString(divide('1', '1e20'))).toBe('0.00000000000000000001');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 직렬화 안전 한도 (T0-4 보완 2차)
+//
+// 지수표기를 없애려고 생성자 임계값을 극단으로 밀면, 거대한 지수 입력이
+// 방어 없이 펼쳐진다. 임계값은 기본값으로 두고 toDecimalString() 이
+// 펼치기 전에 규모를 검사한다.
+// ═══════════════════════════════════════════════════════════════
+describe('★ toDecimalString — 표현 한도', () => {
+  it('★ 1e1000000000 은 거대한 문자열을 만들지 않고 즉시 오류다', () => {
+    const huge = toDecimal('1e1000000000');
+
+    // 생성 자체는 싸다 — decimal.js 는 (유효숫자, 지수)로 들고 있다
+    expect(huge.isFinite()).toBe(true);
+
+    const started = process.hrtime.bigint();
+    expect(() => toDecimalString(huge)).toThrow(RangeError);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+    // 10억 자리를 만들었다면 이 시간에 끝나지 않는다
+    expect(elapsedMs).toBeLessThan(50);
+  });
+
+  it('★ 1e-1000000000 도 동일하게 오류다', () => {
+    const tiny = toDecimal('1e-1000000000');
+
+    const started = process.hrtime.bigint();
+    expect(() => toDecimalString(tiny)).toThrow(RangeError);
+    const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+    expect(elapsedMs).toBeLessThan(50);
+  });
+
+  it('오류 메시지가 값 자체를 펼치지 않는다', () => {
+    try {
+      toDecimalString(toDecimal('1e1000000000'));
+      throw new Error('오류가 발생하지 않았습니다.');
+    } catch (error) {
+      const message = (error as Error).message;
+      expect(message).toContain('정수부');
+      // 메시지에 값을 넣으면 그 순간이 바로 막으려던 비용이다
+      expect(message.length).toBeLessThan(200);
+    }
+  });
+
+  it('★ DECIMAL(18,6) 범위 값은 일반표기로 직렬화된다', () => {
+    // 정수부 12자리 + 소수부 6자리 = DECIMAL(18,6) 최대치
+    const max = toDecimal('999999999999.999999');
+    expect(toDecimalString(max)).toBe('999999999999.999999');
+    expect(toDecimalString(max)).not.toMatch(/e/i);
+
+    const min = toDecimal('-999999999999.999999');
+    expect(toDecimalString(min)).toBe('-999999999999.999999');
+
+    // DECIMAL(18,4) 금액 최대치
+    expect(toDecimalString(toDecimal('99999999999999.9999'))).toBe('99999999999999.9999');
+  });
+
+  it('★ 60자리 중간 계산 결과는 지원된다', () => {
+    // 1/3 은 유효자릿수 60 까지 채운다 (소수부 60자리)
+    const third = divide('1', '3');
+    const serialized = toDecimalString(third);
+
+    expect(serialized).toHaveLength('0.'.length + DECIMAL_PRECISION);
+    expect(serialized).not.toMatch(/e/i);
+
+    // 수량 × 금액 (36 유효자릿수) 도 문제없다
+    expect(toDecimalString(multiply('123456789012.345678', '12345678901234.5678'))).toBe(
+      '1524157875323883652796829.9765279684',
+    );
+  });
+
+  it('★ 정수부 한도를 넘으면 오류다', () => {
+    // 정수부 60자리 — 경계값은 통과
+    const atLimit = toDecimal(`1${'0'.repeat(DECIMAL_MAX_INTEGER_DIGITS - 1)}`);
+    expect(toDecimalString(atLimit)).toHaveLength(DECIMAL_MAX_INTEGER_DIGITS);
+
+    // 61자리 — 거부
+    const overLimit = toDecimal(`1${'0'.repeat(DECIMAL_MAX_INTEGER_DIGITS)}`);
+    expect(() => toDecimalString(overLimit)).toThrow(RangeError);
+    expect(() => toDecimalString(overLimit)).toThrow(/정수부/);
+  });
+
+  it('★ 소수부 한도를 넘으면 오류다', () => {
+    // 소수부 60자리 — 경계값은 통과
+    const atLimit = toDecimal(`0.${'0'.repeat(DECIMAL_MAX_FRACTION_DIGITS - 1)}1`);
+    expect(toDecimalString(atLimit)).toHaveLength('0.'.length + DECIMAL_MAX_FRACTION_DIGITS);
+
+    // 61자리 — 거부
+    const overLimit = toDecimal(`0.${'0'.repeat(DECIMAL_MAX_FRACTION_DIGITS)}1`);
+    expect(() => toDecimalString(overLimit)).toThrow(RangeError);
+    expect(() => toDecimalString(overLimit)).toThrow(/소수부/);
+  });
+
+  it('scale 을 지정해도 정수부 한도는 적용된다', () => {
+    const overLimit = toDecimal(`1${'0'.repeat(DECIMAL_MAX_INTEGER_DIGITS)}`);
+    expect(() => toDecimalString(overLimit, 2)).toThrow(RangeError);
+  });
+
+  it('★ scale 지정으로 소수부 한도를 만족시킬 수 있다', () => {
+    // 소수부가 한도를 넘는 값도 반올림하면 직렬화된다
+    const overLimit = toDecimal(`0.${'0'.repeat(DECIMAL_MAX_FRACTION_DIGITS)}1`);
+    expect(() => toDecimalString(overLimit)).toThrow(RangeError);
+    expect(toDecimalString(overLimit, 6)).toBe('0.000000');
+  });
+
+  it('한도 상수가 계산 컨텍스트와 정합한다', () => {
+    // 나눗셈 중간 결과(최대 유효자릿수 60)를 직렬화할 수 있어야 한다
+    expect(DECIMAL_MAX_FRACTION_DIGITS).toBeGreaterThanOrEqual(DECIMAL_PRECISION);
+    expect(DECIMAL_MAX_INTEGER_DIGITS).toBeGreaterThanOrEqual(DECIMAL_PRECISION);
+  });
+
+  it('0 과 작은 값은 정상 직렬화된다', () => {
+    expect(toDecimalString(ZERO)).toBe('0');
+    expect(toDecimalString(toDecimal('-0'))).toBe('0');
+    expect(toDecimalString(toDecimal('0.000001'))).toBe('0.000001');
   });
 });
