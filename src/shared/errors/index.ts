@@ -15,6 +15,7 @@ export {
   toAppError,
   type AppErrorOptions,
   type ErrorContext,
+  type ErrorDetails,
   type PublicDetails,
   type FieldError,
 } from './app-error';
@@ -28,7 +29,14 @@ export {
   type ErrorCode,
 } from './codes';
 
-export { REQUEST_ID_HEADER, generateRequestId, resolveRequestId } from './request-id';
+export {
+  REQUEST_ID_HEADER,
+  generateRequestId,
+  resolveCorrelationId,
+  resolveRequestContext,
+  type HeaderSource,
+  type RequestContext,
+} from './request-id';
 
 export {
   buildErrorResponse,
@@ -38,9 +46,17 @@ export {
 } from './response';
 
 export {
+  REDACTED,
+  isSensitiveKey,
+  maskCredentials,
+  maskSecretsInString,
+  redactRecord,
+  redactSecrets,
+} from './redact';
+
+export {
   buildErrorLogEntry,
   logError,
-  maskCredentials,
   type ErrorLogEntry,
   type LogErrorOptions,
   type LogLevel,

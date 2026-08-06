@@ -165,7 +165,8 @@ curl -s http://localhost:3000/api/health | jq
 │     ├─ env.ts                 환경변수 검증
 │     ├─ health.ts              헬스체크 로직
 │     ├─ db/                    Prisma 클라이언트 · 연결 점검
-│     └─ errors/                공통 오류체계 · request ID · 로깅
+│     └─ errors/                공통 오류체계 · request ID · 로깅 · 자격증명 마스킹
+├─ AGENTS.md / CLAUDE.md        ⚠️ Next.js 자동 생성 (아래 참조)
 ├─ docker-compose.yml           로컬 PostgreSQL
 ├─ prisma.config.ts             Prisma CLI 설정 (DIRECT_URL)
 ├─ components.json              shadcn/ui 설정
@@ -173,6 +174,12 @@ curl -s http://localhost:3000/api/health | jq
 ├─ vitest.config.ts
 └─ .env.example
 ```
+
+> ⚠️ **`AGENTS.md` / `CLAUDE.md` 는 사람이 작성한 문서가 아닙니다.** `next dev` 가
+> `node_modules/next/dist/server/lib/generate-agent-files.js` 로 자동 생성·재삽입합니다.
+> 작업트리를 깨끗하게 유지하려고 저장소에 포함해 두었습니다.
+> **Next.js 버전을 올린 뒤에는 이 두 파일의 diff 를 반드시 검토**하고 커밋하세요.
+> 내용이 조용히 바뀌어도 CI 가 잡아주지 않습니다.
 
 ### 모듈 구조 규칙
 
@@ -222,6 +229,7 @@ pnpm dlx shadcn@latest add table dialog form
 | `DATABASE_URL` | ✅ | 애플리케이션 런타임 (**pooled**) | T0-2 |
 | `DIRECT_URL` | ✅ | 마이그레이션·워커 (**direct**) | T0-2 |
 | `APP_TIMEZONE` | | 업무일자 파생 기준 (`Asia/Seoul` 고정) | T0-1 |
+| `ENABLE_ERROR_PREVIEW` | | **개발 전용** 오류 미리보기 라우트 활성화 | T0-3 |
 | `NEXT_PUBLIC_SUPABASE_URL` 외 | | 인증 | T0-6 |
 | `SUPABASE_STORAGE_BUCKET_*` | | 파일 저장 | T4-2 |
 | `PGBOSS_DATABASE_URL` | | 잡 큐 | T4-1 |
@@ -280,14 +288,31 @@ import { withErrorHandling, DomainError, ERROR_CODES } from '@/shared/errors';
 export async function POST(request: Request) {
   return withErrorHandling(request, async () => {
     throw new DomainError(ERROR_CODES.INSUFFICIENT_STOCK, {
-      message: '창고 OLPUN 가용 10, 요청 12',   // 개발 응답 · 서버 로그
-      details: { available: '10.000000' },      // 외부 응답에 포함
-      hint: '동일 재고키 2개 항목이 합산되었습니다.',
-      context: { skuId, warehouseId },          // ★ 서버 로그 전용
+      message: '창고 OLPUN 가용 10, 요청 12',        // 개발 debug · 서버 로그
+      publicDetails: { available: '10.000000' },     // ✅ 외부 응답에 포함
+      publicHint: '동일 재고키 2개 항목이 합산되었습니다.', // ✅ 외부 응답에 포함
+      details: { internalSkuId, ledgerEntryId },     // ★ 서버 로그 전용
+      context: { skuId, warehouseId },               // ★ 서버 로그 전용
     });
   }, { route: '/api/skus' });
 }
 ```
+
+### 부가정보 4종의 노출 범위
+
+| 필드 | 외부 응답 | 서버 로그 |
+|---|:-:|:-:|
+| `context` | ❌ | ✅ |
+| `details` | ❌ | ✅ |
+| `publicDetails` | ✅ (`expected` 한정) | ✅ |
+| `publicHint` | ✅ (`expected` 한정) | ✅ |
+| `fieldErrors` | ✅ | — |
+
+**기본값은 비공개입니다.** 예상 가능한 오류라는 사실만으로 부가정보가 공개해도 되는 값임이
+보장되지는 않습니다. 재고 부족 하나만 봐도 "가용수량"은 공개해도 되지만 "내부 SKU UUID"는
+아닙니다. 공개하려면 호출부가 `publicDetails` / `publicHint` 로 **명시**해야 합니다.
+
+예상하지 못한 오류(`expected = false`)는 `publicDetails` 를 넘겨도 응답에 실리지 않습니다.
 
 ### 오류 클래스
 
@@ -307,43 +332,86 @@ export async function POST(request: Request) {
   "errorCode": "INSUFFICIENT_STOCK",
   "message": "재고가 부족합니다.",
   "requestId": "e645e91c-175b-4815-a8d5-911506643b78",
-  "details": { "available": "10.000000", "requestedNet": "12.000000" },
-  "hint": "동일 재고키의 2개 항목이 합산되어 검증되었습니다."
+  "publicDetails": { "available": "10.000000", "requestedNet": "12.000000" },
+  "publicHint": "동일 재고키의 2개 항목이 합산되어 검증되었습니다."
 }
 ```
 
-응답 헤더에 `x-request-id` 가 포함됩니다. 요청에 `x-request-id` 가 있으면 그대로 전파하고,
-없으면 `x-vercel-id` 를 쓰거나 새로 생성합니다. 제어문자는 제거되고 200자로 잘립니다.
+### `requestId` 와 `correlationId`
+
+| | 출처 | 응답 본문 | `x-request-id` 헤더 | 서버 로그 |
+|---|---|:-:|:-:|:-:|
+| `requestId` | **서버가 항상 `randomUUID()` 로 생성** | ✅ | ✅ | ✅ |
+| `correlationId` | 요청의 `x-request-id` 또는 `x-vercel-id` | ❌ | ❌ | ✅ |
+
+외부에서 받은 값을 시스템 식별자로 쓰지 않습니다.
+
+1. **유일성을 보장할 수 없습니다.** 같은 값을 반복 전송하면 서로 다른 요청이 같은 ID를 갖게 되어
+   로그 추적이 무너집니다.
+2. **공격자가 통제할 수 있습니다.** 다른 사용자의 ID를 사칭하거나 로그 검색을 오염시킬 수 있습니다.
+
+그래도 버리지는 않습니다. 게이트웨이·프론트엔드의 추적 ID 와 서버 로그를 잇는 데 필요하므로
+`correlationId` 로 **로그에만** 남깁니다. 제어문자는 제거되고 200자로 잘립니다.
+외부 헤더가 없으면 `correlationId` 는 생략됩니다.
 
 ### 내부 로그 ↔ 외부 응답 분리
 
 | 항목 | 운영 응답 | 개발 응답 | 서버 로그 |
 |---|:-:|:-:|:-:|
-| `message` | 코드별 고정 문구 | 상세 메시지 | 상세 메시지 |
-| `details` · `hint` | ✅ | ✅ | ✅ |
+| `message` | 코드별 고정 문구 | 상세 메시지 (`expected` 한정) | 상세 메시지 |
+| `publicDetails` · `publicHint` | ✅ | ✅ | ✅ |
+| `details` | ❌ | ❌ | ✅ |
 | `context` | ❌ | ❌ | ✅ |
 | `stack` | ❌ | `debug.stack` | 예상 못한 오류만 |
 | `requestId` | ✅ | ✅ | ✅ |
+| `correlationId` | ❌ | ❌ | ✅ |
 
 **핵심 원칙**
 
 1. **운영 응답에 DB URL·호스트·포트·환경변수명·스택을 절대 노출하지 않습니다.**
-2. `context` 는 어떤 환경에서도 응답에 나가지 않습니다 (서버 로그 전용).
+2. `details` 와 `context` 는 어떤 환경에서도 응답에 나가지 않습니다 (서버 로그 전용).
 3. **예상하지 못한 오류**(`SystemError`, `EnvironmentError`, 정규화된 일반 `Error`)는
    환경과 무관하게 **고정 문구 + HTTP 500** 입니다. 내부 메시지에 연결 문자열이 섞일 수 있기 때문입니다.
-4. 서버 로그에서도 연결 문자열의 자격증명은 `***:***@` 로 마스킹됩니다.
-5. 예상 가능한 오류는 `warn`, 예상하지 못한 오류는 `error` 레벨로 기록됩니다.
-6. 응답의 `requestId` 로 서버 로그를 찾을 수 있습니다.
+4. 예상 가능한 오류는 `warn`, 예상하지 못한 오류는 `error` 레벨로 기록됩니다.
+5. 응답의 `requestId` 로 서버 로그를 찾을 수 있습니다.
+
+### 서버 로그의 자격증명 마스킹
+
+로그는 신뢰 경계 안에 있지만 수집기·백업·화면 캡처로 새어 나갑니다. 두 축으로 가립니다
+(`src/shared/errors/redact.ts`).
+
+**① 키 기반** — 객체·배열·`Error.cause` 를 재귀 순회하며 민감한 이름의 값을 `***` 로 치환합니다.
+키는 소문자화 + 영숫자만 남겨 비교하므로 `set-cookie`, `DATABASE_URL`, `accessToken` 이 모두 걸립니다.
+
+```
+password · passwd · secret · token · authorization · cookie
+apiKey · DATABASE_URL · DIRECT_URL · connectionString
+```
+
+**② 패턴 기반** — 문자열에 섞여 들어온 자격증명을 형태로 탐지합니다.
+
+| 입력 | 출력 |
+|---|---|
+| `postgresql://scm:pw@db.internal:5432/prod` | `postgresql://***:***@db.internal:5432/prod` |
+| `Bearer eyJhbGciOiJIUzI1NiJ9.…` | `Bearer ***` |
+| `Basic YWRtaW46c3VwZXJzZWNyZXQ=` | `Basic ***` |
+
+호스트·포트·데이터베이스명은 남깁니다. 디버깅에 필요하고, 외부 응답으로 나가지 않는 것은
+`buildErrorResponse` 가 보장합니다.
 
 ### 오류 응답 확인 (개발 전용)
 
 ```bash
+# .env.local 에 ENABLE_ERROR_PREVIEW="true" 추가 후
 pnpm dev
 curl -s "http://localhost:3000/api/dev/error-preview?kind=domain" | jq
 # kind: validation | authorization | conflict | domain | system | unknown
 ```
 
-> 이 라우트는 **운영환경에서 404** 를 반환합니다.
+> 이 라우트는 **`NODE_ENV !== 'production'` 이면서 `ENABLE_ERROR_PREVIEW="true"` 일 때만**
+> 동작합니다. 기본값은 비활성화이며, 두 조건 중 하나라도 어긋나면 **JSON 404** 를 반환합니다.
+> 환경 판정 하나에만 의존하지 않는 이유: 스테이징·프리뷰 배포처럼 `NODE_ENV` 가 production 이
+> 아니면서 외부에 노출되는 환경이 있습니다.
 
 ---
 

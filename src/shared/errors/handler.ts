@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 
 import { toAppError } from './app-error';
 import { logError } from './logger';
-import { REQUEST_ID_HEADER, resolveRequestId } from './request-id';
+import { REQUEST_ID_HEADER, resolveRequestContext, type RequestContext } from './request-id';
 import { buildErrorResponse } from './response';
 
 /**
@@ -19,6 +19,9 @@ import { buildErrorResponse } from './response';
  *   });
  * }
  * ```
+ *
+ * 요청마다 서버가 `requestId` 를 새로 만든다. 외부 `x-request-id` 는
+ * `correlationId` 로 서버 로그에만 남는다.
  */
 
 export interface ErrorHandlingOptions {
@@ -28,24 +31,28 @@ export interface ErrorHandlingOptions {
 /** 오류를 로그에 남기고 표준 오류 응답을 만든다. */
 export function toErrorResponse(
   error: unknown,
-  requestId: string,
+  requestContext: RequestContext,
   options: ErrorHandlingOptions & { method?: string } = {},
 ): NextResponse {
-  // 1. 서버 로그: 전체 상세 (context, stack 포함)
+  // 1. 서버 로그: 전체 상세 (details, context, correlationId, stack 포함)
   logError(error, {
-    requestId,
+    requestId: requestContext.requestId,
+    ...(requestContext.correlationId !== undefined
+      ? { correlationId: requestContext.correlationId }
+      : {}),
     ...(options.route !== undefined ? { route: options.route } : {}),
     ...(options.method !== undefined ? { method: options.method } : {}),
   });
 
   // 2. 외부 응답: 환경별 정책 적용
-  const body = buildErrorResponse(error, { requestId });
+  const body = buildErrorResponse(error, { requestId: requestContext.requestId });
   const appError = toAppError(error);
 
   return NextResponse.json(body, {
     status: appError.httpStatus,
     headers: {
-      [REQUEST_ID_HEADER]: requestId,
+      // ★ 서버가 생성한 값을 내려준다. 요청 헤더 값을 되돌려주지 않는다.
+      [REQUEST_ID_HEADER]: requestContext.requestId,
       'Cache-Control': 'no-store',
     },
   });
@@ -60,13 +67,13 @@ export async function withErrorHandling(
   handler: (requestId: string) => Promise<NextResponse>,
   options: ErrorHandlingOptions = {},
 ): Promise<NextResponse> {
-  const requestId = resolveRequestId(request.headers);
+  const requestContext = resolveRequestContext(request.headers);
 
   try {
-    const response = await handler(requestId);
-    response.headers.set(REQUEST_ID_HEADER, requestId);
+    const response = await handler(requestContext.requestId);
+    response.headers.set(REQUEST_ID_HEADER, requestContext.requestId);
     return response;
   } catch (error) {
-    return toErrorResponse(error, requestId, { ...options, method: request.method });
+    return toErrorResponse(error, requestContext, { ...options, method: request.method });
   }
 }

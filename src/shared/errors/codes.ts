@@ -100,7 +100,10 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.REVERSAL_OF_REVERSAL_NOT_ALLOWED]: '취소 거래는 다시 취소할 수 없습니다.',
   [ERROR_CODES.ALREADY_REVERSED]: '이미 취소된 거래입니다.',
   [ERROR_CODES.INVALID_STATUS_TRANSITION]: '허용되지 않은 상태 변경입니다.',
-  [ERROR_CODES.UNBALANCED_TRANSACTION]: '거래의 증감 합계가 맞지 않습니다.',
+  // ⚠️ "증감 합계"라는 표현을 쓰지 않는다. 조립·분해(kit assemble/disassemble)는
+  //    자재 감소와 완제품 증가의 수량이 BOM 소요량으로 환산되어 균형을 이루므로,
+  //    단순 전체 증감 합계 0 검증이 아니다.
+  [ERROR_CODES.UNBALANCED_TRANSACTION]: '거래의 수량 균형이 맞지 않습니다.',
   [ERROR_CODES.MISSING_SOURCE_DOCUMENT]: '원인문서가 필요합니다.',
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: '마감된 기간의 거래는 처리할 수 없습니다.',
   [ERROR_CODES.SETTING_LOCKED]: '잠긴 설정은 변경할 수 없습니다.',
