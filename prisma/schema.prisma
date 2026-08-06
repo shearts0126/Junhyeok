@@ -47,8 +47,8 @@ model User {
   email     String     @unique
   name      String
   active    Boolean    @default(true)
-  createdAt DateTime   @default(now()) @db.Timestamptz
-  updatedAt DateTime   @updatedAt @db.Timestamptz
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz
   userRoles UserRole[]
 
   @@map("user")
@@ -57,8 +57,8 @@ model User {
 /// 역할. ADMIN / SCM_LEADER / SCM_STAFF / FINANCE / EXECUTIVE
 model Role {
   id       String @id @default(uuid()) @db.Uuid
-  roleCode String @unique
-  roleName String
+  roleCode String @unique @map("role_code")
+  roleName String @map("role_name")
 
   userRoles       UserRole[]
   rolePermissions RolePermission[]
@@ -69,7 +69,7 @@ model Role {
 /// 권한. "role.read", "sku.approve" 같은 점 표기 키.
 model Permission {
   id            String  @id @default(uuid()) @db.Uuid
-  permissionKey String  @unique
+  permissionKey String  @unique @map("permission_key")
   description   String?
 
   rolePermissions RolePermission[]
@@ -79,8 +79,8 @@ model Permission {
 
 /// 역할 ↔ 권한. ADMIN 도 여기에 행이 있어야 권한을 갖는다(코드상 예외 없음).
 model RolePermission {
-  roleId       String @db.Uuid
-  permissionId String @db.Uuid
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
 
   role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
@@ -92,11 +92,11 @@ model RolePermission {
 
 /// 사용자 ↔ 역할.
 model UserRole {
-  userId    String   @db.Uuid
-  roleId    String   @db.Uuid
-  grantedAt DateTime @default(now()) @db.Timestamptz
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz
   /// 부여한 사용자. 시스템 시드는 NULL.
-  grantedBy String?  @db.Uuid
+  grantedBy String?  @map("granted_by") @db.Uuid
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
   role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)

@@ -2,8 +2,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 import { isPublicPath, requiredPermissionFor, resolveActor } from '@/modules/auth/application';
 import { claimsVerifierFrom } from '@/modules/auth/infrastructure/verify';
-import { ERROR_CODES, publicMessageForCode, REQUEST_ID_HEADER } from '@/shared/errors';
-import { generateRequestId } from '@/shared/errors';
+import { blockWithError, createProxyRequestContext } from '@/modules/auth/presentation/proxy-guard';
+import { AuthorizationError, ERROR_CODES } from '@/shared/errors';
 import { createSupabaseProxyClient } from '@/shared/supabase';
 
 /**
@@ -17,6 +17,7 @@ import { createSupabaseProxyClient } from '@/shared/supabase';
  *   - 공개 경로는 그대로 통과 (로그인·헬스체크)
  *   - 보호 경로는 검증된 인증을 요구 → 없으면 401
  *   - route policy 에 권한이 명시된 경로는 그 권한까지 확인 → 없으면 403
+ *   - **차단한 요청은 서버 로그에 기록** (`blockWithError`)
  *
  * ## 1차 가드가 하지 않는 일
  *
@@ -24,48 +25,51 @@ import { createSupabaseProxyClient } from '@/shared/supabase';
  *   Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 액션·내부 호출·
  *   배치는 여기를 거치지 않는다. **Proxy 통과를 서비스가 신뢰하면 안 된다.**
  *
+ * ## 로깅 경계
+ *
+ *   Proxy 가 **차단한** 요청만 여기서 기록한다. 통과시킨 요청은 로그를 남기지
+ *   않고 Route Handler 로 넘기며, 거기서 오류가 나면 `withErrorHandling` 이
+ *   기록한다. 한 요청이 두 곳에서 기록되는 경로가 없다.
+ *
  * ⚠️ 세션 판정에 `getSession()` 을 쓰지 않는다. 쿠키 값을 그대로 돌려주므로
  *    위조 가능하다. `resolveActor` 가 `getClaims()` 로 서명을 검증한다.
  */
-
-function jsonError(code: string, status: number, requestId: string): NextResponse {
-  return NextResponse.json(
-    { errorCode: code, message: publicMessageForCode(code), requestId },
-    {
-      status,
-      headers: { [REQUEST_ID_HEADER]: requestId, 'Cache-Control': 'no-store' },
-    },
-  );
-}
-
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { supabase, response } = createSupabaseProxyClient(request);
   const pathname = request.nextUrl.pathname;
 
   // 공개 경로도 세션 갱신은 거친다. 토큰 만료로 로그인 상태가 끊기지 않도록.
+  // ★ 오류 로그를 만들지 않는다 — 성공 경로다.
   if (isPublicPath(pathname)) return response;
 
-  // ★ Proxy 는 서버가 생성한 requestId 를 쓴다. 외부 x-request-id 는 쓰지 않는다.
-  const requestId = generateRequestId();
+  // ★ 서버가 생성한 requestId. 외부 x-request-id 는 correlationId 로 로그에만 간다.
+  const { requestId } = createProxyRequestContext(request);
 
   try {
     const actor = await resolveActor({ verifier: claimsVerifierFrom(supabase) }, { requestId });
 
     const required = requiredPermissionFor(pathname);
     if (required !== undefined && !actor.permissions.includes(required)) {
-      return jsonError(ERROR_CODES.FORBIDDEN, 403, requestId);
+      return blockWithError(
+        new AuthorizationError(ERROR_CODES.FORBIDDEN, {
+          message: `권한 '${required}' 가 없습니다.`,
+          context: {
+            requiredPermission: required,
+            actorUserId: actor.userId,
+            actorRoles: actor.roles,
+            reason: 'MISSING_PERMISSION',
+          },
+        }),
+        { request, requestId, route: pathname },
+      ).response;
     }
 
+    // ★ 통과 — 로그를 남기지 않는다.
     return response;
   } catch (error) {
-    // 상세는 라우트 핸들러가 다시 판정하며 기록한다.
-    // 여기서는 공통 형식의 최소 응답만 낸다.
-    const code =
-      error instanceof Error && 'code' in error && error.code === ERROR_CODES.UNAUTHORIZED
-        ? ERROR_CODES.UNAUTHORIZED
-        : ERROR_CODES.FORBIDDEN;
-
-    return jsonError(code, code === ERROR_CODES.UNAUTHORIZED ? 401 : 403, requestId);
+    // resolveActor 가 던진 401(UNAUTHORIZED) / 403(FORBIDDEN) 을
+    // 원인 그대로 기록하고 공통 형식으로 응답한다.
+    return blockWithError(error, { request, requestId, route: pathname }).response;
   }
 }
 
