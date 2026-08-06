@@ -1,7 +1,7 @@
 # DEEPPOINT SCM OS — 설계검토 04. ERD 초안 · Prisma Schema 초안 **(v0.2)**
 
 > **v0.1 대비 변경** — ✏️ 표기
-> ① **`SystemSetting` 모델 신설** — `cutover_date`(D-01), `allow_self_approval`(D-07), `posting_frozen`
+> ① **`SystemSetting` 모델 신설** — `cutover_date`(D-01), **`allow_self_approval_sku` / `allow_self_approval_bom`**(D-07), `posting_frozen`
 > ② **REVERSAL 재취소 차단 트리거** 추가 (C-14)
 > ③ **창고 15종 확정** (D-02) — 3PL 3 + `SUPPLIER_SITE` 11 + `IN_TRANSIT` 1
 > ④ **LOT·유통기한·시리얼 기본값 전부 `false`** (D-03)
@@ -46,7 +46,7 @@
 | 3 | `permission` | 권한 키 |
 | 4 | `role_permission` | 역할↔권한 |
 | 5 | `user_role` | 사용자↔역할 |
-| ✏️ 6 | **`system_setting`** | **시스템 설정 — `cutover_date`, `allow_self_approval`, `posting_frozen` 등** |
+| ✏️ 6 | **`system_setting`** | **시스템 설정 (단일 행) — `cutover_date`, `allow_self_approval_sku`, `allow_self_approval_bom`, `posting_frozen`** |
 | 7 | `audit_log` | 전 모듈 변경 이력 (불변) |
 | 8 | `common_code_group` | 코드 그룹 |
 | 9 | `common_code` | 코드 값 |
@@ -161,7 +161,10 @@ erDiagram
 
     SYSTEM_SETTING {
         uuid id PK
-        string setting_key UK "cutover_date/allow_self_approval/posting_frozen"
+        boolean allow_self_approval_sku
+        boolean allow_self_approval_bom
+        date cutover_date
+        boolean posting_frozen
         string value_type "DATE/BOOLEAN/STRING/JSON"
         string string_value
         date date_value
@@ -264,7 +267,7 @@ erDiagram
 
 | 테이블 | 고유조건 | 인덱스 |
 |---|---|---|
-| ✏️ `system_setting` | `UNIQUE(setting_key)` | — |
+| ✏️ `system_setting` | `id = 1` 단일 행 (singleton) | — |
 | `sku` | `UNIQUE(sku_code)` **전역** | `(status)`, `(item_type)`, `(brand_id, major_category_id, minor_category_id)`, GIN trigram `(sku_name)` |
 | `sku_barcode` | 조건부 `UNIQUE(barcode) WHERE status='ACTIVE' AND duplicate_exception=false` <br> 조건부 `UNIQUE(sku_id) WHERE is_primary=true AND status='ACTIVE'` | `(sku_id)`, `(barcode)` |
 | `sku_external_mapping` | 조건부 `UNIQUE(external_system_id, external_product_code) WHERE code<>'' AND effective_to IS NULL` <br> 조건부 `UNIQUE(sku_id, external_system_id) WHERE is_primary=true` | `(sku_id)`, `(external_system_id, mapping_status)` |
@@ -601,30 +604,39 @@ enum DifferenceType {
 
 /// 운영 중 변경되는 값은 코드가 아니라 여기에 둔다.
 /// ★ 날짜 리터럴을 코드·시드·마이그레이션 스크립트에 하드코딩하지 않는다.
+///
+/// ✏️ **타입이 명시된 단일 설정 행**이다. 자유 형식 JSON EAV 를 쓰지 않는다.
+///    설정 하나하나가 업무 판정에 직접 쓰이는 중요 값이므로,
+///    `valueType` 분기·NULL 조합·알 수 없는 키가 끼어들 여지를 두지 않는다.
 model SystemSetting {
-  id           String           @id @default(uuid()) @db.Uuid
-  settingKey   String           @unique @db.VarChar(80)
-  valueType    SettingValueType
-  stringValue  String?
-  dateValue    DateTime?        @db.Date
-  boolValue    Boolean?
-  numberValue  Decimal?         @db.Decimal(18, 6)
-  jsonValue    Json?
-  /// true면 변경 불가. 관리자 재인증 + 사유로만 해제
-  locked       Boolean          @default(false)
-  description  String?
-  updatedBy    String?          @db.Uuid
-  updatedAt    DateTime         @updatedAt @db.Timestamptz
+  /// singleton. 항상 1.
+  id                   Int       @id
+  /// SKU 자가승인 허용 (D-07)
+  allowSelfApprovalSku Boolean   @default(false) @map("allow_self_approval_sku")
+  /// BOM 자가승인 허용 (D-07)
+  allowSelfApprovalBom Boolean   @default(false) @map("allow_self_approval_bom")
+  /// 전환 기준일 (D-01). UAT 완료 후 관리자가 설정.
+  cutoverDate          DateTime? @map("cutover_date") @db.Date
+  /// balance 재구축 중 Posting 차단
+  postingFrozen        Boolean   @default(false) @map("posting_frozen")
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy            String?   @map("updated_by") @db.Uuid
+  /// 낙관적 동시성 제어. 변경마다 증가한다.
+  version              Int       @default(1)
 
   @@map("system_setting")
 }
 
-// 초기 시드 (값은 비워둔다)
-//  cutover_date          DATE    NULL      전환 기준일 — UAT 완료 후 관리자가 설정. 월초(1일)만 허용
-//  cutover_locked        BOOLEAN false     기초재고 반영 후 true 로 잠금
-//  allow_self_approval   BOOLEAN false     SKU·BOM 자가승인 허용 여부 (재고 3종은 코드에서 무조건 분리)
-//  posting_frozen        BOOLEAN false     balance 재구축 중 Posting 차단
-//  self_approval_scope   JSON    {...}     엔티티별 override 맵
+// 초기 시드 (단일 행, id = 1)
+//  allow_self_approval_sku  BOOLEAN false  SKU 자가승인 허용 여부
+//  allow_self_approval_bom  BOOLEAN false  BOM 자가승인 허용 여부
+//  cutover_date             DATE    NULL   전환 기준일 — UAT 완료 후 설정. 월초(1일)만 허용
+//  posting_frozen           BOOLEAN false  balance 재구축 중 Posting 차단
+//  version                  INT     1
+//
+// ⛔ 일반 `allow_self_approval` 컬럼은 만들지 않는다.
+// ⛔ 다음 3종은 설정과 무관하게 **항상** 요청자≠승인자다. ADMIN 도 예외 없음.
+//      재고조정 승인 / 음수재고 예외 승인 / 월마감 해제
 
 // ─────────────────────────────────────────────────────────────
 // Layer 0 — 사용자·권한·감사 (v0.1과 동일)

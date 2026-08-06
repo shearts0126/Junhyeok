@@ -2,7 +2,7 @@
 
 > **v0.1 대비 변경** — ✏️ 표기
 > ① **`REVERSAL_OF_REVERSAL_NOT_ALLOWED`** — 취소 API·화면 (C-14)
-> ② **`system_setting` API 신설** — `cutover_date`, `allow_self_approval` (D-01, D-07)
+> ② **`system_setting` API 신설** — `cutover_date`, **`allow_self_approval_sku` / `allow_self_approval_bom`** (D-01, D-07)
 > ③ **`INSUFFICIENT_STOCK` 응답에 재고키 합산 정보** 포함 (C-13)
 > ④ **기초재고 음수 라인 전용 탭 + 관리자 예외 승인** (D-05)
 > ⑤ SKU·BOM 업로드는 **동기 처리** (R1a-1/R1a-3), 3PL·기초재고는 비동기 (R1a-4)
@@ -44,11 +44,12 @@
 |---|---|---|---|
 | `cutover_date` | DATE | **NULL** | 전환 기준일. UAT 완료 후 설정. **코드 하드코딩 금지 (D-01)** |
 | `cutover_locked` | BOOLEAN | `false` | 기초재고 반영 후 `true` |
-| `allow_self_approval` | BOOLEAN | `false` | SKU·BOM 자가승인 (D-07) |
+| `allow_self_approval_sku` | BOOLEAN | `false` | **SKU** 자가승인 (D-07) |
+| `allow_self_approval_bom` | BOOLEAN | `false` | **BOM** 자가승인 (D-07) |
 | `self_approval_scope` | JSON | `{}` | 엔티티별 override 맵 |
 | `posting_frozen` | BOOLEAN | `false` | balance 재구축 중 Posting 차단 |
 
-> ⛔ **`allow_self_approval`이 `true`여도 다음 3종은 항상 분리된다** (코드 하드코딩): 재고조정 승인 / 음수재고 예외 승인 / 월마감 해제.
+> ⛔ **두 설정이 `true`여도 다음 3종은 항상 분리된다** (코드 하드코딩, ADMIN 예외 없음): 재고조정 승인 / 음수재고 예외 승인 / 월마감 해제.
 
 ## 10.2 인증 · 사용자 · 권한
 
@@ -81,7 +82,7 @@
 | POST | `/api/skus` | 생성 | `CreateSkuDto` | `Sku`(DRAFT) | S,L,A | 코드 전역 중복 / 필수값 / ✏️ **코드체계 위반은 WARNING (D-06)** | ✅ |
 | PATCH | `/api/skus/{id}` | 수정 | `UpdateSkuDto` | `Sku` | S,L,A | **`hasTransaction=true`면 `skuCode` 변경 차단** | — |
 | POST | `/api/skus/{id}/submit` | 승인 요청 | `{note?}` | `Sku`(PENDING) | S,L,A | 승인 전 검증 9종 | — |
-| POST | `/api/skus/{id}/approve` | 승인 | `{note?}` | `Sku`(ACTIVE) | L,A | 상태=PENDING / ✏️ **`allow_self_approval` 설정 적용 (D-07)** | — |
+| POST | `/api/skus/{id}/approve` | 승인 | `{note?}` | `Sku`(ACTIVE) | L,A | 상태=PENDING / ✏️ **`allow_self_approval_sku` 설정 적용 (D-07)** | — |
 | POST | `/api/skus/{id}/reject` | 반려 | `{reason}` **필수** | `Sku` | L,A | 사유 필수 | — |
 | POST | `/api/skus/{id}/deactivate` | 사용중지 | `{reason}` | `Sku` | L,A | 활성 BOM 사용 시 경고 | — |
 | POST | `/api/skus/{id}/archive` | 폐기 | `{reason}` | `Sku` | A | **거래·BOM 이력 0건일 때만** | — |
@@ -123,7 +124,7 @@
 | PATCH | `/api/supplier-skus/{id}` | 수정 | S,L,A | | — |
 | GET | `/api/supplier-skus/{id}/prices` | 가격이력 | 전체+F | `asOf` 기준 유효가격 | — |
 | POST | `/api/supplier-skus/{id}/prices` | 가격 등록 | S,L,A,F | 적용일 중복 차단 / 이전 가격 자동 마감 | ✅ |
-| POST | `/api/supplier-sku-prices/{id}/approve` | 가격 승인 | L,A,F | ✏️ `allow_self_approval` 적용 | — |
+| POST | `/api/supplier-sku-prices/{id}/approve` | 가격 승인 | L,A,F | ✏️ `allow_self_approval_sku` 적용 | — |
 
 ## 10.8 BOM
 
@@ -138,7 +139,7 @@
 | DELETE | `/api/boms/{id}/lines/{lid}` | 삭제 | S,L,A | DRAFT/REJECTED만 | — |
 | POST | `/api/boms/{id}/lines/bulk-confirm-qty` | **소요량 일괄 확정** | S,L,A | >0 / `quantityStatus → CONFIRMED` | ✅ |
 | POST | `/api/boms/{id}/submit` | 승인 요청 | S,L,A | **검증규칙 14종** / **소요량 미확정 라인 존재 시 차단** | — |
-| POST | `/api/boms/{id}/approve` | 승인 | L,A | ✏️ `allow_self_approval` 적용 | — |
+| POST | `/api/boms/{id}/approve` | 승인 | L,A | ✏️ `allow_self_approval_bom` 적용 | — |
 | POST | `/api/boms/{id}/reject` | 반려 | L,A | 사유 필수 | — |
 | POST | `/api/boms/{id}/activate` | 활성화 | L,A | 상태=APPROVED / **활성 기간 중첩 차단** / 기존 ACTIVE 자동 INACTIVE | — |
 | POST | `/api/boms/{id}/deactivate` | 사용종료 | L,A | | — |
@@ -244,7 +245,7 @@
 | GET | `/api/inventory/adjustments` | 목록 | 전체 | | — |
 | GET | `/api/inventory/adjustments/{id}` | 상세 | 전체 | | — |
 | POST | `/api/.../adjustments/{id}/submit` | 승인 요청 | S,L,A | 증빙 필수 / 마감월·음수 시 `requiresAdminApproval=true` | — |
-| POST | `/api/.../adjustments/{id}/approve` | 승인 | L,A | ✏️ **요청자≠승인자 — `allow_self_approval` 무시, 항상 분리 (D-07)** | — |
+| POST | `/api/.../adjustments/{id}/approve` | 승인 | L,A | ✏️ **요청자≠승인자 — 자가승인 설정 무시, 항상 분리 (D-07)** | — |
 | POST | `/api/.../adjustments/{id}/admin-approve` | 관리자 추가승인 | A | `requiresAdminApproval=true`일 때만 / **재인증** | — |
 | POST | `/api/.../adjustments/{id}/reject` | 반려 | L,A | 사유 필수 | — |
 | POST | `/api/.../adjustments/{id}/post` | 원장 반영 | L,A | 상태=APPROVED / Posting Service 호출 | ✅ |
@@ -280,7 +281,7 @@
 | GET | `/api/inventory/closes/{month}` | 상세 | 전체+F | 창고별 검증 포함 | — |
 | POST | `/api/inventory/closes/{month}/validate` | 사전검증 | L,A | **8종 검증** | ✅ |
 | POST | `/api/inventory/closes/{month}/close` | 마감 | L,A | 검증 FAIL 없음 / 이전 월 마감됨 / 마감 스냅샷 | ✅ |
-| POST | `/api/inventory/closes/{month}/reopen` | **마감 해제** | **A만** | ✏️ **재인증 필수 / `allow_self_approval` 무시, 항상 분리 (D-07)** / 이후 월 마감 시 차단 / 사유 필수 | — |
+| POST | `/api/inventory/closes/{month}/reopen` | **마감 해제** | **A만** | ✏️ **재인증 필수 / 자가승인 설정 무시, 항상 분리 (D-07)** / 이후 월 마감 시 차단 / 사유 필수 | — |
 
 ## 10.16 3PL 스냅샷 · 재고대사
 
@@ -398,7 +399,7 @@ DEEPPOINT SCM OS
 |---|---|
 | **섹션** | ① 전환 관리 ② 승인 정책 ③ 운영 플래그 |
 | **① 전환 관리** | `cutover_date` — **날짜 입력(월초만 선택 가능한 datepicker)**. 미설정 시 *"전환 기준일이 설정되지 않았습니다. 기초재고 배치를 생성할 수 없습니다."* 경고 배너<br>`cutover_locked` — 잠금 상태 배지. 잠금 시 날짜 입력 비활성 + 해제 버튼 |
-| **② 승인 정책** | `allow_self_approval` 토글 + **아래 3종은 회색 처리된 고정 항목으로 표시**: *"재고조정 승인 / 음수재고 예외 승인 / 월마감 해제 — 항상 작성자와 승인자를 분리합니다 (변경 불가)"* |
+| **② 승인 정책** | `allow_self_approval_sku` · `allow_self_approval_bom` 토글 2개 + **아래 3종은 회색 처리된 고정 항목으로 표시**: *"재고조정 승인 / 음수재고 예외 승인 / 월마감 해제 — 항상 작성자와 승인자를 분리합니다 (변경 불가)"* |
 | **③ 운영 플래그** | `posting_frozen` — 재구축 중 자동 전환. 수동 조작 시 경고 |
 | **버튼** | 저장(사유 필수) / 잠금 / 잠금 해제(재인증) |
 | **상태변화** | 변경 시 감사로그. `cutover_date` 설정 → 기초재고 메뉴 활성화 |
@@ -446,7 +447,7 @@ DEEPPOINT SCM OS
 |---|---|
 | 목록 열 | SKU 코드 / 상품명 / 품목구분 / 요청자 / 요청일 / 검증 결과 / 미해소 이슈 |
 | 버튼 | 승인 / 반려(사유 필수) / 수정 요청 / 바코드 중복 예외 승인 / 코드체계 예외 승인 |
-| ✏️ 자가승인 | `allow_self_approval=false`일 때 본인 요청 건은 **승인 버튼 비활성 + 툴팁** |
+| ✏️ 자가승인 | 해당 워크플로의 설정이 `false`일 때 본인 요청 건은 **승인 버튼 비활성 + 툴팁** |
 | 권한 | **L, A만** |
 
 ## 11.7 외부 상품 매핑 `/master/external-mappings`
@@ -575,7 +576,7 @@ flowchart LR
 | 라인 UI | LOT·유통기한·창고 정정은 **좌(변경 전) → 우(변경 후) 2열 대조 폼**. 단순 필드 수정 UI 미제공 |
 | 버튼 | 신규 / 승인 요청 / 승인 / **관리자 추가승인** / 반려 / **반영** / 증빙 첨부 |
 | 승인기준 | 단순 상태변경·수량조정 = **L** / 마감월·음수 유발·대량 업로드 = **A 추가승인 + 재인증** |
-| ✏️ 권한 | 요청 S,L,A / 승인 **L,A — 요청자≠승인자, `allow_self_approval` 설정 무시(항상 분리)** |
+| ✏️ 권한 | 요청 S,L,A / 승인 **L,A — 요청자≠승인자, 자가승인 설정 무시(항상 분리)** |
 
 ## 11.16 재고실사 `/inventory/counts`
 
@@ -595,7 +596,7 @@ flowchart LR
 | 사전검증 8종 | ① 음수재고 ② 미승인 조정 ③ 미완료 이동 ④ 미처리 대사차이 ⑤ 미매칭 외부 SKU ⑥ **수불 검증차이** ⑦ 원인문서 없는 거래 ⑧ 취소대기 |
 | 창고별 진행 | 창고별 검증 상태(PASS·WARN·FAIL) 테이블 |
 | 버튼 | 사전검증 실행 / 마감 / **마감 해제** / 검증결과 다운로드 / 마감 스냅샷 |
-| ✏️ 마감 해제 | **관리자만 + 재인증 + 사유 필수 + `allow_self_approval` 무시(항상 분리)** / 이후 월 마감 시 차단 / 변경거래 목록 표시 |
+| ✏️ 마감 해제 | **관리자만 + 재인증 + 사유 필수 + 자가승인 설정 무시(항상 분리)** / 이후 월 마감 시 차단 / 변경거래 목록 표시 |
 
 ## 11.18 3PL 재고대사 `/inventory/reconciliations`
 
