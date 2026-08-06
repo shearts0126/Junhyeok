@@ -31,7 +31,8 @@
     "prisma:status": "prisma migrate status",
     "prisma:studio": "prisma studio",
     "postinstall": "prisma generate",
-    "db:seed": "tsx prisma/seed/index.ts"
+    "db:seed": "tsx prisma/seed/index.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -49,6 +50,7 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.20.4",

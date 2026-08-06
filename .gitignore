@@ -49,3 +49,7 @@ next-env.d.ts
 
 # prisma generated client (빌드 산출물 — pnpm prisma generate 로 재생성)
 /src/generated
+
+# playwright 산출물
+/test-results
+/playwright-report

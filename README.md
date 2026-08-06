@@ -124,6 +124,7 @@ curl -s http://localhost:3000/api/health | jq
 | `pnpm format:check` | Prettier 검사 (CI용) |
 | `pnpm test` | Vitest 1회 실행 |
 | `pnpm test:watch` | Vitest watch |
+| `pnpm test:e2e` | Playwright E2E (스텁 Supabase + next dev 자동 기동) |
 | **`pnpm verify`** | **typecheck → lint → format:check → test → build 전체 검증** |
 
 ### 데이터베이스
@@ -140,7 +141,7 @@ curl -s http://localhost:3000/api/health | jq
 | `pnpm prisma:migrate` | 개발용 마이그레이션 생성·적용 (`prisma migrate dev`) |
 | `pnpm prisma:deploy` | 운영용 마이그레이션 적용 (`prisma migrate deploy`) |
 | `pnpm prisma:studio` | Prisma Studio |
-| `pnpm db:seed` | 역할·권한 시드 (재실행 안전) |
+| `pnpm db:seed` | 역할·권한 + 코드사전 시드 (재실행 안전, 단일 트랜잭션) |
 
 > `typecheck` 가 `next typegen` 을 선행하는 이유: Next.js 16은 `LayoutProps` / `PageProps` 등
 > 라우트 타입을 `.next/types` 에 생성합니다. `tsc` 단독 실행 시 이 타입을 찾지 못합니다.
@@ -761,6 +762,10 @@ resolveRoutePermission({ pathname: '/api/roles',           method: 'POST'  }); /
 | `/api/roles` | `GET` | `role.read` |
 | `/api/system-settings` | `GET`, `HEAD` | `system_setting.read` |
 | `/api/system-settings` | `PATCH`, `PUT`, `POST`, `DELETE` | `system_setting.update` |
+| `/api/code-groups` | `GET`, `HEAD` | `common_code.read` |
+| `/api/codes` | `GET`, `HEAD` | `common_code.read` |
+| `/api/codes` | `POST`, `PATCH`, `PUT`, `DELETE` | `common_code.manage` |
+| `/admin/codes` | `GET`, `HEAD` | `common_code.read` |
 
 **2차 — Application Service**
 
@@ -787,6 +792,10 @@ Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 �
 | `GET /api/roles` | `role.read` |
 | `GET /api/system-settings` | `system_setting.read` |
 | `PATCH /api/system-settings` | `system_setting.update` |
+| `GET /api/code-groups` | `common_code.read` |
+| `GET /api/codes/{groupCode}` | `common_code.read` |
+| `POST /api/codes/{groupCode}` | `common_code.manage` |
+| `PATCH /api/codes/{groupCode}/{code}` | `common_code.manage` |
 
 ```bash
 pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
@@ -976,6 +985,110 @@ CREATE TRIGGER audit_log_no_truncate  BEFORE TRUNCATE ON audit_log FOR EACH STAT
 > ⚠️ **PostgreSQL 한계**: 테이블 소유자와 superuser 는 `ALTER TABLE audit_log DISABLE TRIGGER ALL`
 > 로 트리거를 끌 수 있습니다. DB 수준에서 이를 막을 방법은 없습니다. 운영에서는 애플리케이션
 > 롤에 테이블 소유권을 주지 않고, 소유자 계정 사용을 별도 통제·감사 대상으로 둡니다.
+
+---
+
+## 공통코드 (T0-8)
+
+5개 엑셀에 흩어져 있던 코드사전의 단일 기준입니다.
+`common_code_group`(그룹) / `common_code`(코드 값), 물리 컬럼은 전부 snake_case 입니다.
+
+### 시드 — 원본 그대로, 수량은 실측
+
+`prisma/seed/common-code-data.ts` 는 **원본 엑셀에서 기계 추출한 값**입니다. 오탈자(대분류 SL 의
+영문명 `Styiling`)도 고치지 않습니다 — 코드사전의 기준은 원본이고, 보정은 원본 소유자의 확인을
+거쳐 별도 변경으로 처리합니다.
+
+| 그룹 | groupCode | 시드 수량 |
+|---|---|---|
+| 브랜드 | `BRAND` | 2 |
+| 대분류 | `MAJOR_CATEGORY` | **12** — 설계 문서의 "13"은 집계 오기. 원본 사전에 12행 |
+| 소분류 | `MINOR_CATEGORY` | 19 |
+| 부자재분류 | `MATERIAL_CATEGORY` | **38** — 원본 39행 중 `ET`(기타) 중복 1건 제외 |
+| 보관처 | `STORAGE_LOCATION` | 11 — `BOC`·`BON` 명칭 동일(중복 의심값, 원본대로 시드) |
+| 채널 | `CHANNEL` | 16 |
+| **합계** | | **98** |
+
+시드는 idempotent 합니다 — natural key(`groupCode`, `(groupId, code)`)로 upsert 하므로 재실행해도
+중복이 없고 **UUID 가 바뀌지 않으며**, 사용자가 API 로 추가한 커스텀 코드를 건드리지 않습니다.
+전체가 **한 트랜잭션**이라 부모 코드 누락 등으로 실패하면 부분 시드 없이 롤백됩니다.
+
+원본 사전에는 그룹 간 계층이 없습니다(소분류 8종이 여러 대분류 아래에서 사용됨을 SKU 데이터로
+확인). 6개 그룹 모두 `parent_group_id = NULL` 이고, 계층 검증 로직은 테스트 픽스처로 검증합니다.
+
+### ⛔ 물리삭제가 없습니다 — "삭제" = 비활성화
+
+| 상황 | 처리 |
+|---|---|
+| 미사용 코드 | `active=false` (물리삭제 아님) |
+| 사용 중 코드 | 역시 `active=false` 만 허용 |
+| 코드 이력 | 행을 보존 |
+
+- DELETE API 가 없고, Application 계층에 delete 메서드가 없습니다 (테스트로 고정)
+- 화면·API 용어도 "삭제"가 아니라 **"비활성화"** 입니다
+- 비활성 코드도 감사·이력 목적으로 DB 에 남습니다
+- `code` 와 `group` 은 생성 후 변경 불가 — 이름·정렬순서·속성·활성 여부만 수정합니다
+
+> ⚠️ **향후 참조 규칙**: SKU·Warehouse·BOM 등에서 `common_code` 를 참조할 때는 반드시
+> **FK `ON DELETE RESTRICT`** 를 씁니다. 참조되는 코드가 지워지는 경로 자체를 DB 가 막아야
+> 합니다. (T0-8 에는 해당 모델이 없으므로 이 규칙만 남깁니다)
+
+### DB 제약
+
+```sql
+UNIQUE (group_code)                         -- common_code_group
+UNIQUE (group_id, code)                     -- common_code (그룹 내 유일, 다른 그룹은 동일 code 허용)
+CHECK  (code = btrim(code) AND length > 0)  -- code·name·group_code 빈 값·앞뒤 공백 금지
+CHECK  (sort_order >= 0)
+CHECK  (parent_code_id <> id)               -- 자기참조 금지 (그룹도 동일)
+FK ON DELETE RESTRICT                       -- group_id, parent_code_id, parent_group_id
+```
+
+부모 코드 정합성(그룹의 상위 그룹 코드만 부모 허용 · 순환 금지 · 비활성 부모에 활성 자식 연결
+금지)은 Application Service 가 검증합니다 — 서로 다른 그룹 간 참조라 단순 DB 제약으로는 표현되지
+않습니다.
+
+### 권한
+
+| 역할 | `common_code.read` | `common_code.manage` |
+|---|---|---|
+| ADMIN | ✅ | ✅ |
+| SCM_LEADER / SCM_STAFF / FINANCE / EXECUTIVE | ✅ | — |
+
+ADMIN 도 `role_permission` 행으로만 권한을 얻습니다 — 코드상 특별 통과가 없습니다.
+
+### API
+
+```bash
+GET   /api/code-groups                 # common_code.read — 그룹 목록 + 수량
+GET   /api/codes/{groupCode}?active=true|false|all   # common_code.read (기본 active=true)
+POST  /api/codes/{groupCode}           # common_code.manage — 코드 추가 (201)
+PATCH /api/codes/{groupCode}/{code}    # common_code.manage — name·parentCode·sortOrder·attributes·active
+```
+
+- 정렬은 `sort_order ASC, code ASC`, 없는 그룹은 404
+- 그룹 생성·수정 API 는 없습니다 — 그룹은 seed·migration 관리 대상
+- **동일 값 PATCH 는 400** — "변경할 내용이 없습니다." (`VALIDATION_ERROR`)
+- 하위 활성 코드가 있는 부모 비활성화, 비활성 부모 아래 자식 재활성화는 **409 `CONFLICT`**
+- 코드 POST·PATCH 는 T0-7 AuditLogger 로 `CREATE / UPDATE / DEACTIVATE / REACTIVATE` 를
+  **같은 트랜잭션**에서 기록합니다. `entity_id` 는 실제 CommonCode UUID 입니다.
+
+### 관리 화면 — `/admin/codes`
+
+그룹 선택(그룹별 전체·활성·비활성 수량) · active 필터 · 코드/명칭 검색 · 신규 추가 · 수정 ·
+비활성화(확인 후)/재활성화. 코드 값이 생성 후 불변임을 화면에 명시하고, 삭제 버튼은 없습니다.
+`common_code.manage` 가 없으면 수정 UI 를 렌더링하지 않지만 — **권한의 근거는 항상 서버**입니다
+(1차 Proxy + 2차 Application Service).
+
+### E2E
+
+```bash
+pnpm test:e2e        # Playwright — 스텁 Supabase(54321) + next dev(3100) 자동 기동
+```
+
+`tests/e2e/supabase-stub.ts` 는 Supabase Auth 의 환경 대역입니다. 앱은 운영과 같은 인증 경로
+(@supabase/ssr → 쿠키 → `getClaims`)를 그대로 타며, **앱 코드·production bundle 에 테스트 분기가
+없습니다** — 스텁은 `NEXT_PUBLIC_SUPABASE_URL` 환경변수로만 연결됩니다.
 
 ---
 

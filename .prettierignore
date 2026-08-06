@@ -8,3 +8,5 @@ public
 src/generated
 prisma/migrations
 *.md
+test-results
+playwright-report

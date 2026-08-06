@@ -5,6 +5,7 @@ import { disconnectPrisma, getPrismaClient } from '@/shared/db';
 import { ERROR_CODES, type AppError } from '@/shared/errors';
 
 import { seedRolesAndPermissions } from '../../../prisma/seed/roles';
+
 import {
   SETTING_READ_PERMISSION,
   SETTING_UPDATE_PERMISSION,

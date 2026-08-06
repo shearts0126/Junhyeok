@@ -32,9 +32,16 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'role.read', description: '역할 목록 조회' },
   { permissionKey: 'system_setting.read', description: '시스템 설정 조회' },
   { permissionKey: 'system_setting.update', description: '시스템 설정 변경' },
+  { permissionKey: 'common_code.read', description: '공통코드 조회' },
+  { permissionKey: 'common_code.manage', description: '공통코드 생성·수정·비활성화' },
 ];
 
-/** 역할 → 권한. ADMIN 에만 부여한다. */
+/**
+ * 역할 → 권한.
+ *
+ * 공통코드(T0-8): 조회는 전 역할, 관리는 ADMIN 만.
+ * ADMIN 도 이 표의 행으로만 권한을 얻는다 — 코드상 무조건 통과 없음.
+ */
 export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   roleCode: RoleCode;
   permissionKey: string;
@@ -42,6 +49,12 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'role.read' },
   { roleCode: 'ADMIN', permissionKey: 'system_setting.read' },
   { roleCode: 'ADMIN', permissionKey: 'system_setting.update' },
+  { roleCode: 'ADMIN', permissionKey: 'common_code.read' },
+  { roleCode: 'ADMIN', permissionKey: 'common_code.manage' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'common_code.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'common_code.read' },
+  { roleCode: 'FINANCE', permissionKey: 'common_code.read' },
+  { roleCode: 'EXECUTIVE', permissionKey: 'common_code.read' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */
