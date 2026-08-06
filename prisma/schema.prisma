@@ -51,6 +51,10 @@ model User {
   updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz
   userRoles UserRole[]
 
+  auditLogs      AuditLog[]      @relation("AuditActor")
+  approvedAudits AuditLog[]      @relation("AuditApprover")
+  updatedSettings SystemSetting[] @relation("SettingUpdatedBy")
+
   @@map("user")
 }
 
@@ -104,4 +108,69 @@ model UserRole {
   @@id([userId, roleId])
   @@index([roleId])
   @@map("user_role")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 시스템 설정·감사로그 (T0-7)
+// ═══════════════════════════════════════════════════════════════
+
+/// 운영 중 바뀌는 값. 코드에 하드코딩하지 않는다.
+///
+/// ⚠️ **타입이 명시된 단일 설정 행**이다(singleton, `id = 1`).
+///    자유 형식 JSON EAV 를 쓰지 않는다 — 설정 하나하나가 업무 판정에 직접
+///    쓰이므로 valueType 분기·NULL 조합·알 수 없는 키가 끼어들 여지를 두지 않는다.
+///
+/// ⛔ 일반 `allow_self_approval` 컬럼은 만들지 않는다.
+///    재고조정 승인·음수재고 예외 승인·월마감 해제는 설정과 무관하게
+///    항상 요청자≠승인자다 (ADMIN 예외 없음).
+model SystemSetting {
+  /// singleton. 항상 1.
+  id                   Int       @id
+  allowSelfApprovalSku Boolean   @default(false) @map("allow_self_approval_sku")
+  allowSelfApprovalBom Boolean   @default(false) @map("allow_self_approval_bom")
+  /// 전환 기준일 (D-01). UAT 완료 후 관리자가 설정한다.
+  cutoverDate          DateTime? @map("cutover_date") @db.Date
+  /// balance 재구축 중 Posting 차단
+  postingFrozen        Boolean   @default(false) @map("posting_frozen")
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy            String?   @map("updated_by") @db.Uuid
+  /// 낙관적 동시성 제어. 변경마다 증가한다.
+  version              Int       @default(1)
+
+  /// 사용자를 지워도 설정 이력이 훼손되지 않도록 SET NULL.
+  updatedByUser User? @relation("SettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("system_setting")
+}
+
+/// 감사로그. **불변**이다.
+///
+/// UPDATE / DELETE / TRUNCATE 는 DB 트리거로 차단한다.
+/// 애플리케이션 코드만으로 불변성을 보장하지 않는다 — 직접 SQL 실행도 막아야 한다.
+///
+/// ⛔ `updated_at` 컬럼이 없다. 수정 API·삭제 API 도 없다.
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  action      String
+  beforeValue Json?    @map("before_value")
+  afterValue  Json?    @map("after_value")
+  /// 수행자. ActorContext 에서만 취득한다.
+  actorId     String   @map("actor_id") @db.Uuid
+  /// 승인자. 승인 행위가 아닌 경우 NULL.
+  approvedBy  String?  @map("approved_by") @db.Uuid
+  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+  reason      String?
+  requestId   String?  @map("request_id")
+  sessionId   String?  @map("session_id")
+  ipAddress   String?  @map("ip_address")
+
+  /// 사용자를 지워도 감사로그가 사라지면 안 된다.
+  actor      User  @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  approver   User? @relation("AuditApprover", fields: [approvedBy], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, occurredAt(sort: Desc)])
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@map("audit_log")
 }

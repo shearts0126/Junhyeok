@@ -2,7 +2,7 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-6` — 인증·권한**
+> **현재 단계: `R1a-0 / T0-7` — 감사로그·시스템 설정**
 > 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(SKU·재고 등)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
@@ -23,6 +23,7 @@
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
 | 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
 | 인증·권한 | Supabase Auth + 2겹 권한 가드 | T0-6 ✅ |
+| 감사·설정 | 불변 감사로그(DB 트리거) + 시스템 설정 | T0-7 ✅ |
 | 파일 저장 | Supabase Storage | T4-2 (R1a-4) |
 | 잡 큐 | pg-boss + 전용 워커 | T4-1 (R1a-4) |
 | 배포 | Vercel | — |
@@ -771,6 +772,124 @@ pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
 
 시드는 T0-6 이 실제로 쓰는 최소 권한만 등록합니다. SKU·BOM·재고 권한을 미리 넣지 않습니다 —
 쓰이지 않는 권한 행은 "누가 무엇을 할 수 있는가"를 흐리게 만듭니다.
+
+---
+
+## 감사로그와 시스템 설정
+
+### 시스템 설정 (`system_setting`)
+
+**타입이 명시된 단일 설정 행**입니다(singleton, `id = 1`). 자유 형식 JSON EAV 를 쓰지 않습니다 —
+설정 하나하나가 업무 판정에 직접 쓰이므로 `valueType` 분기·NULL 조합·알 수 없는 키가 끼어들 여지를
+두지 않습니다.
+
+| 필드 | 타입 | 초기값 |
+|---|---|---|
+| `allowSelfApprovalSku` | boolean | `false` |
+| `allowSelfApprovalBom` | boolean | `false` |
+| `cutoverDate` | date \| null | `null` |
+| `postingFrozen` | boolean | `false` |
+| `version` | int | `1` |
+
+> ⛔ 일반 `allow_self_approval` 컬럼은 만들지 않습니다.
+
+```bash
+GET /api/system-settings      # system_setting.read
+PATCH /api/system-settings    # system_setting.update
+```
+
+```json
+// GET 응답
+{ "allowSelfApprovalSku": false, "allowSelfApprovalBom": false,
+  "cutoverDate": null, "postingFrozen": false, "version": 1, "requestId": "..." }
+
+// PATCH 요청 — version 필수
+{ "postingFrozen": true, "version": 1 }
+```
+
+- 부분 수정 허용, 최소 한 필드 필요
+- `version` 이 현재 값과 다르면 **409 `CONFLICT`**, 변경 시 `version` 증가
+- 알 수 없는 필드·잘못된 타입 거부, `cutoverDate` 는 `YYYY-MM-DD` 또는 `null`
+- `updatedBy` 는 요청 본문이 아니라 **`ActorContext`** 에서 가져옵니다
+- **변경 없는 동일 값 요청도 정상 처리**합니다. 값은 그대로지만 `version` 은 증가하고 감사로그도
+  남습니다 — "누가 언제 이 값을 확정했는가"가 기록으로 필요하고, 조용히 무시하면 `version` 이
+  어긋난 클라이언트가 성공했다고 오해합니다.
+
+설정 변경과 감사로그 INSERT 는 **같은 트랜잭션**에서 처리합니다.
+
+### 자기승인 정책
+
+| 워크플로 | 자기승인 |
+|---|---|
+| `SKU` | `allow_self_approval_sku` 설정 |
+| `BOM` | `allow_self_approval_bom` 설정 |
+| `INVENTORY_ADJUSTMENT` | ❌ **항상 금지** |
+| `NEGATIVE_STOCK_EXCEPTION` | ❌ **항상 금지** |
+| `INVENTORY_CLOSE_REOPEN` | ❌ **항상 금지** |
+
+아래 3종은 **설정을 읽지 않습니다.** 설정으로 열 수 있게 두면 언젠가 열립니다. 재고 원장은
+불변이고 마감은 회계 기간을 확정하므로, 한 사람이 요청과 승인을 모두 하면 통제가 성립하지
+않습니다. **ADMIN 도 예외가 없습니다** — `assertApprovalActor` 는 역할을 인자로 받지 않습니다.
+
+```ts
+import { assertApprovalActor, canSelfApprove } from '@/modules/settings/application';
+
+assertApprovalActor({ requesterId, approverId, workflow: 'SKU', settings });
+// 금지 시 SELF_APPROVAL_FORBIDDEN / HTTP 403
+```
+
+T0-7 은 실제 SKU·BOM·재고조정 워크플로를 구현하지 않습니다. 정책 함수만 확정해 두어 나중에 각
+모듈이 제각기 다른 규칙을 만들지 않게 합니다.
+
+### 감사로그 (`audit_log`) — 불변
+
+```ts
+await withTransaction(async (tx) => {
+  const before = await tx.systemSetting.findUniqueOrThrow({ where: { id: 1 } });
+  const after = await tx.systemSetting.update({ where: { id: 1 }, data });
+
+  await auditLogger.write(tx, {       // ★ 첫 인자가 트랜잭션 클라이언트
+    actor, entityType: 'SystemSetting', entityId: '1',
+    action: 'UPDATE', beforeValue: before, afterValue: after,
+  });
+
+  return after;
+});
+```
+
+**트랜잭션 클라이언트를 반드시 주입받습니다.** 첫 인자가 `TransactionClient` 이므로 트랜잭션
+밖에서는 **타입상 호출할 수 없습니다.** 업무 변경과 감사로그가 다른 트랜잭션에 있으면 "기록 없는
+변경" 또는 "일어나지 않은 일의 기록" 중 하나가 남고, 둘 다 감사 기록을 근거로 쓸 수 없게 만듭니다.
+
+`actorId` · `requestId` · `sessionId` · `ipAddress` 는 **`ActorContext` 에서만** 가져옵니다.
+`occurredAt` 도 호출부가 지정할 수 없습니다(DB 기본값). 수행자와 시각을 호출부가 정할 수 있으면
+감사로그가 아니라 그냥 메모입니다.
+
+저장 전 정규화: `Decimal` → 문자열, `Date` → ISO 문자열, `BigInt` → 문자열, `undefined` 키 제거,
+순환 참조 거부, `password`·`token`·`cookie`·`authorization` 등 민감값 마스킹. 감사로그는 불변이라
+잘못 들어간 값을 지울 수 없기 때문입니다.
+
+**전체 Prisma mutation 을 자동 감시하는 middleware·extension 을 쓰지 않습니다.** 각 Application
+Service 가 명시적으로 호출합니다. 자동 감시는 무엇이 기록되는지 코드에서 보이지 않고, 업무
+의미(action·reason·승인자)를 담지 못합니다.
+
+### 불변성은 DB 가 보장합니다
+
+```sql
+CREATE TRIGGER audit_log_no_update    BEFORE UPDATE   ON audit_log FOR EACH ROW ...
+CREATE TRIGGER audit_log_no_delete    BEFORE DELETE   ON audit_log FOR EACH ROW ...
+CREATE TRIGGER audit_log_no_truncate  BEFORE TRUNCATE ON audit_log FOR EACH STATEMENT ...
+```
+
+세 트리거 모두 `AUDIT_LOG_IMMUTABLE` 예외를 던집니다. 애플리케이션 코드만으로 불변성을 보장하지
+않습니다 — psql·관리도구·잘못된 배치에서 직접 실행하는 SQL 도 막아야 감사 기록이 근거가 됩니다.
+
+`audit_log.actor_id` / `approved_by` 는 `ON DELETE RESTRICT` 라 **감사로그가 있는 사용자는 삭제되지
+않습니다.** `updated_at` 컬럼이 없고 수정·삭제 API 도 없습니다.
+
+> ⚠️ **PostgreSQL 한계**: 테이블 소유자와 superuser 는 `ALTER TABLE audit_log DISABLE TRIGGER ALL`
+> 로 트리거를 끌 수 있습니다. DB 수준에서 이를 막을 방법은 없습니다. 운영에서는 애플리케이션
+> 롤에 테이블 소유권을 주지 않고, 소유자 계정 사용을 별도 통제·감사 대상으로 둡니다.
 
 ---
 

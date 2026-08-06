@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma/client';
+import { SYSTEM_SETTING_ID } from '@/modules/settings/application';
 
 /**
  * 역할·권한 초기 데이터 (T0-6).
@@ -26,25 +27,33 @@ export const ROLE_SEED: ReadonlyArray<{ roleCode: RoleCode; roleName: string }> 
   { roleCode: 'EXECUTIVE', roleName: '경영진' },
 ];
 
-/** T0-6 에서 실제로 사용하는 권한. `GET /api/roles` 가 요구한다. */
+/** 실제로 사용하는 권한만 등록한다. */
 export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description: string }> = [
   { permissionKey: 'role.read', description: '역할 목록 조회' },
+  { permissionKey: 'system_setting.read', description: '시스템 설정 조회' },
+  { permissionKey: 'system_setting.update', description: '시스템 설정 변경' },
 ];
 
-/** 역할 → 권한. ADMIN 에만 `role.read` 를 부여한다. */
+/** 역할 → 권한. ADMIN 에만 부여한다. */
 export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   roleCode: RoleCode;
   permissionKey: string;
-}> = [{ roleCode: 'ADMIN', permissionKey: 'role.read' }];
+}> = [
+  { roleCode: 'ADMIN', permissionKey: 'role.read' },
+  { roleCode: 'ADMIN', permissionKey: 'system_setting.read' },
+  { roleCode: 'ADMIN', permissionKey: 'system_setting.update' },
+];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */
 export type SeedClient =
-  Pick<PrismaClient, 'role' | 'permission' | 'rolePermission'> | Prisma.TransactionClient;
+  | Pick<PrismaClient, 'role' | 'permission' | 'rolePermission' | 'systemSetting'>
+  | Prisma.TransactionClient;
 
 export interface SeedResult {
   readonly roles: number;
   readonly permissions: number;
   readonly rolePermissions: number;
+  readonly systemSettings: number;
 }
 
 /**
@@ -85,9 +94,23 @@ export async function seedRolesAndPermissions(client: SeedClient): Promise<SeedR
     });
   }
 
+  // 시스템 설정 singleton (T0-7). 초기값은 전부 비활성·NULL 이다.
+  await client.systemSetting.upsert({
+    where: { id: SYSTEM_SETTING_ID },
+    update: {},
+    create: {
+      id: SYSTEM_SETTING_ID,
+      allowSelfApprovalSku: false,
+      allowSelfApprovalBom: false,
+      cutoverDate: null,
+      postingFrozen: false,
+    },
+  });
+
   return {
     roles: ROLE_SEED.length,
     permissions: PERMISSION_SEED.length,
     rolePermissions: ROLE_PERMISSION_SEED.length,
+    systemSettings: 1,
   };
 }

@@ -19,7 +19,7 @@ async function main(): Promise<void> {
 
   console.log(
     `시드 완료 — 역할 ${result.roles}개, 권한 ${result.permissions}개, ` +
-      `역할-권한 ${result.rolePermissions}건`,
+      `역할-권한 ${result.rolePermissions}건, 시스템 설정 ${result.systemSettings}행`,
   );
 }
 

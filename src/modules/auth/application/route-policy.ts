@@ -24,7 +24,13 @@ const DEV_ONLY_PREFIXES: readonly string[] = ['/api/dev/'];
 export const ROUTE_PERMISSIONS: ReadonlyArray<{
   readonly prefix: string;
   readonly permission: string;
-}> = [{ prefix: '/api/roles', permission: 'role.read' }];
+}> = [
+  { prefix: '/api/roles', permission: 'role.read' },
+  // ⚠️ GET 과 PATCH 가 서로 다른 권한을 요구한다. Proxy 는 메서드를 보지 않으므로
+  //    더 약한 쪽(read)만 1차로 확인하고, update 권한은 2차 가드가 판정한다.
+  //    1차 가드는 "명백히 자격 없는 요청을 일찍 끊는" 역할이지 최종 판정이 아니다.
+  { prefix: '/api/system-settings', permission: 'system_setting.read' },
+];
 
 export function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
