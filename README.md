@@ -2,7 +2,7 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-3` — 공통 오류체계**
+> **현재 단계: `R1a-0 / T0-4` — 공통 트랜잭션·Decimal 유틸**
 > 인증과 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(테이블)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
@@ -17,6 +17,8 @@
 | 패키지 매니저 | pnpm 10 | T0-1 ✅ |
 | 코드 품질 | ESLint 9 (flat config) + Prettier 3 | T0-1 ✅ |
 | 오류 처리 | 공통 오류체계 + request ID | T0-3 ✅ |
+| 트랜잭션 | `withTransaction` (자동 재시도 없음) | T0-4 ✅ |
+| 수량·금액 | Prisma Decimal + 변환 금지 ESLint 규칙 | T0-4 ✅ |
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
 | 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
 | 인증 | Supabase Auth | T0-6 |
@@ -164,13 +166,18 @@ curl -s http://localhost:3000/api/health | jq
 │  └─ shared/                   공유 계층 → src/shared/README.md
 │     ├─ env.ts                 환경변수 검증
 │     ├─ health.ts              헬스체크 로직
-│     ├─ db/                    Prisma 클라이언트 · 연결 점검
+│     ├─ db/                    Prisma 클라이언트 · 연결 점검 · withTransaction
+│     ├─ decimal/               Decimal 안전 유틸 (수량·금액)
 │     └─ errors/                공통 오류체계 · request ID · 로깅 · 자격증명 마스킹
+├─ eslint-rules/                프로젝트 전용 ESLint 규칙
+│  ├─ no-decimal-to-number.ts   Decimal → number 변환 차단 (타입 기반)
+│  └─ __fixtures__/             규칙 테스트용 예제 (lint 대상에서 제외)
+├─ tests/                       소스 트리 밖 테스트 (ESLint 규칙 등)
 ├─ AGENTS.md / CLAUDE.md        ⚠️ Next.js 자동 생성 (아래 참조)
 ├─ docker-compose.yml           로컬 PostgreSQL
 ├─ prisma.config.ts             Prisma CLI 설정 (DIRECT_URL)
 ├─ components.json              shadcn/ui 설정
-├─ eslint.config.mjs
+├─ eslint.config.ts             ESLint flat config (jiti 로 TS 로딩)
 ├─ vitest.config.ts
 └─ .env.example
 ```
@@ -274,6 +281,180 @@ T0-2 시점에는 **업무 모델이 없어 마이그레이션 파일도 없습�
 pnpm db:reset        # 볼륨 삭제 + 재기동 (모든 데이터 소실)
 pnpm prisma:deploy   # 마이그레이션 재적용 (모델이 생긴 뒤)
 ```
+
+---
+
+## 트랜잭션
+
+재고·발주·감사로그처럼 여러 테이블을 한 번에 바꾸는 작업은 `withTransaction` 을 통과합니다.
+유스케이스가 `prisma.$transaction` 을 직접 부르면 옵션 기본값·오류 처리·클라이언트 주입 방식이
+호출부마다 갈라집니다.
+
+```ts
+import { withTransaction } from '@/shared/db';
+
+const header = await withTransaction(async (tx) => {
+  const created = await tx.inventoryTransaction.create({ data });
+  await tx.inventoryLedgerEntry.createMany({ data: entries });
+  return created;                      // 반환 타입이 그대로 보존됩니다
+});
+```
+
+옵션을 주는 경우:
+
+```ts
+await withTransaction(
+  async (tx) => { /* ... */ },
+  { isolationLevel: 'Serializable', timeout: 15_000, maxWait: 3_000 },
+);
+```
+
+| 옵션 | 단위 | 미지정 시 |
+|---|---|---|
+| `maxWait` | ms | Prisma 기본값 (2000) |
+| `timeout` | ms | Prisma 기본값 (5000) |
+| `isolationLevel` | `ReadUncommitted` / `ReadCommitted` / `RepeatableRead` / `Serializable` | DB 기본값 (PostgreSQL 은 `ReadCommitted`) |
+
+지정한 키만 Prisma 에 전달됩니다. 아무것도 주지 않으면 옵션 객체 자체를 넘기지 않아
+Prisma·DB 기본값이 그대로 쓰입니다.
+
+**동작 계약**
+
+- callback 이 정상 반환하면 **commit**, 반환값을 그대로 돌려줍니다.
+- callback 이 예외를 던지면 **rollback**, **원래 오류를 그대로 전파**합니다.
+  감싸거나 변환하지 않으므로 호출부의 `instanceof` 검사가 그대로 동작합니다.
+- callback 은 **정확히 한 번** 실행됩니다.
+
+### 자동 재시도가 없는 이유
+
+직렬화 실패(`40001`)·데드락(`40P01`)은 재시도로 해소되는 경우가 많지만, **이 계층에서는
+재시도하지 않습니다.**
+
+`withTransaction` 의 재시도는 callback **전체**를 다시 실행합니다. callback 안에 외부 API 호출,
+파일 저장, 메시지 발행처럼 **롤백되지 않는 부작용**이 하나라도 들어오면 그 부작용이 중복
+실행됩니다. DB 는 롤백되지만 이미 보낸 HTTP 요청은 되돌릴 수 없습니다.
+
+재시도는 "무엇을 다시 해도 안전한가"를 아는 계층이 결정해야 합니다. 따라서
+`SERIALIZATION_FAILURE` 변환과 Posting Service 의 재시도 정책은 **멱등성 정책과 함께 R1a-2**
+에서 구현합니다.
+
+### 트랜잭션 클라이언트
+
+callback 이 받는 `TransactionClient` 에는 `$transaction` · `$connect` · `$disconnect` · `$on` ·
+`$use` · `$extends` 가 없습니다(Prisma 의 `ITXClientDenyList`). 중첩 트랜잭션과 커넥션 조작을
+타입 수준에서 막습니다.
+
+> ⚠️ callback 안에서 `getPrismaClient()` 를 다시 부르면 **트랜잭션 밖의 별도 커넥션**으로
+> 나갑니다. 반드시 인자로 받은 `tx` 를 쓰세요.
+
+---
+
+## 수량과 금액 — Decimal
+
+수량과 금액은 **끝까지 `Decimal` 로 다룹니다.** 중간 계산에서 한 번이라도 JavaScript `number` 로
+내려가면 그 시점에 정밀도가 깨지고, 되돌릴 수 없습니다.
+
+```
+0.1 + 0.2 === 0.30000000000000004     // number
+9007199254740993 → 9007199254740992   // 2^53 초과 정수는 표현 불가
+```
+
+재고 원장은 **불변**이고 현재고는 원장의 합으로 계산됩니다. 한 건의 오차가 모든 후속 잔고에
+누적되며, 원장을 고칠 수 없으므로 정정거래로만 바로잡을 수 있습니다.
+
+### 경계별 처리 원칙
+
+| 경계 | 표현 | 이유 |
+|---|---|---|
+| DB (Prisma) | **Decimal 그대로** | Prisma 가 `numeric` 으로 그대로 전달합니다. 문자열로 바꾸지 않습니다 |
+| 도메인·계산 | **Decimal 유지** | 중간 변환이 오차의 시작점입니다 |
+| API 응답(JSON) | **문자열** | 클라이언트의 `JSON.parse` 가 double 로 읽어 정밀도를 잃습니다 |
+| 로그 | 문자열 | |
+| 파일(CSV·Excel) | 문자열 | 지수표기·자동 서식 변환을 피합니다 |
+| 화면 표시 | 문자열 | 표시 서식은 프레젠테이션 계층 책임 |
+
+### 유틸
+
+```ts
+import {
+  toDecimal, isDecimal, toDecimalString,
+  add, subtract, multiply, divide, sumDecimals,
+  compareDecimals, isEqual, isGreaterThan, isLessThan, isZero, isNegative,
+  roundToScale, ROUNDING, ZERO,
+} from '@/shared/decimal';
+
+const available = toDecimal('10.000000');
+const requested = toDecimal('12.000000');
+
+if (isLessThan(available, requested)) { /* 재고 부족 */ }
+
+const remaining = subtract(available, requested);   // Decimal
+return { available: toDecimalString(available) };   // 응답 경계에서만 문자열
+```
+
+입력 타입은 `Decimal | string` 입니다. **`number` 는 의도적으로 제외**했습니다 —
+`toDecimal(0.1 + 0.2)` 가 타입 수준에서 막혀야 정밀도 손실이 유틸 안으로 새어 들어오지 않습니다.
+
+두 가지 함정을 유틸이 막습니다.
+
+1. **0 으로 나누기** — decimal.js 는 예외 없이 `Infinity`(`0/0` 은 `NaN`)를 돌려줍니다.
+   `divide()` 는 `RangeError` 를 던집니다.
+2. **`Infinity` · `NaN` 문자열** — decimal.js 는 유효한 입력으로 받아들입니다.
+   `toDecimal()` 은 거부합니다.
+
+### 허용되는 문자열 직렬화
+
+**`toDecimalString()` 을 쓰세요.** `Decimal.toString()` 은 지수가 크거나 작으면 **지수표기**로
+나옵니다.
+
+```ts
+new Decimal('1e25').toString()        // '1e+25'    ← 엑셀·외부 시스템이 오해합니다
+toDecimalString(toDecimal('1e25'))    // '10000000000000000000000000'
+
+new Decimal('1e-7').toString()        // '1e-7'
+toDecimalString(toDecimal('1e-7'))    // '0.0000001'
+```
+
+AS-IS 엑셀에서 바코드가 지수표기로 깨진 것과 같은 종류의 사고입니다.
+`toDecimalString()` 은 내부적으로 `toFixed()` 를 써서 항상 일반 표기를 냅니다.
+
+자릿수를 고정하려면 `toDecimalString(value, 6)` 처럼 scale 을 넘깁니다.
+
+### ESLint 규칙 — `deeppoint/no-decimal-to-number`
+
+Decimal 을 `number` 로 바꾸는 코드는 **lint 오류**입니다.
+
+```ts
+// ❌ 금지
+decimal.toNumber();
+Number(decimal);
++decimal;
+parseFloat(decimal.toString());
+parseInt(decimal.toString(), 10);
+Number(decimal.toFixed(6));          // 문자열로 우회해도 막힙니다
+
+// ✅ 허용 — 일반 문자열·number
+Number('123');
+parseFloat('1.25');
+parseInt('10', 10);
+
+// ✅ 허용 — Decimal 을 Decimal 로 다루거나 문자열로 직렬화
+add(a, b);
+decimal.toFixed(6);
+toDecimalString(decimal);
+```
+
+**변수 이름이 아니라 타입으로 판정합니다.** `decimal` 이라는 이름을 확인하는 방식은 변수명을
+바꾸면 우회됩니다. 이 규칙은 TypeScript 타입 검사기로 표현식의 타입이 Decimal 인지 봅니다.
+따라서 직접 생성값, 함수 인자, 객체 속성, 연산 결과, 별칭 import(`import { Decimal as D }`),
+상속 타입, 이름을 바꾼 변수가 모두 걸립니다.
+
+타입 정보가 필요하므로 `eslint.config.ts` 의 해당 블록에서 `parserOptions.projectService` 를
+켭니다. 적용 범위는 `src/**` 입니다.
+
+규칙 자체의 테스트는 [`tests/eslint-rules/no-decimal-to-number.test.ts`](tests/eslint-rules/no-decimal-to-number.test.ts)
+에 있습니다. 위반 예제 파일(`eslint-rules/__fixtures__/`)은 전체 lint 를 상시 실패시키지 않도록
+`globalIgnores` 에서 제외하고, 테스트가 ESLint API 로 직접 검사합니다.
 
 ---
 

@@ -5,6 +5,12 @@ import { getPrismaClient } from './prisma';
 
 export { getPrismaClient, disconnectPrisma } from './prisma';
 export { DB_CHECK_NAME, DB_CHECK_TIMEOUT_MS, runDatabaseCheck, summarizeDbError } from './check';
+export {
+  withTransaction,
+  TransactionIsolationLevel,
+  type TransactionClient,
+  type TransactionOptions,
+} from './transaction';
 
 /**
  * 실제 데이터베이스에 `SELECT 1` 을 실행해 연결을 점검한다.

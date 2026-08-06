@@ -1,7 +1,13 @@
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig, globalIgnores } from 'eslint/config';
 import nextVitals from 'eslint-config-next/core-web-vitals';
 import nextTs from 'eslint-config-next/typescript';
 import prettier from 'eslint-config-prettier';
+
+import { deeppointPlugin } from './eslint-rules';
+
+const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
 
 const eslintConfig = defineConfig([
   ...nextVitals,
@@ -32,6 +38,29 @@ const eslintConfig = defineConfig([
     },
   },
 
+  /* ── Decimal → number 변환 차단 (T0-4) ────────────────────────
+   * 타입 정보가 필요한 규칙이므로 projectService 를 켠다.
+   * 변수명이 아니라 **타입**으로 Decimal 을 판정하기 위한 것이다.
+   *
+   * 적용 범위를 src 로 한정한다. 설정 파일·규칙 구현에는 Decimal 이 없고,
+   * 전체 파일에 타입 인식 린트를 켜면 실행 시간만 늘어난다.
+   */
+  {
+    files: ['src/**/*.ts', 'src/**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir,
+      },
+    },
+    plugins: {
+      deeppoint: deeppointPlugin,
+    },
+    rules: {
+      'deeppoint/no-decimal-to-number': 'error',
+    },
+  },
+
   /* ── 모듈 경계 강제 ───────────────────────────────────────────
    * T0-5 에서 재고원장 모델 직접 import 차단 규칙을 추가한다.
    * 현재는 아키텍처 문서(02_시스템_아키텍처와_모듈구조.md §4.4)의
@@ -49,6 +78,9 @@ const eslintConfig = defineConfig([
     'src/generated/**',
     'next-env.d.ts',
     'node_modules/**',
+    // 규칙 테스트용 위반 예제. 전체 lint 를 항상 실패시키지 않도록 제외하고,
+    // tests/eslint-rules/*.test.ts 가 ESLint API 로 직접 검사한다.
+    'eslint-rules/__fixtures__/**',
   ]),
 ]);
 

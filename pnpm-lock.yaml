@@ -57,6 +57,15 @@ importers:
       '@types/react-dom':
         specifier: ^19
         version: 19.2.4(@types/react@19.2.18)
+      '@typescript-eslint/parser':
+        specifier: 8.66.0
+        version: 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      '@typescript-eslint/rule-tester':
+        specifier: 8.66.0
+        version: 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      '@typescript-eslint/utils':
+        specifier: 8.66.0
+        version: 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -69,6 +78,9 @@ importers:
       eslint-config-prettier:
         specifier: ^10.1.5
         version: 10.1.8(eslint@9.39.5(jiti@2.7.0))
+      jiti:
+        specifier: 2.7.0
+        version: 2.7.0
       prettier:
         specifier: ^3.4.2
         version: 3.9.6
@@ -1160,6 +1172,13 @@ packages:
     resolution: {integrity: sha512-7MthGPTt4BP69lSryqpqq8HQqxuzynssckL/jyDyk3+TNMQ3y2jFWkptCrktWvBrP+EH787Nl5N5Qpw7WZg+5g==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
     peerDependencies:
+      typescript: '>=4.8.4 <6.1.0'
+
+  '@typescript-eslint/rule-tester@8.66.0':
+    resolution: {integrity: sha512-un0c+WFK1Bu9EqgJxu+IsKfOZEhzjnMlRub35L9UKVGEc6nAAbKoDTPAVaf5EvGSOPuECBxErv2Zu9s8pkbs9Q==}
+    engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
+    peerDependencies:
+      eslint: ^8.57.0 || ^9.0.0 || ^10.0.0
       typescript: '>=4.8.4 <6.1.0'
 
   '@typescript-eslint/scope-manager@8.66.0':
@@ -4123,6 +4142,20 @@ snapshots:
       '@typescript-eslint/tsconfig-utils': 8.66.0(typescript@5.9.3)
       '@typescript-eslint/types': 8.66.0
       debug: 4.4.3
+      typescript: 5.9.3
+    transitivePeerDependencies:
+      - supports-color
+
+  '@typescript-eslint/rule-tester@8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)':
+    dependencies:
+      '@typescript-eslint/parser': 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      '@typescript-eslint/typescript-estree': 8.66.0(typescript@5.9.3)
+      '@typescript-eslint/utils': 8.66.0(eslint@9.39.5(jiti@2.7.0))(typescript@5.9.3)
+      ajv: 6.15.0
+      eslint: 9.39.5(jiti@2.7.0)
+      json-stable-stringify-without-jsonify: 1.0.1
+      lodash.merge: 4.6.2
+      semver: 7.8.5
       typescript: 5.9.3
     transitivePeerDependencies:
       - supports-color
