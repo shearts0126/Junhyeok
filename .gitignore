@@ -46,3 +46,6 @@ next-env.d.ts
 
 # local tooling
 .eslintcache
+
+# prisma generated client (빌드 산출물 — pnpm prisma generate 로 재생성)
+/src/generated

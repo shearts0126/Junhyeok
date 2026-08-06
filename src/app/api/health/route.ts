@@ -1,20 +1,26 @@
 import { NextResponse } from 'next/server';
 
+import { checkDatabase } from '@/shared/db';
 import { getHealthStatus } from '@/shared/health';
 
 /**
  * 헬스체크 엔드포인트.
  *
- * T0-1 시점에는 애플리케이션 기동 여부만 확인한다.
- * DB·Storage·큐 연결 확인은 각 항목 도입 시점에 checks 에 추가한다.
- *  - DB          : T0-2 (Prisma)
- *  - Auth        : T0-6 (Supabase Auth)
- *  - Storage/Queue: T4-1 / T4-2 (R1a-4)
+ * 점검 항목
+ *  - database : SELECT 1 (T0-2) ✅
+ *  - auth     : T0-6
+ *  - storage  : T4-2 (R1a-4)
+ *  - queue    : T4-1 (R1a-4)
+ *
+ * 응답에는 연결 문자열·비밀정보를 절대 포함하지 않는다.
+ * 실패 사유는 분류된 요약 문장만 노출한다 (shared/db/check.ts).
  */
 export const dynamic = 'force-dynamic';
 
-export function GET(): NextResponse {
-  const status = getHealthStatus();
+export async function GET(): Promise<NextResponse> {
+  const checks = [await checkDatabase()];
+  const status = getHealthStatus(checks);
+
   return NextResponse.json(status, {
     status: status.status === 'ok' ? 200 : 503,
     headers: { 'Cache-Control': 'no-store' },

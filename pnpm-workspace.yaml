@@ -1,6 +1,9 @@
-# Vitest 가 의존하는 esbuild 는 네이티브 바이너리 준비를 위해 postinstall 이 필요하다.
+# 네이티브 바이너리·엔진 준비를 위해 postinstall 실행이 필요한 패키지
 onlyBuiltDependencies:
   - esbuild
+  - prisma
+  - '@prisma/client'
+  - '@prisma/engines'
 
 ignoredBuiltDependencies:
   - sharp

@@ -1,0 +1,29 @@
+// DEEPPOINT SCM OS — Prisma Schema
+//
+// T0-2 시점에는 업무 모델을 정의하지 않는다.
+// 연결 구성과 마이그레이션 체계만 세우고, 모델은 후속 작업에서 추가한다.
+//   - User / Role / Permission     : T0-6
+//   - SystemSetting / AuditLog     : T0-7
+//   - CommonCode                   : T0-8
+//   - Sku / SkuBarcode / ...       : R1a-1
+//   - InventoryTransaction / ...   : R1a-2
+//
+// 설계 문서: docs/03_ERD와_Prisma스키마_v0.2.md
+//
+// ⚠️ Prisma 7 변경사항
+//   datasource 의 url / directUrl 은 더 이상 스키마에 둘 수 없다.
+//   - 마이그레이션용 연결       → prisma.config.ts (DIRECT_URL)
+//   - 애플리케이션 런타임 연결  → PrismaClient 의 driver adapter (DATABASE_URL)
+//   자세한 내용은 README "데이터베이스" 절 참조.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+
+  // 수량·금액은 DECIMAL 을 사용하며 Prisma.Decimal(decimal.js) 로 반환된다.
+  // Number() 변환은 정밀도 손실을 일으키므로 금지한다 (BOM 소요량 1/30 등).
+}
+
+datasource db {
+  provider = "postgresql"
+}

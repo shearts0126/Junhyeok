@@ -1,14 +1,22 @@
 import Link from 'next/link';
 
 import { Button } from '@/components/ui/button';
+import { checkDatabase } from '@/shared/db';
 import { getHealthStatus, SERVICE_NAME } from '@/shared/health';
 
 /**
- * T0-1 확인용 랜딩 페이지.
+ * T0-2 확인용 랜딩 페이지.
  * 업무 화면은 R1a-1 이후 각 모듈의 presentation 계층에서 구현한다.
  */
-export default function HomePage() {
-  const health = getHealthStatus();
+export const dynamic = 'force-dynamic';
+
+export default async function HomePage() {
+  const health = getHealthStatus([await checkDatabase()]);
+
+  const statusTone =
+    health.status === 'ok'
+      ? 'text-emerald-600 dark:text-emerald-400'
+      : 'text-destructive font-medium';
 
   return (
     <main className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-8 px-6 py-16">
@@ -24,19 +32,38 @@ export default function HomePage() {
         <h2 className="mb-3 text-sm font-medium">기동 상태</h2>
         <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
           <dt className="text-muted-foreground">status</dt>
-          <dd className="font-mono">{health.status}</dd>
+          <dd className={`font-mono ${statusTone}`}>{health.status}</dd>
           <dt className="text-muted-foreground">environment</dt>
           <dd className="font-mono">{health.environment}</dd>
-          <dt className="text-muted-foreground">checks</dt>
-          <dd className="font-mono">{health.checks.length}건 (T0-1: 외부 의존성 없음)</dd>
         </dl>
+
+        <h3 className="text-muted-foreground mt-4 mb-2 text-xs font-medium">점검 항목</h3>
+        <ul className="space-y-1 text-sm">
+          {health.checks.map((check) => (
+            <li key={check.name} className="flex items-baseline gap-3">
+              <span className="font-mono">{check.name}</span>
+              <span
+                className={
+                  check.status === 'ok'
+                    ? 'font-mono text-emerald-600 dark:text-emerald-400'
+                    : 'text-destructive font-mono'
+                }
+              >
+                {check.status}
+              </span>
+              {check.detail ? (
+                <span className="text-muted-foreground text-xs">{check.detail}</span>
+              ) : null}
+            </li>
+          ))}
+        </ul>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-sm font-medium">현재 단계</h2>
         <p className="text-muted-foreground text-sm">
-          <span className="font-mono">R1a-0 / T0-1</span> — 프로젝트 초기화 완료. 데이터베이스,
-          인증, 업무 모듈은 후속 작업에서 구현합니다.
+          <span className="font-mono">R1a-0 / T0-2</span> — 데이터베이스 연결 구성 완료. 인증과 업무
+          모듈은 후속 작업에서 구현합니다.
         </p>
         <Button asChild variant="outline" size="sm">
           <Link href="/api/health">헬스체크 응답 보기</Link>

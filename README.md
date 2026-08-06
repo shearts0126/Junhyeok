@@ -2,8 +2,8 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-1` — 프로젝트 초기화**
-> 데이터베이스·인증·업무 모듈은 아직 구현되지 않았습니다.
+> **현재 단계: `R1a-0 / T0-2` — 데이터베이스 연결 구성**
+> 인증과 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(테이블)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
 ---
@@ -17,7 +17,7 @@
 | 패키지 매니저 | pnpm 10 | T0-1 ✅ |
 | 코드 품질 | ESLint 9 (flat config) + Prettier 3 | T0-1 ✅ |
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
-| 데이터베이스 | PostgreSQL + Prisma | T0-2 |
+| 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
 | 인증 | Supabase Auth | T0-6 |
 | 파일 저장 | Supabase Storage | T4-2 (R1a-4) |
 | 잡 큐 | pg-boss + 전용 워커 | T4-1 (R1a-4) |
@@ -31,6 +31,7 @@
 
 - Node.js `>= 20.9.0` (개발 검증: v22.22.2)
 - pnpm `>= 10` (개발 검증: v10.33.0)
+- Docker + Docker Compose (로컬 PostgreSQL 16)
 
 ```bash
 # pnpm 미설치 시
@@ -40,13 +41,20 @@ corepack enable && corepack prepare pnpm@10.33.0 --activate
 ### 실행
 
 ```bash
-# 1. 의존성 설치
+# 1. 의존성 설치 (postinstall 에서 prisma generate 가 자동 실행됩니다)
 pnpm install
 
-# 2. 환경변수 준비 (T0-1 시점에는 필수 값 없음)
+# 2. 환경변수 준비
 cp .env.example .env.local
 
-# 3. 개발 서버
+# 3. 로컬 PostgreSQL 기동
+pnpm db:up
+
+# 4. Prisma 상태 확인
+pnpm prisma:validate     # 스키마 검증
+pnpm prisma:status       # 마이그레이션 상태 (DB 연결 확인 포함)
+
+# 5. 개발 서버
 pnpm dev
 ```
 
@@ -57,20 +65,42 @@ pnpm dev
 curl -s http://localhost:3000/api/health | jq
 ```
 
+**정상 (HTTP 200)**
+
 ```json
 {
   "status": "ok",
   "service": "deeppoint-scm-os",
   "version": "0.1.0",
   "environment": "development",
-  "timestamp": "2026-08-06T04:51:36.215Z",
-  "uptimeSeconds": 0,
-  "checks": []
+  "timestamp": "2026-08-06T05:14:59.314Z",
+  "uptimeSeconds": 6,
+  "checks": [{ "name": "database", "status": "ok" }]
 }
 ```
 
-`checks` 는 외부 의존성 점검 결과입니다. T0-1 시점에는 외부 의존성이 없어 비어 있고,
-DB(T0-2)·Auth(T0-6)·Storage/Queue(R1a-4) 도입 시 항목이 추가됩니다.
+**DB 연결 실패 (HTTP 503)**
+
+```json
+{
+  "status": "down",
+  "checks": [
+    {
+      "name": "database",
+      "status": "down",
+      "detail": "데이터베이스에 연결할 수 없습니다."
+    }
+  ]
+}
+```
+
+`checks` 항목이 하나라도 `down` 이면 전체 `status` 가 `down` 이 되고 HTTP 503 을 반환합니다.
+
+> ⚠️ **응답에는 연결 문자열·호스트·포트·비밀번호가 절대 포함되지 않습니다.**
+> 실패 사유는 분류된 고정 문장만 노출합니다 (`src/shared/db/check.ts`).
+> 이 규칙은 단위 테스트로 고정되어 있습니다.
+
+점검 항목은 도입 시점에 따라 늘어납니다 — database(T0-2 ✅) / auth(T0-6) / storage·queue(R1a-4).
 
 ---
 
@@ -91,6 +121,21 @@ DB(T0-2)·Auth(T0-6)·Storage/Queue(R1a-4) 도입 시 항목이 추가됩니다.
 | `pnpm test:watch` | Vitest watch |
 | **`pnpm verify`** | **typecheck → lint → format:check → test → build 전체 검증** |
 
+### 데이터베이스
+
+| 명령 | 설명 |
+|---|---|
+| `pnpm db:up` | 로컬 PostgreSQL 기동 (docker compose) |
+| `pnpm db:down` | 중지 (데이터 유지) |
+| `pnpm db:reset` | **중지 + 볼륨 삭제 후 재기동 (데이터 초기화)** |
+| `pnpm db:logs` | DB 로그 |
+| `pnpm prisma:validate` | 스키마 검증 |
+| `pnpm prisma:generate` | Prisma Client 생성 (`pnpm install` 시 자동 실행) |
+| `pnpm prisma:status` | 마이그레이션 상태 + DB 연결 확인 |
+| `pnpm prisma:migrate` | 개발용 마이그레이션 생성·적용 (`prisma migrate dev`) |
+| `pnpm prisma:deploy` | 운영용 마이그레이션 적용 (`prisma migrate deploy`) |
+| `pnpm prisma:studio` | Prisma Studio |
+
 > `typecheck` 가 `next typegen` 을 선행하는 이유: Next.js 16은 `LayoutProps` / `PageProps` 등
 > 라우트 타입을 `.next/types` 에 생성합니다. `tsc` 단독 실행 시 이 타입을 찾지 못합니다.
 
@@ -101,19 +146,26 @@ DB(T0-2)·Auth(T0-6)·Storage/Queue(R1a-4) 도입 시 항목이 추가됩니다.
 ```
 .
 ├─ docs/                        설계 문서 (v0.1, v0.2, CHANGELOG)
+├─ prisma/
+│  ├─ schema.prisma             모델 정의 (T0-2 시점 모델 없음)
+│  └─ migrations/               마이그레이션 (모델 추가 시 생성)
 ├─ public/                      정적 자산
 ├─ src/
 │  ├─ app/                      Next.js App Router
 │  │  ├─ api/health/route.ts    헬스체크 엔드포인트
 │  │  ├─ globals.css            Tailwind + shadcn/ui 디자인 토큰
 │  │  ├─ layout.tsx             루트 레이아웃
-│  │  └─ page.tsx               랜딩 페이지 (T0-1 확인용)
-│  ├─ components/
-│  │  └─ ui/                    shadcn/ui 컴포넌트 (프로젝트 소유 코드)
-│  ├─ lib/
-│  │  └─ utils.ts               cn() 유틸
+│  │  └─ page.tsx               랜딩 페이지 (기동 확인용)
+│  ├─ components/ui/            shadcn/ui 컴포넌트 (프로젝트 소유 코드)
+│  ├─ generated/prisma/         Prisma Client (커밋 제외, 자동 생성)
+│  ├─ lib/utils.ts              cn() 유틸
 │  ├─ modules/                  도메인 모듈 → src/modules/README.md
 │  └─ shared/                   공유 계층 → src/shared/README.md
+│     ├─ env.ts                 환경변수 검증
+│     ├─ health.ts              헬스체크 로직
+│     └─ db/                    Prisma 클라이언트 · 연결 점검
+├─ docker-compose.yml           로컬 PostgreSQL
+├─ prisma.config.ts             Prisma CLI 설정 (DIRECT_URL)
 ├─ components.json              shadcn/ui 설정
 ├─ eslint.config.mjs
 ├─ vitest.config.ts
@@ -152,8 +204,10 @@ pnpm dlx shadcn@latest add table dialog form
 ```
 
 > **참고**: 이 개발 환경에서는 `ui.shadcn.com` 이 네트워크 정책상 차단되어(HTTP 403)
-> CLI `init` 대신 동일한 구성(`components.json`, `src/lib/utils.ts`, CSS 토큰, Button)을
-> 직접 작성했습니다. 네트워크가 열린 환경에서는 `shadcn add` 가 정상 동작합니다.
+> CLI `init` 을 실행할 수 없었습니다. 대신 **현재 버전의 shadcn/ui 규약과 호환되는 수동 초기 구성**
+> (`components.json`, `src/lib/utils.ts`, CSS 토큰, Button)을 작성했습니다.
+> CLI 산출물과 완전히 동일함을 보장하지는 않으므로, **네트워크가 열린 환경에서 `shadcn add` 를
+> 한 번 실행해 호환성을 검증**해 주세요.
 
 ---
 
@@ -161,19 +215,55 @@ pnpm dlx shadcn@latest add table dialog form
 
 `.env.example` 을 `.env.local` 로 복사해 사용합니다. `.env*` 는 커밋되지 않습니다(`.env.example` 만 예외).
 
-T0-1 시점에 필수 값은 없습니다. 아래 항목은 해당 작업에서 채웁니다.
+| 변수 | 필수 | 용도 | 도입 |
+|---|:-:|---|---|
+| `DATABASE_URL` | ✅ | 애플리케이션 런타임 (**pooled**) | T0-2 |
+| `DIRECT_URL` | ✅ | 마이그레이션·워커 (**direct**) | T0-2 |
+| `APP_TIMEZONE` | | 업무일자 파생 기준 (`Asia/Seoul` 고정) | T0-1 |
+| `NEXT_PUBLIC_SUPABASE_URL` 외 | | 인증 | T0-6 |
+| `SUPABASE_STORAGE_BUCKET_*` | | 파일 저장 | T4-2 |
+| `PGBOSS_DATABASE_URL` | | 잡 큐 | T4-1 |
 
-| 변수 | 도입 |
-|---|---|
-| `DATABASE_URL` (Supavisor pooler), `DIRECT_URL` (직결) | T0-2 |
-| `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | T0-6 |
-| `SUPABASE_STORAGE_BUCKET_*` | T4-2 |
-| `PGBOSS_DATABASE_URL` | T4-1 |
+`.env.example` 에는 **형식과 설명만** 있으며 운영 자격증명은 포함되지 않습니다.
 
-> `DATABASE_URL` 과 `DIRECT_URL` 을 분리하는 이유: Vercel 서버리스에서 커넥션 폭증을 막기 위해
-> 런타임은 Supavisor(transaction mode)를 경유하고, `prisma migrate` 와 워커는 직결을 사용합니다.
-> transaction-mode pooler 에서는 세션 락(`pg_advisory_lock`)이 동작하지 않으므로,
-> 재고 동시성 제어는 반드시 행 잠금(`SELECT ... FOR UPDATE`)으로 구현합니다.
+### `DATABASE_URL` 과 `DIRECT_URL` 을 분리하는 이유
+
+| | `DATABASE_URL` | `DIRECT_URL` |
+|---|---|---|
+| 용도 | 애플리케이션 런타임 | `prisma migrate`, 워커 |
+| 연결 | Supavisor **transaction pooler** (운영 포트 6543) | **직결** (포트 5432) |
+| 지정 위치 | `PrismaClient` driver adapter (`src/shared/db/prisma.ts`) | `prisma.config.ts` |
+
+Vercel 서버리스는 요청마다 인스턴스가 뜰 수 있어 커넥션이 폭증합니다. 런타임은 pooler를 경유해
+이를 막고, DDL·prepared statement 가 제한되는 pooler 대신 마이그레이션은 직결을 씁니다.
+
+> ⚠️ **파생 제약**: transaction-mode pooler 에서는 세션 락(`pg_advisory_lock`)이 동작하지 않습니다.
+> 재고 동시성 제어는 반드시 **행 잠금(`SELECT ... FOR UPDATE`)** 으로 구현합니다 (R1a-2).
+
+### Prisma 7 주의
+
+Prisma 7 부터 `datasource` 의 `url` / `directUrl` 을 **스키마에 둘 수 없습니다.**
+연결 URL 은 `prisma.config.ts`(마이그레이션)와 driver adapter(런타임)로 분리되었습니다.
+설계 문서 `03_ERD와_Prisma스키마_v0.2.md` 는 Prisma 6 기준으로 작성되어 있어 이 부분이 다릅니다.
+
+### 마이그레이션
+
+```bash
+# 모델 추가 후
+pnpm prisma:migrate --name add_user_table   # prisma/migrations/ 에 SQL 생성 + 적용
+pnpm prisma:status                          # 적용 상태 확인
+pnpm prisma:deploy                          # 운영 반영 (CI/배포)
+```
+
+T0-2 시점에는 **업무 모델이 없어 마이그레이션 파일도 없습니다.**
+`prisma migrate dev` 는 `Already in sync, no schema change` 를 반환하는 것이 정상입니다.
+
+### 데이터베이스 초기화
+
+```bash
+pnpm db:reset        # 볼륨 삭제 + 재기동 (모든 데이터 소실)
+pnpm prisma:deploy   # 마이그레이션 재적용 (모델이 생긴 뒤)
+```
 
 ---
 
