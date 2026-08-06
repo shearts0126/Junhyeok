@@ -2,7 +2,7 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-4` — 공통 트랜잭션·Decimal 유틸**
+> **현재 단계: `R1a-0 / T0-5` — 모듈 경계 lint 강제**
 > 인증과 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(테이블)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
@@ -19,6 +19,7 @@
 | 오류 처리 | 공통 오류체계 + request ID | T0-3 ✅ |
 | 트랜잭션 | `withTransaction` (자동 재시도 없음) | T0-4 ✅ |
 | 수량·금액 | Prisma Decimal + 변환 금지 ESLint 규칙 | T0-4 ✅ |
+| 모듈 경계 | 재고 원장·잔고 직접 import 차단 (ESLint) | T0-5 ✅ |
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
 | 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
 | 인증 | Supabase Auth | T0-6 |
@@ -167,10 +168,11 @@ curl -s http://localhost:3000/api/health | jq
 │     ├─ env.ts                 환경변수 검증
 │     ├─ health.ts              헬스체크 로직
 │     ├─ db/                    Prisma 클라이언트 · 연결 점검 · withTransaction
-│     ├─ decimal/               Decimal 안전 유틸 (수량·금액)
+│     ├─ decimal/               Decimal 안전 유틸 (수량·금액, 계산 컨텍스트 고정)
 │     └─ errors/                공통 오류체계 · request ID · 로깅 · 자격증명 마스킹
-├─ eslint-rules/                프로젝트 전용 ESLint 규칙
+├─ eslint-rules/                프로젝트 전용 ESLint 규칙·경계 설정
 │  ├─ no-decimal-to-number.ts   Decimal → number 변환 차단 (타입 기반)
+│  ├─ inventory-boundary.ts     재고 원장·잔고 모델 직접 import 차단
 │  └─ __fixtures__/             규칙 테스트용 예제 (lint 대상에서 제외)
 ├─ tests/                       소스 트리 밖 테스트 (ESLint 규칙 등)
 ├─ AGENTS.md / CLAUDE.md        ⚠️ Next.js 자동 생성 (아래 참조)
@@ -208,6 +210,66 @@ src/modules/<module>/
 4. 현재고(`inventory_balance`)를 직접 수정하는 코드는 존재하지 않습니다.
 
 상세는 [`docs/02_시스템_아키텍처와_모듈구조.md`](docs/02_시스템_아키텍처와_모듈구조.md) 참조.
+
+### 재고 원장·잔고 모델 경계 (lint 강제)
+
+`InventoryLedgerEntry` 와 `InventoryBalance` 의 직접 import 는 **lint 오류**입니다.
+
+`inventory_ledger_entry` 는 불변 원장이고 `inventory_balance` 는 그 원장에서 파생된 캐시입니다.
+두 테이블을 아무 곳에서나 읽고 쓸 수 있으면 원장을 거치지 않은 현재고 직접 수정이 생기고, 원장과
+잔고가 어긋나며, 감사로그 없이 재고가 바뀝니다. `InventoryPostingService` 를 우회할 수 있는 첫
+번째 문이 Prisma 모델 직접 import 입니다.
+
+| 위치 | 접근 |
+|---|:-:|
+| `src/modules/inventory/infrastructure/**` | ✅ |
+| Prisma 생성 코드 (`src/generated/**`) | ✅ |
+| 마이그레이션·전환 스크립트 (`prisma/**`, `scripts/**`) | ✅ |
+| 전용 테스트 fixture | ✅ |
+| `src/modules/inventory/domain/**` | ❌ |
+| `src/modules/inventory/application/**` | ❌ |
+| `src/modules/inventory/presentation/**` | ❌ |
+| 그 외 모든 모듈 | ❌ |
+
+같은 inventory 모듈 안이어도 infrastructure 밖에서는 막습니다. 영속성 세부사항이 도메인 규칙으로
+새어 들어오면 계층 분리가 이름만 남습니다. 다른 업무 모듈은 inventory **application 계층의 공개
+인터페이스**로만 조회·명령합니다.
+
+```ts
+// ❌ 차단 — named / alias / type-only / re-export / namespace / 상대경로
+import { InventoryBalance } from '@/generated/prisma/client';
+import { InventoryBalance as Balance } from '@/generated/prisma/client';
+import type { InventoryLedgerEntry } from '@/generated/prisma/client';
+export { InventoryBalance } from '@/generated/prisma/client';
+import * as PrismaModels from '@/generated/prisma/client';
+import { InventoryBalance } from '../../generated/prisma/client';
+
+// ❌ 차단 — 동적 import·require 우회
+await import('@/generated/prisma/client');
+require('@/generated/prisma/client');
+
+// ✅ 허용 — 다른 Prisma 모델·런타임 타입
+import { Prisma, type PrismaClient } from '@/generated/prisma/client';
+import { Sku } from '@/generated/prisma/client';
+
+// ✅ 허용 — 다른 모듈은 application 공개 인터페이스로
+import { getAvailableStock } from '@/modules/inventory/application';
+```
+
+`namespace import` 를 막는 이유: 이후 속성 접근(`PrismaModels.InventoryBalance`)으로 이름 차단을
+그대로 우회할 수 있습니다. 동적 import 는 import 이름을 정적으로 확인할 수 없어 경로 전체를
+막습니다 — 그래서 infrastructure 밖에서는 `PrismaClient` 를 동적으로 불러오는 것도 차단됩니다.
+
+구성은 [`eslint-rules/inventory-boundary.ts`](eslint-rules/inventory-boundary.ts) 에 있으며, ESLint
+기본 `no-restricted-imports`(정적 import·re-export)와 `no-restricted-syntax`(동적 import·`require`)만
+씁니다. 커스텀 규칙을 추가하지 않았습니다.
+
+테스트([`tests/eslint-rules/inventory-boundary.test.ts`](tests/eslint-rules/inventory-boundary.test.ts))는
+**같은 config 배열을 그대로 재사용**합니다. 설정을 복제하면 테스트는 통과하는데 실제 lint 는
+통과하는 상황이 생깁니다.
+
+> ⚠️ 두 모델은 **아직 존재하지 않습니다**(업무 모델은 R1a-2). 규칙은 import 경로와 이름만 보므로
+> 모델 없이 동작하며, fixture 로 검증합니다. 임시 모델은 만들지 않았습니다.
 
 ---
 

@@ -6,6 +6,7 @@ import nextTs from 'eslint-config-next/typescript';
 import prettier from 'eslint-config-prettier';
 
 import { deeppointPlugin } from './eslint-rules';
+import { inventoryBoundaryConfigs } from './eslint-rules/inventory-boundary';
 
 const tsconfigRootDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -61,11 +62,13 @@ const eslintConfig = defineConfig([
     },
   },
 
-  /* ── 모듈 경계 강제 ───────────────────────────────────────────
-   * T0-5 에서 재고원장 모델 직접 import 차단 규칙을 추가한다.
-   * 현재는 아키텍처 문서(02_시스템_아키텍처와_모듈구조.md §4.4)의
-   * 계층 규칙만 명시해 두고, 실제 제한은 대상 코드가 생긴 뒤 건다.
+  /* ── 모듈 경계 강제 (T0-5) ────────────────────────────────────
+   * 재고 원장(InventoryLedgerEntry)·잔고(InventoryBalance) 모델의 직접 import 를
+   * inventory infrastructure 밖에서 차단한다.
+   * 규칙 정의는 eslint-rules/inventory-boundary.ts 에 있으며,
+   * tests/eslint-rules/inventory-boundary.test.ts 가 같은 배열을 재사용해 검증한다.
    */
+  ...inventoryBoundaryConfigs,
 
   // Prettier 와 충돌하는 포매팅 규칙 해제. 반드시 마지막에 위치해야 한다.
   prettier,

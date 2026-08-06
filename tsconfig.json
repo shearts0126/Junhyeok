@@ -48,5 +48,11 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  /* ── 제외 ───────────────────────────────────────────────────
+   * inventory-boundary fixture 는 ESLint 규칙(import 경로·이름 기반) 검증 전용이며,
+   * 아직 존재하지 않는 Prisma 모델과 모듈 경로를 의도적으로 참조한다.
+   * 타입 검사 대상이 아니다. 규칙 검증은
+   * tests/eslint-rules/inventory-boundary.test.ts 가 담당한다.
+   */
+  "exclude": ["node_modules", "eslint-rules/__fixtures__/inventory-boundary/**"]
 }
