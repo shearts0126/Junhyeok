@@ -7,6 +7,12 @@
 > ④ **LOT·유통기한·시리얼 기본값 전부 `false`** (D-03)
 > ⑤ `LegacyShipmentHistory` 모델 추가 (D-04)
 > ⑥ 테이블 47 → **49개**
+>
+> **🔧 v0.2 정합성 수정 (T0-2 구현 반영)** — §7.0 신설
+> Prisma **7.9.1** 도입에 따라 연결 구성이 바뀌었다. `datasource` 의 `url`/`directUrl` 을
+> `schema.prisma` 에 쓸 수 없으며, 마이그레이션은 `prisma.config.ts`(`DIRECT_URL`),
+> 런타임은 `@prisma/adapter-pg`(`DATABASE_URL`)로 분리된다.
+> pooled/direct 분리 **목적과 모델 정의 본문은 변경 없다.**
 
 ---
 
@@ -424,14 +430,127 @@ v0.1 §6.4·§6.5와 동일. 변경 없음. 주요 제약만 재기재한다.
 
 > 변경된 모델·필드에 ✏️ 주석을 달았다. v0.1에서 변경 없는 모델은 v0.1 문서를 그대로 사용한다.
 
+## 7.0 🔧 연결 구성 — Prisma 7 기준 (구현 반영)
+
+> **이 절은 `T0-2` 실제 구현 결과를 반영해 정정된 내용이다.**
+> v0.1·v0.2 초안은 Prisma 6 문법으로 작성되어 있었고, 실제 도입 버전과 달라 수정했다.
+
+### 사용 버전
+
+| 패키지 | 버전 | 비고 |
+|---|---|---|
+| `prisma` (CLI) | **7.9.1** | |
+| `@prisma/client` | **7.9.1** | |
+| **`@prisma/adapter-pg`** | **7.9.1** | 런타임 driver adapter |
+| `pg` | 8.22.0 | adapter 의 실제 드라이버 |
+| PostgreSQL | 16 | 로컬·운영 공통 |
+
+### 변경 사유
+
+**Prisma 7 부터 `datasource` 의 `url` / `directUrl` 을 `schema.prisma` 에 작성할 수 없다.**
+스키마에 남겨두면 검증 단계에서 실패한다.
+
+```
+Error code: P1012
+error: The datasource property `url` is no longer supported in schema files.
+       Move connection URLs for Migrate to `prisma.config.ts` and pass either
+       `adapter` for a direct database connection ... to the PrismaClient constructor.
+error: The datasource property `directUrl` is no longer supported in schema files.
+```
+
+연결 URL 은 **용도별로 두 곳에 분리**되었다.
+
+| 용도 | 환경변수 | 연결 방식 | 지정 위치 |
+|---|---|---|---|
+| **Prisma CLI · migration** | **`DIRECT_URL`** | **direct** (운영 포트 5432) | **`prisma.config.ts`** |
+| **애플리케이션 런타임** | **`DATABASE_URL`** | **pooled** (Supavisor transaction mode, 운영 포트 6543) | **`PrismaClient` 의 `@prisma/adapter-pg`** |
+
+> 분리 **목적 자체는 v0.1 설계와 동일**하다. Vercel 서버리스에서 커넥션 폭증을 막기 위해
+> 런타임은 pooler 를 경유하고, DDL·prepared statement 가 제한되는 pooler 대신
+> 마이그레이션은 직결을 쓴다. **바뀐 것은 URL 을 지정하는 위치뿐이다.**
+
+### 기존 설계 ↔ 실제 구현 차이
+
+| 항목 | v0.1·v0.2 초안 (Prisma 6) | **실제 구현 (Prisma 7)** |
+|---|---|---|
+| pooled URL 지정 | `datasource.url = env("DATABASE_URL")` | `new PrismaClient({ adapter: new PrismaPg({ connectionString }) })` |
+| direct URL 지정 | `datasource.directUrl = env("DIRECT_URL")` | `prisma.config.ts` 의 `datasource.url` |
+| generator provider | `prisma-client-js` | **`prisma-client`** |
+| generator output | 기본값 (`node_modules`) | **`../src/generated/prisma`** (명시 필수) |
+| 추가 의존성 | 없음 | **`@prisma/adapter-pg`, `pg`** |
+| `.env` 로딩 | Prisma CLI 가 자동 | `prisma.config.ts` 에서 **`import 'dotenv/config'`** 명시 |
+
+> 이 차이는 **연결 구성 위치와 generator 설정에 한정**된다.
+> 모델 정의·인덱스·제약조건·`@@map` 등 §7 이하 스키마 본문은 **Prisma 7 에서도 그대로 유효**하다.
+
+### `prisma/schema.prisma` — 연결 부분
+
 ```prisma
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")   // Supavisor pooler (?pgbouncer=true)
-  directUrl = env("DIRECT_URL")     // migrate / worker 전용
+generator client {
+  provider = "prisma-client"           // Prisma 7 의 신규 generator
+  output   = "../src/generated/prisma" // Prisma 7 은 output 명시가 필수
 }
 
-generator client { provider = "prisma-client-js" }
+datasource db {
+  provider = "postgresql"
+  // ★ url / directUrl 을 여기에 쓰지 않는다 (Prisma 7)
+}
+```
+
+### `prisma.config.ts` — 마이그레이션 연결
+
+```typescript
+import 'dotenv/config';
+
+import { defineConfig, env } from 'prisma/config';
+
+export default defineConfig({
+  schema: 'prisma/schema.prisma',
+  migrations: { path: 'prisma/migrations' },
+  datasource: {
+    url: env('DIRECT_URL'), // ★ direct connection
+  },
+});
+```
+
+### `src/shared/db/prisma.ts` — 런타임 연결
+
+```typescript
+import { PrismaPg } from '@prisma/adapter-pg';
+
+import { PrismaClient } from '@/generated/prisma/client';
+import { loadDatabaseEnv } from '@/shared/env';
+
+function createPrismaClient(): PrismaClient {
+  const { databaseUrl } = loadDatabaseEnv();          // DATABASE_URL (pooled)
+  const adapter = new PrismaPg({ connectionString: databaseUrl });
+  return new PrismaClient({ adapter, log: ['error'] });
+}
+```
+
+### 유지되는 제약
+
+| 제약 | 내용 |
+|---|---|
+| **advisory lock 사용 불가** | transaction-mode pooler 에서는 세션 락(`pg_advisory_lock`)이 동작하지 않는다. 재고 동시성 제어는 반드시 **행 잠금(`SELECT … FOR UPDATE`)** — §04 v0.2 §8.7 |
+| **마이그레이션은 직결** | `prisma migrate` 를 pooler 로 실행하지 않는다 |
+| **Decimal** | `Prisma.Decimal`(decimal.js). `Number()` 변환 금지 — Prisma 7 에서도 동일 |
+| **생성물 커밋 제외** | `src/generated/prisma` 는 `.gitignore`. `pnpm install` 의 `postinstall` 에서 자동 생성 |
+
+---
+
+## 7.1 스키마 본문
+
+```prisma
+// 연결 구성은 §7.0 참조 — Prisma 7 에서는 url/directUrl 을 여기에 쓰지 않는다.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
 
 // ─────────────────────────────────────────────────────────────
 // Enum
@@ -1009,7 +1128,7 @@ model LegacyShipmentHistory {
 }
 ```
 
-## 7.1 Prisma 사용 시 주의
+## 7.2 Prisma 사용 시 주의
 
 | 항목 | 주의 |
 |---|---|
@@ -1020,4 +1139,6 @@ model LegacyShipmentHistory {
 | **`@db.Date` 기본값** | `expiry_key` 의 `'9999-12-31'` 은 raw SQL `ALTER COLUMN ... SET DEFAULT` 로 설정하고 앱에서도 명시 세팅 |
 | **`businessDate` 자동 계산** | Prisma는 generated column 미지원. **Posting Service에서 명시 계산** + DB CHECK로 이중 보장 |
 | ✏️ **`system_setting` 조회 캐시** | 매 요청마다 DB를 치지 않도록 **요청 단위 메모리 캐시**. 변경 시 즉시 무효화 (`posting_frozen` 은 실시간성이 필요하므로 캐시 제외) |
-| **커넥션** | `DATABASE_URL`(pooler) / `DIRECT_URL`(직결) 분리 필수 |
+| **커넥션** | `DATABASE_URL`(pooler, driver adapter) / `DIRECT_URL`(직결, `prisma.config.ts`) 분리 필수 — §7.0 |
+| 🔧 **Prisma 7** | `datasource` 에 `url`/`directUrl` 작성 불가. generator 는 `prisma-client` + `output` 명시 필수 |
+| 🔧 **generated client** | `src/generated/prisma` 에 생성되며 커밋하지 않는다. `postinstall` 에서 `prisma generate` 자동 실행 |
