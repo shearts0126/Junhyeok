@@ -133,6 +133,17 @@ export function parseSettingPatch(body: unknown): {
   return { patch: patch as SystemSettingPatch, version: raw['version'] as number };
 }
 
+/** 낙관적 동시성 충돌. `currentVersion` 은 충돌 시점의 최신 version 이다. */
+function versionConflict(expected: number, current: number): ConflictError {
+  return new ConflictError(ERROR_CODES.CONFLICT, {
+    message: `설정이 이미 변경되었습니다. (기대 ${expected}, 현재 ${current})`,
+    publicDetails: { currentVersion: current },
+    publicHint: '최신 설정을 다시 조회한 뒤 변경하세요.',
+    // 자동 재시도 금지 — 무엇이 바뀌었는지 확인하고 다시 보내야 한다.
+    retryable: false,
+  });
+}
+
 export interface SystemSettingReader {
   read(): Promise<SystemSettingView>;
 }
@@ -191,17 +202,19 @@ export async function updateSystemSettings(
       where: { id: SYSTEM_SETTING_ID },
     });
 
+    // 빠른 실패 — 명백히 어긋난 요청은 UPDATE 를 시도하지 않는다.
     if (before.version !== expectedVersion) {
-      throw new ConflictError(ERROR_CODES.CONFLICT, {
-        message: `설정이 이미 변경되었습니다. (기대 ${expectedVersion}, 현재 ${before.version})`,
-        publicDetails: { currentVersion: before.version },
-        publicHint: '최신 설정을 다시 조회한 뒤 변경하세요.',
-        retryable: false,
-      });
+      throw versionConflict(expectedVersion, before.version);
     }
 
-    const after = await tx.systemSetting.update({
-      where: { id: SYSTEM_SETTING_ID },
+    // ★ 여기가 실제 동시성 토큰이다.
+    //
+    //   위의 read-then-compare 만으로는 READ COMMITTED 에서 두 요청이 같은
+    //   version 을 읽고 **둘 다** 통과한다. WHERE 절에 version 을 넣어
+    //   **DB 가 원자적으로** 판정하게 해야 한 건만 이긴다.
+    //   version 증가도 UPDATE 안에서 이뤄지므로 읽고-더하고-쓰는 틈이 없다.
+    const updated = await tx.systemSetting.updateMany({
+      where: { id: SYSTEM_SETTING_ID, version: expectedVersion },
       data: {
         ...(patch.allowSelfApprovalSku !== undefined
           ? { allowSelfApprovalSku: patch.allowSelfApprovalSku }
@@ -222,10 +235,24 @@ export async function updateSystemSettings(
       },
     });
 
-    // ★ 같은 트랜잭션. 실패하면 설정 변경도 롤백된다.
+    // 0건이면 그 사이에 다른 요청이 이겼다는 뜻이다.
+    // ⚠️ 자동 재시도하지 않는다 — 무엇이 바뀌었는지 모르는 채로 덮어쓰면 안 된다.
+    if (updated.count !== 1) {
+      const current = await tx.systemSetting.findUniqueOrThrow({
+        where: { id: SYSTEM_SETTING_ID },
+      });
+      throw versionConflict(expectedVersion, current.version);
+    }
+
+    const after = await tx.systemSetting.findUniqueOrThrow({
+      where: { id: SYSTEM_SETTING_ID },
+    });
+
+    // ★ 같은 트랜잭션. 이긴 요청만 감사로그 1건을 남긴다.
     await logger.write(tx, {
       actor,
       entityType: 'SystemSetting',
+      // ⚠️ 정수 PK 를 문자열로 정규화한다. audit_log.entity_id 는 TEXT 다.
       entityId: String(SYSTEM_SETTING_ID),
       action: 'UPDATE',
       beforeValue: toView(before),

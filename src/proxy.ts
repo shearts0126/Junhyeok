@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 
-import { isPublicPath, requiredPermissionFor, resolveActor } from '@/modules/auth/application';
+import { isPublicPath, resolveActor, resolveRoutePermission } from '@/modules/auth/application';
 import { claimsVerifierFrom } from '@/modules/auth/infrastructure/verify';
 import { blockWithError, createProxyRequestContext } from '@/modules/auth/presentation/proxy-guard';
 import { AuthorizationError, ERROR_CODES } from '@/shared/errors';
@@ -16,7 +16,7 @@ import { createSupabaseProxyClient } from '@/shared/supabase';
  *
  *   - 공개 경로는 그대로 통과 (로그인·헬스체크)
  *   - 보호 경로는 검증된 인증을 요구 → 없으면 401
- *   - route policy 에 권한이 명시된 경로는 그 권한까지 확인 → 없으면 403
+ *   - route policy 에 권한이 명시된 **경로·메서드 조합**은 그 권한까지 확인 → 없으면 403
  *   - **차단한 요청은 서버 로그에 기록** (`blockWithError`)
  *
  * ## 1차 가드가 하지 않는 일
@@ -48,7 +48,8 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   try {
     const actor = await resolveActor({ verifier: claimsVerifierFrom(supabase) }, { requestId });
 
-    const required = requiredPermissionFor(pathname);
+    // ★ 메서드까지 본다. 같은 경로라도 GET 과 PATCH 가 다른 권한을 요구한다.
+    const required = resolveRoutePermission({ pathname, method: request.method });
     if (required !== undefined && !actor.permissions.includes(required)) {
       return blockWithError(
         new AuthorizationError(ERROR_CODES.FORBIDDEN, {
@@ -58,6 +59,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
             actorUserId: actor.userId,
             actorRoles: actor.roles,
             reason: 'MISSING_PERMISSION',
+            method: request.method,
           },
         }),
         { request, requestId, route: pathname },

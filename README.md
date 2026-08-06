@@ -739,8 +739,28 @@ type ActorContext = {
 
 - 공개 경로(`/api/health`, `/api/auth/login`, `/api/auth/logout`, `/login`, `/`)는 통과
 - **표에 없는 경로는 기본이 보호** — 새 라우트를 깜빡해도 열리는 게 아니라 닫힙니다
-- route policy 에 권한이 명시된 경로는 그 권한까지 확인
+- route policy 에 권한이 명시된 **경로·메서드 조합**은 그 권한까지 확인
 - 실패 시 공통 형식의 JSON 401 / 403
+
+**1차 가드는 HTTP 메서드까지 봅니다.** 경로만으로 판정하면 조회 권한만 가진 사용자의 `PATCH` 가
+1차 가드를 통과해버립니다(2차 가드가 막긴 하지만 1차가 제 역할을 못 합니다).
+
+```ts
+import { resolveRoutePermission } from '@/modules/auth/application';
+
+resolveRoutePermission({ pathname: '/api/system-settings', method: 'GET'   }); // 'system_setting.read'
+resolveRoutePermission({ pathname: '/api/system-settings', method: 'PATCH' }); // 'system_setting.update'
+resolveRoutePermission({ pathname: '/api/roles',           method: 'POST'  }); // undefined → 인증만
+```
+
+`ROUTE_PERMISSIONS` 는 앞에서부터 첫 번째로 맞는 정책을 쓰므로 **더 구체적인(메서드 지정) 정책을
+앞에** 둡니다. `methods` 를 생략하면 모든 메서드에 적용됩니다.
+
+| 경로 | 메서드 | 권한 |
+|---|---|---|
+| `/api/roles` | `GET` | `role.read` |
+| `/api/system-settings` | `GET`, `HEAD` | `system_setting.read` |
+| `/api/system-settings` | `PATCH`, `PUT`, `POST`, `DELETE` | `system_setting.update` |
 
 **2차 — Application Service**
 
@@ -765,6 +785,8 @@ Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 �
 | `POST /api/auth/logout` | 공개 (멱등) |
 | `GET /api/me` | 인증 |
 | `GET /api/roles` | `role.read` |
+| `GET /api/system-settings` | `system_setting.read` |
+| `PATCH /api/system-settings` | `system_setting.update` |
 
 ```bash
 pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
@@ -817,6 +839,45 @@ PATCH /api/system-settings    # system_setting.update
 
 설정 변경과 감사로그 INSERT 는 **같은 트랜잭션**에서 처리합니다.
 
+#### 낙관적 동시성 — `version` 은 `WHERE` 절에서 판정합니다
+
+읽어서 비교한 뒤 UPDATE 하면 **막지 못합니다.** `READ COMMITTED` 에서 두 요청이 같은 `version` 을
+읽고 **둘 다** 통과합니다. 그래서 `version` 을 **UPDATE 문의 `WHERE` 절**에 넣어 DB 가 원자적으로
+판정하게 합니다.
+
+```ts
+const updated = await tx.systemSetting.updateMany({
+  where: { id: SYSTEM_SETTING_ID, version: expectedVersion },  // ★ 동시성 토큰
+  data: { ...patch, updatedBy: actor.userId, version: { increment: 1 } },
+});                                                            // ★ 증가도 UPDATE 안에서
+
+if (updated.count !== 1) {
+  const current = await tx.systemSetting.findUniqueOrThrow({ where: { id: SYSTEM_SETTING_ID } });
+  throw versionConflict(expectedVersion, current.version);     // 409
+}
+```
+
+- `version: { increment: 1 }` — 읽고·더하고·쓰는 틈이 없습니다. `before.version + 1` 을 계산해서
+  넣으면 그 틈에서 다시 덮어쓰기가 발생합니다.
+- `updateMany` 앞의 read-then-compare 는 **빠른 실패용**일 뿐 동시성 판정이 아닙니다.
+  실제 판정은 위 `WHERE` 절이 합니다.
+- ⛔ **자동 재시도하지 않습니다.** 충돌 응답은 `retryable: false` 이고 `publicDetails.currentVersion`
+  으로 충돌 시점의 최신 `version` 을 알려줍니다. 무엇이 바뀌었는지 모르는 채로 다시 보내면
+  남의 변경을 덮어씁니다. 클라이언트가 다시 조회하고 사람이 판단해야 합니다.
+
+`src/modules/settings/system-settings-db.test.ts` 가 **실제 PostgreSQL** 에서 barrier 로 두 요청을
+같은 `version` 으로 동시에 출발시켜 검증합니다. 대역(fake)으로는 이 상황을 재현할 수 없습니다.
+
+#### DB 제약
+
+```sql
+CHECK ("id" = 1)         -- system_setting: 싱글턴. 두 번째 행 자체가 불가능
+CHECK ("version" >= 1)   -- system_setting
+```
+
+싱글턴은 애플리케이션 관례가 아니라 **DB 제약**입니다. 관례는 언젠가 깨지고, 설정 행이 둘이 되면
+어느 쪽이 진짜인지 판정할 방법이 없습니다.
+
 ### 자기승인 정책
 
 | 워크플로 | 자기승인 |
@@ -864,6 +925,31 @@ await withTransaction(async (tx) => {
 `actorId` · `requestId` · `sessionId` · `ipAddress` 는 **`ActorContext` 에서만** 가져옵니다.
 `occurredAt` 도 호출부가 지정할 수 없습니다(DB 기본값). 수행자와 시각을 호출부가 정할 수 있으면
 감사로그가 아니라 그냥 메모입니다.
+
+#### `entity_id` 는 UUID 가 아니라 TEXT 입니다
+
+감사로그는 **모든 엔티티의 변경을 한 테이블에 모으므로**, 서로 다른 타입의 PK 를 하나의 컬럼으로
+정규화해야 합니다. ERD 전반의 PK 는 UUID 지만 `audit_log.entity_id` 만은 TEXT 입니다.
+
+| 항목 | 규칙 |
+|---|---|
+| `audit_log.id` | 감사로그 **자기 행의 PK**. UUID. 대상 엔티티와 무관합니다. |
+| `audit_log.entity_id` | **대상 엔티티의 PK 를 문자열로 정규화**한 값. TEXT. |
+| UUID PK 엔티티 (`sku`, `bom`, `purchase_order` …) | UUID 를 그대로 문자열로 저장 |
+| 정수 PK 엔티티 (`system_setting`) | 정수를 문자열로 변환 — **항상 `"1"`** (싱글턴) |
+| 복합키 엔티티 (`user_role` 등) | 구성 키를 `:` 로 이은 문자열 |
+
+```sql
+CHECK (length(trim("entity_id")) > 0)     -- audit_log
+CHECK (length(trim("entity_type")) > 0)   -- audit_log
+```
+
+- ⛔ **빈 문자열·공백 금지.** DB `CHECK` 로 막습니다. 대상을 알 수 없는 감사로그는 기록이 없는
+  것만 못합니다.
+- ⛔ **화면용 문서번호를 넣지 않습니다.** `PO-2026-0012` 같은 표시용 번호는 정정·재발번으로 바뀔 수
+  있어 추적이 끊깁니다. **실제 PK** 를 넣고, 표시용 번호는 `beforeValue`/`afterValue` 안에 담습니다.
+- `entity_type` + `entity_id` 로 조회하므로 같은 엔티티에는 **항상 같은 정규화 규칙**을 씁니다.
+  한 곳만 형식이 달라지면 그 이력이 조회에서 누락됩니다.
 
 저장 전 정규화: `Decimal` → 문자열, `Date` → ISO 문자열, `BigInt` → 문자열, `undefined` 키 제거,
 순환 참조 거부, `password`·`token`·`cookie`·`authorization` 등 민감값 마스킹. 감사로그는 불변이라

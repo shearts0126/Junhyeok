@@ -6,7 +6,7 @@ import { AuthorizationError, ERROR_CODES, type AppError } from '@/shared/errors'
 import {
   isPublicPath,
   listRoles,
-  requiredPermissionFor,
+  resolveRoutePermission,
   resolveActor,
   type ActorContext,
 } from './application';
@@ -236,10 +236,11 @@ async function proxyGuard(
   supabase: FakeSupabase,
   reader: UserAuthorizationReader,
   pathname: string,
+  method = 'GET',
 ): Promise<{ status: number; body: Record<string, unknown> } | null> {
   if (isPublicPath(pathname)) return null;
 
-  const request = new NextRequest(`http://localhost${pathname}`);
+  const request = new NextRequest(`http://localhost${pathname}`, { method });
   const { requestId } = createProxyRequestContext(request);
 
   try {
@@ -247,7 +248,7 @@ async function proxyGuard(
       { verifier: supabase.asClaimsVerifier(), reader },
       { requestId },
     );
-    const required = requiredPermissionFor(pathname);
+    const required = resolveRoutePermission({ pathname, method });
     if (required !== undefined && !actor.permissions.includes(required)) {
       const { response } = blockWithError(
         new AuthorizationError(ERROR_CODES.FORBIDDEN, {

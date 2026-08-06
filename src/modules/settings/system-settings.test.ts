@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AuditLogger, AuditWriteInput } from '@/modules/audit/application/audit-logger';
-import { createActorContext, type ActorContext } from '@/modules/auth/application';
+import {
+  createActorContext,
+  resolveRoutePermission,
+  type ActorContext,
+} from '@/modules/auth/application';
 import type { TransactionClient } from '@/shared/db';
 import { ERROR_CODES, ValidationError, type AppError } from '@/shared/errors';
 
@@ -93,8 +97,19 @@ function createFakeTransaction(initial: Partial<FakeRow> = {}, options: FakeTxOp
   const tx = {
     systemSetting: {
       findUniqueOrThrow: async () => ({ ...staged }),
-      update: async ({ data }: { data: Record<string, unknown> }) => {
+      // ★ 실제 구현과 같은 의미론: WHERE 에 version 이 맞아야만 1건이 바뀐다.
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: number; version: number };
+        data: Record<string, unknown>;
+      }) => {
         if (options.failUpdate === true) throw new Error('update 실패');
+        if (staged.id !== where.id || staged.version !== where.version) {
+          return { count: 0 };
+        }
+
         const next: FakeRow = { ...staged };
         for (const [key, value] of Object.entries(data)) {
           if (key === 'version') {
@@ -104,7 +119,7 @@ function createFakeTransaction(initial: Partial<FakeRow> = {}, options: FakeTxOp
           }
         }
         staged = next;
-        return { ...staged };
+        return { count: 1 };
       },
     },
   } as unknown as TransactionClient;
@@ -386,10 +401,15 @@ describe('updateSystemSettings', () => {
 
 describe('★ 2겹 가드 — 설정 API', () => {
   it('1차 가드는 read 권한, 2차 가드는 update 권한을 본다', async () => {
-    const { requiredPermissionFor } = await import('@/modules/auth/application');
+    const { resolveRoutePermission } = await import('@/modules/auth/application');
 
-    // Proxy 는 메서드를 보지 않으므로 더 약한 쪽만 확인한다
-    expect(requiredPermissionFor('/api/system-settings')).toBe(SETTING_READ_PERMISSION);
+    // ★ 메서드별로 다른 권한을 요구한다
+    expect(resolveRoutePermission({ pathname: '/api/system-settings', method: 'GET' })).toBe(
+      SETTING_READ_PERMISSION,
+    );
+    expect(resolveRoutePermission({ pathname: '/api/system-settings', method: 'PATCH' })).toBe(
+      SETTING_UPDATE_PERMISSION,
+    );
 
     // read 만 가진 사용자는 1차를 통과하지만 2차에서 막힌다
     const fake = createFakeTransaction();
@@ -421,5 +441,94 @@ describe('★ 2겹 가드 — 설정 API', () => {
       },
     });
     expect(seen).toEqual(['SystemSetting']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 메서드별 1차 권한 가드 (T0-7 마감 보완)
+// ═══════════════════════════════════════════════════════════════
+describe('★ 메서드별 1차 권한 가드', () => {
+  /** 1차 가드 판정. 통과하면 undefined, 차단하면 요구 권한. */
+  function firstGuard(actor: ActorContext, pathname: string, method: string): string | undefined {
+    const required = resolveRoutePermission({ pathname, method });
+    if (required === undefined) return undefined;
+    return actor.permissions.includes(required) ? undefined : required;
+  }
+
+  const PATH = '/api/system-settings';
+
+  it('★ GET 은 read, PATCH 는 update 권한을 요구한다', () => {
+    expect(resolveRoutePermission({ pathname: PATH, method: 'GET' })).toBe(SETTING_READ_PERMISSION);
+    expect(resolveRoutePermission({ pathname: PATH, method: 'HEAD' })).toBe(
+      SETTING_READ_PERMISSION,
+    );
+    expect(resolveRoutePermission({ pathname: PATH, method: 'PATCH' })).toBe(
+      SETTING_UPDATE_PERMISSION,
+    );
+  });
+
+  it('★ read 만 보유 — GET 통과, PATCH 는 1차에서 차단', () => {
+    expect(firstGuard(READER_ONLY, PATH, 'GET')).toBeUndefined();
+    expect(firstGuard(READER_ONLY, PATH, 'PATCH')).toBe(SETTING_UPDATE_PERMISSION);
+  });
+
+  it('★ read 만 보유 — PATCH 는 Application Service 도 호출되지 않는다', async () => {
+    // 1차에서 막히므로 서비스까지 가지 않는다. 만약 갔더라도 2차가 막는다.
+    expect(firstGuard(READER_ONLY, PATH, 'PATCH')).toBeDefined();
+
+    let serviceCalled = 0;
+    const fake = createFakeTransaction();
+    await updateSystemSettings(READER_ONLY, { postingFrozen: true }, 1, {
+      runInTransaction: async (callback) => {
+        serviceCalled += 1;
+        return fake.runInTransaction(callback);
+      },
+      auditLogger: fake.logger,
+    }).catch(() => undefined);
+
+    // 2차 가드가 트랜잭션보다 먼저 던진다
+    expect(serviceCalled).toBe(0);
+  });
+
+  it('★ update 만 보유 — PATCH 통과, GET 은 1차에서 차단', () => {
+    const updateOnly = actorWith([SETTING_UPDATE_PERMISSION]);
+    expect(firstGuard(updateOnly, PATH, 'PATCH')).toBeUndefined();
+    expect(firstGuard(updateOnly, PATH, 'GET')).toBe(SETTING_READ_PERMISSION);
+  });
+
+  it('★ 두 권한 보유 — GET·PATCH 모두 통과', () => {
+    expect(firstGuard(ADMIN, PATH, 'GET')).toBeUndefined();
+    expect(firstGuard(ADMIN, PATH, 'PATCH')).toBeUndefined();
+  });
+
+  it('★ 권한 없음 — GET·PATCH 모두 차단', () => {
+    expect(firstGuard(NO_PERMISSION, PATH, 'GET')).toBe(SETTING_READ_PERMISSION);
+    expect(firstGuard(NO_PERMISSION, PATH, 'PATCH')).toBe(SETTING_UPDATE_PERMISSION);
+  });
+
+  it('★ Proxy 를 우회한 PATCH 직접 호출도 update 권한이 없으면 403', async () => {
+    const fake = createFakeTransaction();
+    await expect(
+      updateSystemSettings(READER_ONLY, { postingFrozen: true }, 1, {
+        runInTransaction: fake.runInTransaction,
+        auditLogger: fake.logger,
+      }),
+    ).rejects.toMatchObject({ code: ERROR_CODES.FORBIDDEN, httpStatus: 403 });
+  });
+
+  it('메서드는 대소문자를 가리지 않는다', () => {
+    expect(resolveRoutePermission({ pathname: PATH, method: 'patch' })).toBe(
+      SETTING_UPDATE_PERMISSION,
+    );
+  });
+
+  it('/api/roles 는 GET 만 정책이 있다', () => {
+    expect(resolveRoutePermission({ pathname: '/api/roles', method: 'GET' })).toBe('role.read');
+    // 정의되지 않은 메서드는 인증만 요구한다 (라우트 자체가 없으므로 404 가 된다)
+    expect(resolveRoutePermission({ pathname: '/api/roles', method: 'DELETE' })).toBeUndefined();
+  });
+
+  it('정책이 없는 경로는 인증만 요구한다', () => {
+    expect(resolveRoutePermission({ pathname: '/api/me', method: 'GET' })).toBeUndefined();
   });
 });

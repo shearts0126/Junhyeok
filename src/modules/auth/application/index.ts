@@ -15,7 +15,10 @@ export {
   PUBLIC_PATHS,
   ROUTE_PERMISSIONS,
   isPublicPath,
-  requiredPermissionFor,
+  resolveRoutePermission,
+  type HttpMethod,
+  type RoutePermissionPolicy,
+  type RoutePermissionQuery,
 } from './route-policy';
 
 export {

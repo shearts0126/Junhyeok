@@ -413,6 +413,33 @@ v0.1 §6.4·§6.5와 동일. 변경 없음. 주요 제약만 재기재한다.
 | `import_row` | `UNIQUE(import_job_id, source_row_no)` |
 | `external_inventory_snapshot` | `UNIQUE(external_system_id, warehouse_id, snapshot_at)` |
 | `audit_log` | 트리거 UPDATE/DELETE 차단 |
+| ✏️ `audit_log` | `CHECK (length(trim(entity_id)) > 0)`, `CHECK (length(trim(entity_type)) > 0)` |
+| ✏️ `system_setting` | `CHECK (id = 1)` (싱글턴), `CHECK (version >= 1)` |
+
+## ✏️ 6.5.1 `audit_log.entity_id` 의 타입 — UUID 가 아니라 TEXT
+
+ERD 전반의 PK 는 UUID 지만 **`audit_log.entity_id` 만은 TEXT** 다. 감사로그는
+특정 테이블 하나가 아니라 **모든 엔티티의 변경을 한 테이블에 모으기** 때문에,
+서로 다른 타입의 PK 를 하나의 컬럼으로 정규화해야 한다.
+
+| 항목 | 규칙 |
+|---|---|
+| `audit_log.id` | 감사로그 **자기 행의 PK**. UUID. 대상 엔티티와 무관하다. |
+| `audit_log.entity_id` | **대상 엔티티의 PK 를 문자열로 정규화**한 값. TEXT. |
+| UUID PK 엔티티 (`sku`, `bom`, `purchase_order`, `inventory_transaction` …) | UUID 를 그대로 문자열로 저장한다. 예 `"9f1c…-…"` |
+| ✏️ 정수 PK 엔티티 (`system_setting`) | 정수를 문자열로 변환해 저장한다. **`system_setting` 은 항상 `"1"`** (싱글턴이므로 상수). |
+| 복합키 엔티티 (`user_role` 등) | 구성 키를 `:` 로 이은 문자열. 예 `"<userId>:<roleId>"` |
+
+### 지켜야 할 것
+
+- ⚠️ **빈 문자열·공백 문자열 금지.** DB `CHECK (length(trim(entity_id)) > 0)` 로 막는다.
+  빈 값이 들어가면 "무엇이 바뀌었는지 모르는 감사로그"가 되어 기록이 없는 것만 못하다.
+- ⚠️ **화면용 문서번호를 넣지 않는다.** `PO-2026-0012` 같은 표시용 번호는 정정·재발번으로
+  바뀔 수 있어 추적이 끊긴다. **실제 PK** 를 넣는다. 표시용 번호가 필요하면
+  `before_value` / `after_value` 안에 담는다.
+- `entity_type` + `entity_id` 조합으로 조회하므로, 같은 엔티티에 대해 항상 같은
+  정규화 규칙을 써야 한다. 한 곳에서만 형식이 달라지면 그 이력은 조회에서 누락된다.
+- `entity_type` 역시 공백일 수 없다 (`CHECK`). `entity_id` 만으로는 대상이 결정되지 않는다.
 
 ## 6.6 날짜 기준
 
@@ -694,7 +721,8 @@ model UserRole {
 model AuditLog {
   id          String   @id @default(uuid()) @db.Uuid
   entityType  String
-  entityId    String   @db.Uuid
+  /// ✏️ TEXT. UUID 가 아니다 — 아래 "entity_id 의 타입" 참고.
+  entityId    String
   action      String
   beforeValue Json?
   /// ✏️ 원장 거래의 경우 entries(원본) + groups(재고키 합산 요약) 를 함께 담는다

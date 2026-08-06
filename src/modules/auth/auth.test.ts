@@ -13,7 +13,7 @@ import {
   isPublicPath,
   listRoles,
   normalizeCodes,
-  requiredPermissionFor,
+  resolveRoutePermission,
   resolveActor,
   type ActorContext,
 } from './application';
@@ -388,8 +388,8 @@ describe('★ 1차 권한 가드 — route policy', () => {
   });
 
   it('관리자 전용 경로에 필요한 권한이 명시된다', () => {
-    expect(requiredPermissionFor('/api/roles')).toBe('role.read');
-    expect(requiredPermissionFor('/api/me')).toBeUndefined();
+    expect(resolveRoutePermission({ pathname: '/api/roles', method: 'GET' })).toBe('role.read');
+    expect(resolveRoutePermission({ pathname: '/api/me', method: 'GET' })).toBeUndefined();
   });
 
   it('공개 경로 목록에 보호 경로가 섞이지 않았다', () => {
@@ -408,7 +408,7 @@ describe('★ 2겹 가드가 독립적이다', () => {
     const actor = await actorFor(ACTIVE_STAFF);
 
     // 1차 가드 판정: /api/roles 는 role.read 를 요구한다
-    const required = requiredPermissionFor('/api/roles');
+    const required = resolveRoutePermission({ pathname: '/api/roles', method: 'GET' });
     expect(required).toBe(LIST_ROLES_PERMISSION);
 
     // 1차 가드를 통과했다고 가정하고 서비스를 직접 호출해도 막힌다
@@ -418,6 +418,8 @@ describe('★ 2겹 가드가 독립적이다', () => {
   });
 
   it('두 가드가 같은 권한 키를 본다', () => {
-    expect(requiredPermissionFor('/api/roles')).toBe(LIST_ROLES_PERMISSION);
+    expect(resolveRoutePermission({ pathname: '/api/roles', method: 'GET' })).toBe(
+      LIST_ROLES_PERMISSION,
+    );
   });
 });
