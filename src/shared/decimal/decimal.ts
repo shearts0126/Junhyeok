@@ -1,4 +1,6 @@
-import { Prisma } from '@/generated/prisma/client';
+import type { Prisma } from '@/generated/prisma/client';
+
+import { ScmDecimal } from './context';
 
 /**
  * Decimal 안전 유틸.
@@ -31,10 +33,21 @@ import { Prisma } from '@/generated/prisma/client';
  *
  * JSON 숫자 리터럴로 내보내지 않는 이유: 클라이언트의 `JSON.parse` 가
  * IEEE754 double 로 읽어 서버가 지킨 정밀도를 바로 잃는다.
+ *
+ * ## 계산 컨텍스트
+ *
+ * 유효자릿수·지수표기 임계값은 `context.ts` 에서 고정한다. 생성자는 barrel 로
+ * 내보내지 않으며, 계산은 전부 이 모듈의 함수를 거친다.
  */
 
-/** Prisma 가 쓰는 Decimal 구현(decimal.js). */
-export const Decimal = Prisma.Decimal;
+/**
+ * Decimal 값 타입.
+ *
+ * 인스턴스는 `Prisma.Decimal` 의 인스턴스이기도 하므로(clone 이 프로토타입을
+ * 공유한다) Prisma 에 그대로 넘길 수 있다.
+ *
+ * ⚠️ 생성자는 노출하지 않는다. 값을 만들 때는 `toDecimal()` 을 쓴다.
+ */
 export type Decimal = Prisma.Decimal;
 
 /**
@@ -64,7 +77,7 @@ export const ROUNDING = {
 export type RoundingMode = (typeof ROUNDING)[keyof typeof ROUNDING];
 
 /** 0. 비교·초기값에 쓴다. */
-export const ZERO: Decimal = new Decimal(0);
+export const ZERO: Decimal = new ScmDecimal(0);
 
 // ── 생성·판별 ───────────────────────────────────────────────────
 
@@ -72,15 +85,23 @@ export const ZERO: Decimal = new Decimal(0);
  * 값이 Decimal 인스턴스인가.
  *
  * 외부(파싱 결과, Prisma 반환값)에서 온 값을 좁힐 때 쓴다.
+ * 전용 생성자로 만든 값과 Prisma 가 돌려준 값을 모두 인식한다.
  */
 export function isDecimal(value: unknown): value is Decimal {
-  return Decimal.isDecimal(value);
+  return ScmDecimal.isDecimal(value);
+}
+
+/** 이 프로젝트의 계산 컨텍스트로 만들어진 값인가. */
+function isOwnContext(value: Decimal): boolean {
+  return (value as unknown as { constructor: unknown }).constructor === ScmDecimal;
 }
 
 /**
- * 문자열에서 Decimal 을 만든다.
+ * Decimal 을 만든다. 문자열 또는 다른 Decimal 을 받는다.
  *
- * 이미 Decimal 이면 그대로 돌려준다(Decimal 은 불변이므로 복사가 불필요하다).
+ * ⚠️ Prisma 가 돌려준 Decimal 처럼 **다른 컨텍스트의 값은 다시 감싼다.**
+ *    decimal.js 는 연산 시 수신자의 생성자 설정을 따르므로, 그대로 두면
+ *    이후 계산이 전역 기본값(유효자릿수 20)으로 수행된다.
  *
  * @throws {RangeError} 숫자로 해석할 수 없거나, 유한수가 아닌 경우
  *   (`'abc'`, `''`, `'1,000'`, `' 1 '`, `'Infinity'`, `'NaN'`)
@@ -88,12 +109,12 @@ export function isDecimal(value: unknown): value is Decimal {
 export function toDecimal(value: DecimalInput): Decimal {
   if (isDecimal(value)) {
     assertFinite(value, String(value));
-    return value;
+    return isOwnContext(value) ? value : new ScmDecimal(value);
   }
 
   let parsed: Decimal;
   try {
-    parsed = new Decimal(value);
+    parsed = new ScmDecimal(value);
   } catch {
     throw new RangeError(
       `Decimal 로 변환할 수 없는 값입니다: ${JSON.stringify(value)}. ` +
@@ -200,18 +221,25 @@ export function isNegative(value: DecimalInput): boolean {
 /**
  * 지정한 소수 자릿수로 반올림한다.
  *
- * ⚠️ 필드별 반올림 정책(수량 6자리, 금액 원 단위 등)은 **업무 규칙**이며
- *    이 함수가 정하지 않는다. 호출부가 자릿수와 방식을 명시한다.
+ * ⚠️ **`rounding` 에 기본값이 없다.** 필드별 반올림 정책(수량 6자리 사사오입,
+ *    금액 4자리 은행가 반올림 등)은 아직 확정되지 않은 **업무 규칙**이며,
+ *    이 함수가 조용히 하나를 골라서는 안 된다. 호출부가 반드시 명시한다.
+ *
+ * ```ts
+ * roundToScale(value, 6, ROUNDING.HALF_UP);
+ * roundToScale(value, 4, ROUNDING.HALF_EVEN);
+ * roundToScale(value, 6);                       // ❌ 컴파일 오류
+ * ```
+ *
+ * ⚠️ 이 scale/rounding 은 **DB 저장·화면 표시용 업무 정책**이며,
+ *    `context.ts` 의 `DECIMAL_PRECISION`·`DECIMAL_ROUNDING`(중간 연산의
+ *    유효자릿수와 반올림)과는 다른 층위다.
  *
  * @param scale 소수 자릿수. 0 이상의 정수.
- * @param rounding 기본값 `HALF_UP`(사사오입).
+ * @param rounding 반올림 방식. 필수.
  * @throws {RangeError} scale 이 음수이거나 정수가 아닌 경우
  */
-export function roundToScale(
-  value: DecimalInput,
-  scale: number,
-  rounding: RoundingMode = ROUNDING.HALF_UP,
-): Decimal {
+export function roundToScale(value: DecimalInput, scale: number, rounding: RoundingMode): Decimal {
   if (!Number.isInteger(scale) || scale < 0) {
     throw new RangeError(`scale 은 0 이상의 정수여야 합니다: ${String(scale)}`);
   }

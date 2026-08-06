@@ -16,7 +16,8 @@
 
 import { Prisma } from '@/generated/prisma/client';
 // 별칭 import — 이름을 바꿔도 타입으로 판정되는지 확인한다.
-import { Decimal as MoneyValue, type DecimalInput } from '@/shared/decimal';
+// (생성자는 barrel 로 내보내지 않으므로 타입만 가져온다)
+import type { Decimal as MoneyValue, DecimalInput } from '@/shared/decimal';
 
 interface LedgerLine {
   readonly quantityDelta: Prisma.Decimal;
@@ -45,9 +46,9 @@ export function violationOperationResult(a: Prisma.Decimal, b: Prisma.Decimal): 
   return a.plus(b).toNumber();
 }
 
-/** ⑤ 별칭 import 로 만든 Decimal */
-export function violationAliasedImport(): number {
-  return new MoneyValue('2.5').toNumber();
+/** ⑤ 별칭 import 한 타입의 값 */
+export function violationAliasedImport(money: MoneyValue): number {
+  return money.toNumber();
 }
 
 /** ⑥ 문자열로 우회하는 parseFloat */

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AppError,
+  ERROR_TYPE,
   AuthorizationError,
   ConflictError,
   DomainError,
@@ -764,5 +765,95 @@ describe('★ 내부 로그와 외부 응답 분리', () => {
 
     // 로그의 requestId 로 응답과 연결된다
     expect(log.requestId).toBe('server-uuid');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 오류 타입명 안정화 (T0-4 보완)
+//
+// `new.target.name` / `this.constructor.name` 은 운영 빌드의 최소화 과정에서
+// 클래스명이 지워지면 빈 문자열이 된다. 고정 문자열로 대체했다.
+// ═══════════════════════════════════════════════════════════════
+describe('★ 오류 타입명 안정화', () => {
+  const CASES: ReadonlyArray<[string, AppError]> = [
+    [ERROR_TYPE.DomainError, new DomainError(ERROR_CODES.INSUFFICIENT_STOCK)],
+    [ERROR_TYPE.AuthorizationError, new AuthorizationError()],
+    [ERROR_TYPE.ConflictError, new ConflictError()],
+    [ERROR_TYPE.ValidationError, new ValidationError()],
+    [ERROR_TYPE.SystemError, new SystemError()],
+    [ERROR_TYPE.EnvironmentError, new EnvironmentError('DATABASE_URL', 'x')],
+  ];
+
+  it('카탈로그가 7개 타입명을 모두 담는다', () => {
+    expect(Object.keys(ERROR_TYPE)).toEqual([
+      'AppError',
+      'DomainError',
+      'AuthorizationError',
+      'ConflictError',
+      'ValidationError',
+      'SystemError',
+      'EnvironmentError',
+    ]);
+    // 키와 값이 같아야 오타가 드러난다
+    for (const [key, value] of Object.entries(ERROR_TYPE)) {
+      expect(value).toBe(key);
+    }
+  });
+
+  it.each(CASES)('%s 는 name·errorType 이 모두 고정 문자열이다', (expected, error) => {
+    expect(error.name).toBe(expected);
+    expect(error.errorType).toBe(expected);
+  });
+
+  it('★ 타입명이 빈 문자열이 되지 않는다', () => {
+    for (const [, error] of CASES) {
+      expect(error.name).not.toBe('');
+      expect(error.errorType).not.toBe('');
+      expect(error.name.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('★ 클래스명(constructor.name)에 의존하지 않는다', () => {
+    // 최소화 빌드를 흉내내 클래스명을 지워도 타입명은 유지된다.
+    class Renamed extends DomainError {}
+    Object.defineProperty(Renamed, 'name', { value: '' });
+
+    const error = new Renamed(ERROR_CODES.NOT_FOUND);
+    expect(Renamed.name).toBe('');
+    expect(error.name).toBe(ERROR_TYPE.DomainError);
+    expect(error.errorType).toBe(ERROR_TYPE.DomainError);
+  });
+
+  it('★ 서버 로그의 errorName 이 비지 않는다', () => {
+    for (const [expected, error] of CASES) {
+      const entry = buildErrorLogEntry(error, { requestId: 'r' });
+      expect(entry.errorName).toBe(expected);
+      expect(entry.errorName).not.toBe('');
+    }
+  });
+
+  it('★ 정규화된 일반 Error 도 타입명을 갖는다', () => {
+    for (const raw of [new TypeError('x'), 'string', null, undefined, 42]) {
+      const entry = buildErrorLogEntry(raw, { requestId: 'r' });
+      expect(entry.errorName).toBe(ERROR_TYPE.SystemError);
+      expect(entry.errorName).not.toBe('');
+    }
+  });
+
+  it('로그의 1차 판별 키는 errorCode 로 유지된다', () => {
+    const entry = buildErrorLogEntry(new DomainError(ERROR_CODES.ALREADY_REVERSED), {
+      requestId: 'r',
+    });
+    expect(entry.errorCode).toBe('ALREADY_REVERSED');
+    // 타입명은 보조 정보 — 같은 타입이 여러 코드를 가진다
+    expect(entry.errorName).toBe(ERROR_TYPE.DomainError);
+  });
+
+  it('개발 응답의 debug.name 도 고정 타입명을 쓴다', () => {
+    const body = buildErrorResponse(new DomainError(ERROR_CODES.NOT_FOUND), {
+      requestId: 'r',
+      isProduction: false,
+    });
+    expect(body.debug?.name).toBe(ERROR_TYPE.DomainError);
   });
 });

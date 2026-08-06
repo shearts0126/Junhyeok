@@ -20,6 +20,10 @@ export interface ErrorLogEntry {
   /** 외부에서 받은 추적 식별자. 응답에는 나가지 않는다. */
   readonly correlationId?: string;
   readonly errorCode: string;
+  /**
+   * 오류 타입명. 최소화 빌드에서도 값이 고정된다(`ERROR_TYPE`).
+   * ⚠️ 로그 검색의 **1차 판별 키는 `errorCode`** 이며, 이 값은 보조 정보다.
+   */
   readonly errorName: string;
   readonly message: string;
   readonly expected: boolean;

@@ -402,6 +402,74 @@ return { available: toDecimalString(available) };   // 응답 경계에서만 �
 2. **`Infinity` · `NaN` 문자열** — decimal.js 는 유효한 입력으로 받아들입니다.
    `toDecimal()` 은 거부합니다.
 
+### 계산 컨텍스트 — 유효자릿수 60
+
+decimal.js 의 **전역 기본 설정에 의존하지 않습니다.** 기본값은 유효자릿수 20 이고, 어떤 코드든
+`Prisma.Decimal.set(...)` 을 부르면 프로세스 전체의 계산 결과가 바뀝니다. 되돌릴 수 없는 원장
+데이터를 다루면서 그런 전역 상태에 기댈 수 없습니다.
+
+`src/shared/decimal/context.ts` 가 **전용 생성자를 clone 해서 freeze** 합니다.
+
+| 설정 | 값 | 기본값 |
+|---|---|---|
+| `precision` | **60** | 20 |
+| `rounding` | `HALF_UP`(4) | 4 |
+| `toExpNeg` | **-9e15** | -7 |
+| `toExpPos` | **9e15** | 21 |
+| `modulo` | `DOWN`(1) | 1 |
+
+**precision 60 의 근거**
+
+| 근거 | 유효자릿수 |
+|---|---|
+| 수량 `DECIMAL(18,6)` | 18 |
+| 금액 `DECIMAL(18,4)` | 18 |
+| 수량 × 금액 (정확한 곱) | **36** |
+| 3항 연쇄 (수량 × 단가 × 환율·계수) | **54** |
+| 나눗셈·평균의 중간 반올림 여유 | +6 |
+| **합계** | **60** |
+
+요구 하한 40 을 넘고, 3항 연쇄까지 절단 없이 담깁니다. decimal.js 상한은 `1e9` 이며 60 자리의
+성능 비용은 무시할 수준입니다.
+
+**clone + freeze 를 택한 이유**
+
+- **clone** — `Prisma.Decimal` 의 설정이 외부 코드에 의해 바뀌어도 이쪽 계산은 영향받지 않습니다.
+- **freeze** — 이쪽 설정도 `set()` 이나 직접 대입으로 바꿀 수 없습니다.
+- decimal.js 의 clone 은 **프로토타입을 공유하고 `constructor` 만 인스턴스마다** 따로 갖습니다.
+  따라서 `instanceof Prisma.Decimal` 과 `Prisma.Decimal.isDecimal()` 이 그대로 성립하고,
+  Prisma 에 값을 넘기거나 Prisma 가 돌려준 Decimal 을 받는 데 문제가 없습니다.
+
+> ⚠️ 연산은 **수신자의 생성자 설정**을 따릅니다. Prisma 가 돌려준 Decimal 을 그대로 받아
+> `.plus()` 를 부르면 유효자릿수 20 으로 계산됩니다. 그래서 `toDecimal()` 이 외부 컨텍스트의
+> Decimal 을 **항상 전용 생성자로 다시 감쌉니다.**
+
+> ⚠️ freeze 때문에 `ln()` · `exp()` 는 쓸 수 없습니다. decimal.js 가 이 함수들에서
+> `Decimal.precision` 을 일시적으로 올려 쓰기 때문입니다. 수량·금액 계산에는 필요 없고,
+> 이 모듈도 노출하지 않습니다.
+
+**생성자를 barrel 로 내보내지 않습니다.** `@/shared/decimal` 에서 얻을 수 있는 것은 함수와
+타입뿐입니다. 값 생성은 `toDecimal()` 을 거치므로 컨텍스트를 우회한 Decimal 이 만들어지지 않습니다.
+
+### 두 층위의 반올림 — 혼동하지 마세요
+
+| | 중간 연산 | 업무 정책 |
+|---|---|---|
+| 무엇 | 유효자릿수를 넘는 중간 결과(나눗셈 등) | DB 저장·화면 표시 시 확정하는 자릿수 |
+| 어디 | `context.ts` 의 `DECIMAL_PRECISION` / `DECIMAL_ROUNDING` | `roundToScale(value, scale, rounding)` |
+| 값 | 60 자리 / `HALF_UP` (고정) | 필드마다 다름 (**미확정**) |
+| 누가 정하나 | 시스템 (전역 고정) | 호출부가 매번 명시 |
+
+`roundToScale` 의 `rounding` 에는 **기본값이 없습니다.** 필드별 반올림 정책(수량 6자리 사사오입,
+금액 4자리 은행가 반올림 등)은 아직 확정되지 않은 업무 규칙이며, 유틸이 조용히 하나를 골라서는
+안 됩니다.
+
+```ts
+roundToScale(value, 6, ROUNDING.HALF_UP);
+roundToScale(value, 4, ROUNDING.HALF_EVEN);
+roundToScale(value, 6);                      // ❌ 컴파일 오류
+```
+
 ### 허용되는 문자열 직렬화
 
 **`toDecimalString()` 을 쓰세요.** `Decimal.toString()` 은 지수가 크거나 작으면 **지수표기**로
@@ -555,6 +623,21 @@ export async function POST(request: Request) {
    환경과 무관하게 **고정 문구 + HTTP 500** 입니다. 내부 메시지에 연결 문자열이 섞일 수 있기 때문입니다.
 4. 예상 가능한 오류는 `warn`, 예상하지 못한 오류는 `error` 레벨로 기록됩니다.
 5. 응답의 `requestId` 로 서버 로그를 찾을 수 있습니다.
+6. 로그 검색의 **1차 판별 키는 `errorCode`** 입니다. `errorName` 은 보조 정보입니다.
+
+### 오류 타입명은 빌드에 의존하지 않습니다
+
+`AppError` 는 `new.target.name` / `this.constructor.name` 을 쓰지 않습니다. 운영 빌드의
+최소화(minify) 과정에서 클래스명이 지워지면 로그의 `errorName` 이 빈 문자열이 됩니다
+(실제로 발생했습니다). 각 하위 클래스가 `ERROR_TYPE` 의 고정 문자열을 넘깁니다.
+
+```
+AppError · DomainError · AuthorizationError · ConflictError
+ValidationError · SystemError · EnvironmentError
+```
+
+이 값들은 개발·테스트·운영 빌드에서 동일합니다. `error.name` 과 `error.errorType` 이 같은 값이며,
+`AppError` 가 아닌 값도 `toAppError` 가 `SystemError` 로 정규화하므로 `errorName` 은 항상 채워집니다.
 
 ### 서버 로그의 자격증명 마스킹
 

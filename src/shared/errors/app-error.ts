@@ -35,6 +35,30 @@ import { ERROR_CODES, httpStatusForCode, publicMessageForCode, type ErrorCode } 
  * 기본값을 비공개로 두고, 공개는 호출부가 `publicDetails` 로 **명시**하게 한다.
  */
 
+/**
+ * 오류 타입명 카탈로그.
+ *
+ * ⚠️ **빌드 결과의 클래스명에 의존하지 않는다.** `new.target.name` 이나
+ *    `this.constructor.name` 은 운영 빌드의 최소화(minify) 과정에서 클래스명이
+ *    지워지면 빈 문자열이 된다. 실제로 T0-3 운영 빌드의 서버 로그에
+ *    `"errorName":""` 이 남았다.
+ *
+ * 로그의 **1차 판별 키는 `errorCode`** 이고 타입명은 보조 정보지만,
+ * 보조 정보가 환경마다 달라지면 로그 검색이 어긋난다.
+ * 그래서 각 하위 클래스가 고정 문자열을 명시한다.
+ */
+export const ERROR_TYPE = {
+  AppError: 'AppError',
+  DomainError: 'DomainError',
+  AuthorizationError: 'AuthorizationError',
+  ConflictError: 'ConflictError',
+  ValidationError: 'ValidationError',
+  SystemError: 'SystemError',
+  EnvironmentError: 'EnvironmentError',
+} as const;
+
+export type ErrorTypeName = (typeof ERROR_TYPE)[keyof typeof ERROR_TYPE];
+
 /** 서버 로그 전용 컨텍스트. 외부 응답에 나가지 않는다. */
 export type ErrorContext = Record<string, unknown>;
 
@@ -65,6 +89,8 @@ export interface AppErrorOptions {
  * 직접 사용하지 않고 아래 하위 클래스를 사용한다.
  */
 export abstract class AppError extends Error {
+  /** 빌드와 무관하게 고정된 오류 타입명. `name` 과 같은 값이다. */
+  readonly errorType: ErrorTypeName;
   readonly code: ErrorCode | string;
   readonly httpStatus: number;
   /** 예상 가능한 오류인가. false 면 500 + 고정 문구로 처리된다. */
@@ -79,12 +105,15 @@ export abstract class AppError extends Error {
   readonly publicHint: string | undefined;
 
   protected constructor(
+    typeName: ErrorTypeName,
     code: ErrorCode | string,
     expected: boolean,
     options: AppErrorOptions = {},
   ) {
     super(options.message ?? publicMessageForCode(code), { cause: options.cause });
-    this.name = new.target.name;
+    // 최소화 빌드에서도 동일한 값이 되도록 고정 문자열을 쓴다.
+    this.name = typeName;
+    this.errorType = typeName;
     this.code = code;
     this.httpStatus = httpStatusForCode(code);
     this.expected = expected;
@@ -106,14 +135,14 @@ export abstract class AppError extends Error {
  */
 export class DomainError extends AppError {
   constructor(code: ErrorCode | string, options: AppErrorOptions = {}) {
-    super(code, true, options);
+    super(ERROR_TYPE.DomainError, code, true, options);
   }
 }
 
 /** 인증·권한 오류. */
 export class AuthorizationError extends AppError {
   constructor(code: ErrorCode | string = ERROR_CODES.FORBIDDEN, options: AppErrorOptions = {}) {
-    super(code, true, options);
+    super(ERROR_TYPE.AuthorizationError, code, true, options);
   }
 }
 
@@ -129,7 +158,7 @@ export class ConflictError extends AppError {
     code: ErrorCode | string = ERROR_CODES.CONFLICT,
     options: AppErrorOptions & { retryable?: boolean } = {},
   ) {
-    super(code, true, options);
+    super(ERROR_TYPE.ConflictError, code, true, options);
     this.retryable = options.retryable ?? true;
   }
 }
@@ -140,7 +169,7 @@ export class ValidationError extends AppError {
   readonly fieldErrors: readonly FieldError[];
 
   constructor(fieldErrors: readonly FieldError[] = [], options: AppErrorOptions = {}) {
-    super(ERROR_CODES.VALIDATION_ERROR, true, options);
+    super(ERROR_TYPE.ValidationError, ERROR_CODES.VALIDATION_ERROR, true, options);
     this.fieldErrors = fieldErrors;
   }
 }
@@ -160,7 +189,7 @@ export interface FieldError {
  */
 export class SystemError extends AppError {
   constructor(options: AppErrorOptions = {}) {
-    super(ERROR_CODES.INTERNAL_ERROR, false, options);
+    super(ERROR_TYPE.SystemError, ERROR_CODES.INTERNAL_ERROR, false, options);
   }
 }
 
@@ -175,7 +204,7 @@ export class EnvironmentError extends AppError {
   readonly variable: string;
 
   constructor(variable: string, detail: string, options: AppErrorOptions = {}) {
-    super(ERROR_CODES.ENVIRONMENT_ERROR, false, {
+    super(ERROR_TYPE.EnvironmentError, ERROR_CODES.ENVIRONMENT_ERROR, false, {
       ...options,
       message: `[${variable}] ${detail}`,
       context: { ...options.context, variable },

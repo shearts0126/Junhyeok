@@ -6,6 +6,7 @@
 
 export {
   AppError,
+  ERROR_TYPE,
   DomainError,
   AuthorizationError,
   ConflictError,
@@ -16,6 +17,7 @@ export {
   type AppErrorOptions,
   type ErrorContext,
   type ErrorDetails,
+  type ErrorTypeName,
   type PublicDetails,
   type FieldError,
 } from './app-error';
