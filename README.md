@@ -2,7 +2,7 @@
 
 구매·발주, 공급계획, 재고, WMS 실행, S&OP를 통합한 내부 SCM 운영 시스템.
 
-> **현재 단계: `R1a-0 / T0-2` — 데이터베이스 연결 구성**
+> **현재 단계: `R1a-0 / T0-3` — 공통 오류체계**
 > 인증과 업무 모듈은 아직 구현되지 않았습니다. 업무 모델(테이블)도 아직 없습니다.
 > 진행 상황은 [`docs/07_개발백로그와_테스트전략_v0.2.md`](docs/07_개발백로그와_테스트전략_v0.2.md) 참조.
 
@@ -16,6 +16,7 @@
 | 스타일 | Tailwind CSS 4 + shadcn/ui | T0-1 ✅ |
 | 패키지 매니저 | pnpm 10 | T0-1 ✅ |
 | 코드 품질 | ESLint 9 (flat config) + Prettier 3 | T0-1 ✅ |
+| 오류 처리 | 공통 오류체계 + request ID | T0-3 ✅ |
 | 테스트 | Vitest 3 | T0-1 ✅ (Testcontainers는 T0-9) |
 | 데이터베이스 | PostgreSQL 16 + Prisma 7 (`@prisma/adapter-pg`) | T0-2 ✅ |
 | 인증 | Supabase Auth | T0-6 |
@@ -163,7 +164,8 @@ curl -s http://localhost:3000/api/health | jq
 │  └─ shared/                   공유 계층 → src/shared/README.md
 │     ├─ env.ts                 환경변수 검증
 │     ├─ health.ts              헬스체크 로직
-│     └─ db/                    Prisma 클라이언트 · 연결 점검
+│     ├─ db/                    Prisma 클라이언트 · 연결 점검
+│     └─ errors/                공통 오류체계 · request ID · 로깅
 ├─ docker-compose.yml           로컬 PostgreSQL
 ├─ prisma.config.ts             Prisma CLI 설정 (DIRECT_URL)
 ├─ components.json              shadcn/ui 설정
@@ -244,7 +246,7 @@ Vercel 서버리스는 요청마다 인스턴스가 뜰 수 있어 커넥션이 
 
 Prisma 7 부터 `datasource` 의 `url` / `directUrl` 을 **스키마에 둘 수 없습니다.**
 연결 URL 은 `prisma.config.ts`(마이그레이션)와 driver adapter(런타임)로 분리되었습니다.
-설계 문서 `03_ERD와_Prisma스키마_v0.2.md` 는 Prisma 6 기준으로 작성되어 있어 이 부분이 다릅니다.
+상세는 [`docs/03_ERD와_Prisma스키마_v0.2.md` §7.0](docs/03_ERD와_Prisma스키마_v0.2.md) 참조.
 
 ### 마이그레이션
 
@@ -264,6 +266,84 @@ T0-2 시점에는 **업무 모델이 없어 마이그레이션 파일도 없습�
 pnpm db:reset        # 볼륨 삭제 + 재기동 (모든 데이터 소실)
 pnpm prisma:deploy   # 마이그레이션 재적용 (모델이 생긴 뒤)
 ```
+
+---
+
+## 오류 처리
+
+모든 API 오류는 `src/shared/errors` 의 공통 체계를 통해 응답합니다.
+Route Handler 에서 오류 객체를 직접 직렬화하지 않습니다.
+
+```ts
+import { withErrorHandling, DomainError, ERROR_CODES } from '@/shared/errors';
+
+export async function POST(request: Request) {
+  return withErrorHandling(request, async () => {
+    throw new DomainError(ERROR_CODES.INSUFFICIENT_STOCK, {
+      message: '창고 OLPUN 가용 10, 요청 12',   // 개발 응답 · 서버 로그
+      details: { available: '10.000000' },      // 외부 응답에 포함
+      hint: '동일 재고키 2개 항목이 합산되었습니다.',
+      context: { skuId, warehouseId },          // ★ 서버 로그 전용
+    });
+  }, { route: '/api/skus' });
+}
+```
+
+### 오류 클래스
+
+| 클래스 | HTTP | 성격 | `expected` |
+|---|---|---|:-:|
+| `ValidationError` | 400 | 요청 형식·스키마 위반 | ✅ |
+| `AuthorizationError` | 401 / 403 | 인증·권한 | ✅ |
+| `ConflictError` | 409 | 동시성·상태 충돌 (재시도 가능) | ✅ |
+| `DomainError` | 422 | 업무규칙 위반 | ✅ |
+| `EnvironmentError` | 500 | 환경변수·서버 설정 오류 | ❌ |
+| `SystemError` | 500 | 예상하지 못한 오류 | ❌ |
+
+### 응답 포맷
+
+```json
+{
+  "errorCode": "INSUFFICIENT_STOCK",
+  "message": "재고가 부족합니다.",
+  "requestId": "e645e91c-175b-4815-a8d5-911506643b78",
+  "details": { "available": "10.000000", "requestedNet": "12.000000" },
+  "hint": "동일 재고키의 2개 항목이 합산되어 검증되었습니다."
+}
+```
+
+응답 헤더에 `x-request-id` 가 포함됩니다. 요청에 `x-request-id` 가 있으면 그대로 전파하고,
+없으면 `x-vercel-id` 를 쓰거나 새로 생성합니다. 제어문자는 제거되고 200자로 잘립니다.
+
+### 내부 로그 ↔ 외부 응답 분리
+
+| 항목 | 운영 응답 | 개발 응답 | 서버 로그 |
+|---|:-:|:-:|:-:|
+| `message` | 코드별 고정 문구 | 상세 메시지 | 상세 메시지 |
+| `details` · `hint` | ✅ | ✅ | ✅ |
+| `context` | ❌ | ❌ | ✅ |
+| `stack` | ❌ | `debug.stack` | 예상 못한 오류만 |
+| `requestId` | ✅ | ✅ | ✅ |
+
+**핵심 원칙**
+
+1. **운영 응답에 DB URL·호스트·포트·환경변수명·스택을 절대 노출하지 않습니다.**
+2. `context` 는 어떤 환경에서도 응답에 나가지 않습니다 (서버 로그 전용).
+3. **예상하지 못한 오류**(`SystemError`, `EnvironmentError`, 정규화된 일반 `Error`)는
+   환경과 무관하게 **고정 문구 + HTTP 500** 입니다. 내부 메시지에 연결 문자열이 섞일 수 있기 때문입니다.
+4. 서버 로그에서도 연결 문자열의 자격증명은 `***:***@` 로 마스킹됩니다.
+5. 예상 가능한 오류는 `warn`, 예상하지 못한 오류는 `error` 레벨로 기록됩니다.
+6. 응답의 `requestId` 로 서버 로그를 찾을 수 있습니다.
+
+### 오류 응답 확인 (개발 전용)
+
+```bash
+pnpm dev
+curl -s "http://localhost:3000/api/dev/error-preview?kind=domain" | jq
+# kind: validation | authorization | conflict | domain | system | unknown
+```
+
+> 이 라우트는 **운영환경에서 404** 를 반환합니다.
 
 ---
 

@@ -6,17 +6,14 @@
  *
  * ⚠️ 오류 메시지에 비밀번호·전체 URL 을 절대 포함하지 않는다.
  *    이 값들은 로그·헬스체크 응답·오류 추적 시스템으로 흘러갈 수 있다.
+ *
+ * T0-3 에서 `EnvironmentError` 는 공통 오류 체계(`@/shared/errors`)로 편입되었다.
+ * 변수명은 서버 로그(`context.variable`)에만 남고 운영 응답에는 나가지 않는다.
  */
 
-export class EnvironmentError extends Error {
-  override readonly name = 'EnvironmentError';
-  readonly variable: string;
+import { EnvironmentError } from '@/shared/errors/app-error';
 
-  constructor(variable: string, message: string) {
-    super(`[${variable}] ${message}`);
-    this.variable = variable;
-  }
-}
+export { EnvironmentError };
 
 export interface DatabaseEnv {
   /** 애플리케이션 런타임용 pooled connection */
