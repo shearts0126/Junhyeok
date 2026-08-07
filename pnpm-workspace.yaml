@@ -1,0 +1,10 @@
+# 네이티브 바이너리·엔진 준비를 위해 postinstall 실행이 필요한 패키지
+onlyBuiltDependencies:
+  - esbuild
+  - prisma
+  - '@prisma/client'
+  - '@prisma/engines'
+
+ignoredBuiltDependencies:
+  - sharp
+  - unrs-resolver

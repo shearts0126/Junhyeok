@@ -1,8 +1,5 @@
 {
   "permissions": {
-    "allow": [
-      "Bash(winget install:*)",
-      "Bash(git config:*)"
-    ]
+    "allow": ["Bash(winget install:*)", "Bash(git config:*)"]
   }
 }

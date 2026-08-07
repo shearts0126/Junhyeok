@@ -1,0 +1,276 @@
+// DEEPPOINT SCM OS — Prisma Schema
+//
+// T0-2 시점에는 업무 모델을 정의하지 않는다.
+// 연결 구성과 마이그레이션 체계만 세우고, 모델은 후속 작업에서 추가한다.
+//   - User / Role / Permission     : T0-6
+//   - SystemSetting / AuditLog     : T0-7
+//   - CommonCode                   : T0-8
+//   - Sku / SkuBarcode / ...       : R1a-1
+//   - InventoryTransaction / ...   : R1a-2
+//
+// 설계 문서: docs/03_ERD와_Prisma스키마_v0.2.md
+//
+// ⚠️ Prisma 7 변경사항
+//   datasource 의 url / directUrl 은 더 이상 스키마에 둘 수 없다.
+//   - 마이그레이션용 연결       → prisma.config.ts (DIRECT_URL)
+//   - 애플리케이션 런타임 연결  → PrismaClient 의 driver adapter (DATABASE_URL)
+//   자세한 내용은 README "데이터베이스" 절 참조.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+
+  // 수량·금액은 DECIMAL 을 사용하며 Prisma.Decimal(decimal.js) 로 반환된다.
+  // Number() 변환은 정밀도 손실을 일으키므로 금지한다 (BOM 소요량 1/30 등).
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 인증·권한 (T0-6)
+//
+// 설계 문서 docs/03_ERD와_Prisma스키마_v0.2.md §인증·권한
+//
+// ⚠️ Supabase 가 관리하는 `auth.users` 테이블을 모델링하거나 relation 으로
+//    연결하지 않는다. 그 테이블은 Supabase 의 소유이고 스키마가 바뀔 수 있다.
+//    로컬 `user` 는 인증 사용자의 **미러**이자 SCM 권한 상태의 기준이며,
+//    `id` 만 `auth.users.id` 와 같은 UUID 를 공유한다.
+// ═══════════════════════════════════════════════════════════════
+
+/// SCM 시스템 사용자. Supabase 인증 사용자의 미러.
+/// 인증 성공만으로 자동 생성되지 않는다 — 승인된 사용자만 이 표에 들어온다.
+model User {
+  /// Supabase auth.users.id 와 동일한 UUID. 자동 생성하지 않는다.
+  id        String     @id @db.Uuid
+  email     String     @unique
+  name      String
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+  userRoles UserRole[]
+
+  auditLogs      AuditLog[]      @relation("AuditActor")
+  approvedAudits AuditLog[]      @relation("AuditApprover")
+  updatedSettings SystemSetting[] @relation("SettingUpdatedBy")
+
+  createdCodeGroups CommonCodeGroup[] @relation("CodeGroupCreatedBy")
+  updatedCodeGroups CommonCodeGroup[] @relation("CodeGroupUpdatedBy")
+  createdCodes      CommonCode[]      @relation("CodeCreatedBy")
+  updatedCodes      CommonCode[]      @relation("CodeUpdatedBy")
+
+  @@map("user")
+}
+
+/// 역할. ADMIN / SCM_LEADER / SCM_STAFF / FINANCE / EXECUTIVE
+model Role {
+  id       String @id @default(uuid()) @db.Uuid
+  roleCode String @unique @map("role_code")
+  roleName String @map("role_name")
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("role")
+}
+
+/// 권한. "role.read", "sku.approve" 같은 점 표기 키.
+model Permission {
+  id            String  @id @default(uuid()) @db.Uuid
+  permissionKey String  @unique @map("permission_key")
+  description   String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permission")
+}
+
+/// 역할 ↔ 권한. ADMIN 도 여기에 행이 있어야 권한을 갖는다(코드상 예외 없음).
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+/// 사용자 ↔ 역할.
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  grantedAt DateTime @default(now()) @map("granted_at") @db.Timestamptz
+  /// 부여한 사용자. 시스템 시드는 NULL.
+  grantedBy String?  @map("granted_by") @db.Uuid
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_role")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 시스템 설정·감사로그 (T0-7)
+// ═══════════════════════════════════════════════════════════════
+
+/// 운영 중 바뀌는 값. 코드에 하드코딩하지 않는다.
+///
+/// ⚠️ **타입이 명시된 단일 설정 행**이다(singleton, `id = 1`).
+///    자유 형식 JSON EAV 를 쓰지 않는다 — 설정 하나하나가 업무 판정에 직접
+///    쓰이므로 valueType 분기·NULL 조합·알 수 없는 키가 끼어들 여지를 두지 않는다.
+///
+/// ⛔ 일반 `allow_self_approval` 컬럼은 만들지 않는다.
+///    재고조정 승인·음수재고 예외 승인·월마감 해제는 설정과 무관하게
+///    항상 요청자≠승인자다 (ADMIN 예외 없음).
+model SystemSetting {
+  /// singleton. 항상 1.
+  id                   Int       @id
+  allowSelfApprovalSku Boolean   @default(false) @map("allow_self_approval_sku")
+  allowSelfApprovalBom Boolean   @default(false) @map("allow_self_approval_bom")
+  /// 전환 기준일 (D-01). UAT 완료 후 관리자가 설정한다.
+  cutoverDate          DateTime? @map("cutover_date") @db.Date
+  /// balance 재구축 중 Posting 차단
+  postingFrozen        Boolean   @default(false) @map("posting_frozen")
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy            String?   @map("updated_by") @db.Uuid
+  /// 낙관적 동시성 제어. 변경마다 증가한다.
+  version              Int       @default(1)
+
+  /// 사용자를 지워도 설정 이력이 훼손되지 않도록 SET NULL.
+  updatedByUser User? @relation("SettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("system_setting")
+}
+
+/// 감사로그. **불변**이다.
+///
+/// UPDATE / DELETE / TRUNCATE 는 DB 트리거로 차단한다.
+/// 애플리케이션 코드만으로 불변성을 보장하지 않는다 — 직접 SQL 실행도 막아야 한다.
+///
+/// ⛔ `updated_at` 컬럼이 없다. 수정 API·삭제 API 도 없다.
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityType  String   @map("entity_type")
+  entityId    String   @map("entity_id")
+  action      String
+  beforeValue Json?    @map("before_value")
+  afterValue  Json?    @map("after_value")
+  /// 수행자. ActorContext 에서만 취득한다.
+  actorId     String   @map("actor_id") @db.Uuid
+  /// 승인자. 승인 행위가 아닌 경우 NULL.
+  approvedBy  String?  @map("approved_by") @db.Uuid
+  occurredAt  DateTime @default(now()) @map("occurred_at") @db.Timestamptz
+  reason      String?
+  requestId   String?  @map("request_id")
+  sessionId   String?  @map("session_id")
+  ipAddress   String?  @map("ip_address")
+
+  /// 사용자를 지워도 감사로그가 사라지면 안 된다.
+  actor      User  @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  approver   User? @relation("AuditApprover", fields: [approvedBy], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId, occurredAt(sort: Desc)])
+  @@index([actorId, occurredAt(sort: Desc)])
+  @@map("audit_log")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 공통코드 (T0-8)
+//
+// 5개 엑셀에 흩어져 있던 코드사전(브랜드·대분류·소분류·부자재분류·보관처·채널)의
+// 단일 기준. 설계 문서 docs/03_ERD와_Prisma스키마_v0.2.md §공통코드.
+//
+// ⛔ 물리삭제하지 않는다. "삭제" 는 항상 active=false (비활성화)다.
+//    코드를 지우면 그 코드를 참조하던 과거 기록의 의미가 사라진다.
+//    향후 SKU·Warehouse 등이 공통코드를 참조할 때는 FK ON DELETE RESTRICT 를 쓴다.
+// ═══════════════════════════════════════════════════════════════
+
+/// 코드 그룹. BRAND / MAJOR_CATEGORY / MINOR_CATEGORY / MATERIAL_CATEGORY /
+/// STORAGE_LOCATION / CHANNEL (T0-8 seed 6종).
+///
+/// 그룹은 seed·migration 관리 대상이다. 생성·수정 API 가 없고
+/// `group_code` 는 API 로 변경하지 않는다.
+model CommonCodeGroup {
+  id          String  @id @default(uuid()) @db.Uuid
+  /// 안정 키. 빈 문자열·앞뒤 공백 금지 (DB CHECK).
+  groupCode   String  @unique @map("group_code")
+  groupName   String  @map("group_name")
+  description String?
+
+  /// 그룹 간 계층 (예: 소분류 → 대분류). 원본 코드사전에 계층이 있을 때만 설정한다.
+  /// ⚠️ T0-8 seed 6종은 전부 NULL — 원본 사전에 그룹 간 계층이 없음을 데이터로
+  ///    확인했다 (소분류 8종이 여러 대분류 아래에서 사용됨).
+  parentGroupId String? @map("parent_group_id") @db.Uuid
+
+  /// 0 이상 (DB CHECK).
+  sortOrder Int     @default(0) @map("sort_order")
+  active    Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  /// seed 는 NULL. API 생성 경로가 없으므로 현재는 항상 NULL 이다.
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  /// 부모 그룹을 참조하는 그룹이 있으면 부모를 지울 수 없다.
+  parentGroup CommonCodeGroup?  @relation("CodeGroupHierarchy", fields: [parentGroupId], references: [id], onDelete: Restrict)
+  childGroups CommonCodeGroup[] @relation("CodeGroupHierarchy")
+  codes       CommonCode[]
+
+  createdByUser User? @relation("CodeGroupCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User? @relation("CodeGroupUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@map("common_code_group")
+}
+
+/// 코드 값.
+///
+/// - `code` 와 `group_id` 는 생성 후 변경 불가 (Application Service 가 강제)
+/// - 수정 가능: name · parentCode · sortOrder · attributes · active
+/// - ⛔ 물리삭제 API·repository delete 메서드가 없다
+model CommonCode {
+  id      String @id @default(uuid()) @db.Uuid
+  groupId String @map("group_id") @db.Uuid
+  /// 그룹 내 UNIQUE. 빈 문자열·앞뒤 공백 금지 (DB CHECK). 생성 후 변경 불가.
+  code    String
+  /// 빈 문자열·앞뒤 공백 금지 (DB CHECK). 내부 공백은 허용한다.
+  name    String
+
+  /// 다른 그룹의 코드를 부모로 가질 수 있다 (예: 소분류 → 대분류 코드).
+  /// 같은 그룹 강제 DB 제약을 두지 않는 대신 Application Service 가
+  /// "그룹의 parent_group 과 부모 코드의 group 일치"를 검증한다.
+  parentCodeId String? @map("parent_code_id") @db.Uuid
+
+  /// 0 이상 (DB CHECK).
+  sortOrder Int @default(0) @map("sort_order")
+
+  /// 원본 사전의 부가 정보 (영문명·순번 표기·판매처·출고유형 등). 자유 형식.
+  attributes Json?
+  active     Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  /// seed 는 NULL, API 생성은 ActorContext 의 사용자.
+  createdBy String?  @map("created_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy String?  @map("updated_by") @db.Uuid
+
+  /// 코드가 있는 그룹은 지울 수 없다.
+  group      CommonCodeGroup @relation(fields: [groupId], references: [id], onDelete: Restrict)
+  /// 자식이 참조하는 부모 코드는 지울 수 없다.
+  parentCode CommonCode?     @relation("CommonCodeHierarchy", fields: [parentCodeId], references: [id], onDelete: Restrict)
+  childCodes CommonCode[]    @relation("CommonCodeHierarchy")
+
+  createdByUser User? @relation("CodeCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser User? @relation("CodeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+
+  @@unique([groupId, code])
+  @@index([groupId, active, sortOrder])
+  @@index([parentCodeId])
+  @@map("common_code")
+}
