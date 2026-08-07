@@ -28,6 +28,10 @@ export const ERROR_CODES = {
   // ── 승인 (T0-7 이후) ─────────────────────────────────────
   SELF_APPROVAL_FORBIDDEN: 'SELF_APPROVAL_FORBIDDEN',
 
+  // ── SKU 도메인 (T1-2) ────────────────────────────────────
+  SKU_CODE_IMMUTABLE: 'SKU_CODE_IMMUTABLE',
+  SKU_ARCHIVE_BLOCKED: 'SKU_ARCHIVE_BLOCKED',
+
   // ── 재고 (R1a-2, 설계 05 v0.2 §10.18) ────────────────────
   INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
   REVERSAL_OF_REVERSAL_NOT_ALLOWED: 'REVERSAL_OF_REVERSAL_NOT_ALLOWED',
@@ -65,6 +69,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.MISSING_SOURCE_DOCUMENT]: 422,
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: 422,
   [ERROR_CODES.SETTING_LOCKED]: 422,
+  [ERROR_CODES.SKU_CODE_IMMUTABLE]: 422,
+  [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: 422,
 
   [ERROR_CODES.ENVIRONMENT_ERROR]: 500,
   [ERROR_CODES.INTERNAL_ERROR]: 500,
@@ -107,6 +113,8 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.MISSING_SOURCE_DOCUMENT]: '원인문서가 필요합니다.',
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: '마감된 기간의 거래는 처리할 수 없습니다.',
   [ERROR_CODES.SETTING_LOCKED]: '잠긴 설정은 변경할 수 없습니다.',
+  [ERROR_CODES.SKU_CODE_IMMUTABLE]: '거래가 발생한 SKU 의 코드는 변경할 수 없습니다.',
+  [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: '사용 이력이 있는 SKU 는 폐기할 수 없습니다.',
   [ERROR_CODES.ENVIRONMENT_ERROR]: '서버 설정 오류가 발생했습니다.',
   [ERROR_CODES.INTERNAL_ERROR]: '요청을 처리하지 못했습니다.',
 };
