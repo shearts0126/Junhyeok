@@ -843,6 +843,9 @@ resolveRoutePermission({ pathname: '/api/roles',           method: 'POST'  }); /
 | `/api/code-groups` | `GET`, `HEAD` | `common_code.read` |
 | `/api/codes` | `GET`, `HEAD` | `common_code.read` |
 | `/api/codes` | `POST`, `PATCH`, `PUT`, `DELETE` | `common_code.manage` |
+| `/api/skus` | `GET`, `HEAD` | `sku.read` |
+| `/api/skus` | `POST` | `sku.create` |
+| `/api/skus` | `PATCH`, `PUT`, `DELETE` | `sku.update` |
 | `/admin/codes` | `GET`, `HEAD` | `common_code.read` |
 
 **2차 — Application Service**
@@ -874,13 +877,22 @@ Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 �
 | `GET /api/codes/{groupCode}` | `common_code.read` |
 | `POST /api/codes/{groupCode}` | `common_code.manage` |
 | `PATCH /api/codes/{groupCode}/{code}` | `common_code.manage` |
+| `GET /api/skus` | `sku.read` |
+| `GET /api/skus/{id}` | `sku.read` |
+| `POST /api/skus` | `sku.create` |
+| `PATCH /api/skus/{id}` | `sku.update` |
+
+SKU 권한 배정 (T1-3): `sku.read` 는 5개 역할 전부, `sku.create`·`sku.update` 는
+ADMIN·SCM_LEADER·SCM_STAFF 만 — FINANCE·EXECUTIVE 는 read-only 입니다.
+DELETE 핸들러는 없으며(405), 승인 워크플로(submit/approve/…)·비활성화·폐기·이력 API 는
+T1-4 이후의 별도 endpoint 입니다.
 
 ```bash
 pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
 ```
 
-시드는 T0-6 이 실제로 쓰는 최소 권한만 등록합니다. SKU·BOM·재고 권한을 미리 넣지 않습니다 —
-쓰이지 않는 권한 행은 "누가 무엇을 할 수 있는가"를 흐리게 만듭니다.
+시드는 각 Task 가 실제로 쓰는 최소 권한만 등록합니다. 아직 구현되지 않은 BOM·재고 권한을
+미리 넣지 않습니다 — 쓰이지 않는 권한 행은 "누가 무엇을 할 수 있는가"를 흐리게 만듭니다.
 
 ---
 

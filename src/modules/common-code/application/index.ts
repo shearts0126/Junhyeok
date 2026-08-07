@@ -27,3 +27,4 @@ export {
   type CommonCodeMutateDependencies,
 } from './mutate-codes';
 export { toCodeView, type CodeGroupView, type CodeParentView, type CodeView } from './views';
+export { findCommonCodeRefs, type CommonCodeRef, type CommonCodeRefClient } from './code-refs';
