@@ -146,7 +146,7 @@ erDiagram
         bool lot_managed
         bool expiry_managed
         bool serial_managed
-        bool negative_stock_allowed
+        bool negative_stock_allowed "✏️ 폐기(T1-1) — 거래별 승인 예외로 대체"
         decimal reconciliation_tolerance_qty
         string erp_item_type "원문 보존"
         bool has_transaction "코드변경 차단 플래그"
@@ -399,7 +399,7 @@ erDiagram
 | | 인덱스 **`(sku_id, warehouse_id, inventory_status, lot_no, expiry_key, serial_no, owner_code, business_date)`** | 재고키 기간 집계 (핵심) |
 | | 인덱스 `(business_date, transaction_id)`, `(warehouse_id, business_date)`, `(channel_id, business_date) WHERE channel_id IS NOT NULL` | 수불부 |
 | `inventory_balance` | **`UNIQUE(sku_id, warehouse_id, location_id, inventory_status, lot_no, expiry_key, serial_no, owner_code)`** ← **재고키 전체** | **§00 C-09 핵심** |
-| | `CHECK (quantity >= 0)` — **단, `negative_stock_allowed` SKU는 예외 처리 필요** → 앱 계층 검증 + DB는 `quantity >= 0 OR allow_negative` 형태로는 불가하므로 **CHECK 미적용, 앱 계층 + 예외큐로 보장** | |
+| | `CHECK (quantity >= 0)` — **단, `negative_stock_allowed` SKU는 예외 처리 필요** → 앱 계층 검증 + DB는 `quantity >= 0 OR allow_negative` 형태로는 불가하므로 **CHECK 미적용, 앱 계층 + 예외큐로 보장** ✏️ *(v0.1 표기 — `negative_stock_allowed` 는 T1-1 에서 폐기, 거래별 승인 예외로만 허용)* | |
 | | 인덱스 `(sku_id)`, `(warehouse_id, inventory_status)`, `(sku_id, warehouse_id)` | |
 | `inventory_daily_snapshot` | `UNIQUE(snapshot_date, sku_id, warehouse_id, inventory_status)` | |
 
@@ -903,7 +903,7 @@ model Sku {
   expiryManaged             Boolean    @default(false)
   serialManaged             Boolean    @default(false)
   /// 예외 승인 하에서만 true. 기본 false (P6)
-  negativeStockAllowed      Boolean    @default(false)
+  negativeStockAllowed      Boolean    @default(false)   // ✏️ 폐기(T1-1, PENDING_v0.3 §1) — 실제 스키마에 없음
   defaultShelfLifeDays      Int?
   minimumRemainingDays      Int?
   /// 3PL 대사 허용오차 (§00 G-12). 기본 0

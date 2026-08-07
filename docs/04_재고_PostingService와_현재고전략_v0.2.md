@@ -309,7 +309,7 @@ locationId: null → warehouse.defaultLocationId
 |---|---|
 | `netQuantityDelta ≥ 0` | 검증 불필요 (순증가 또는 중립) |
 | `afterQty ≥ 0` | 통과 |
-| `afterQty < 0` **AND** `sku.negativeStockAllowed = true` | 통과 + `NEGATIVE_STOCK` 예외 (WARNING) |
+| ~~`afterQty < 0` **AND** `sku.negativeStockAllowed = true`~~ | ✏️ **폐기 (T1-1, PENDING_v0.3 §1)** — SKU 상시 허용 경로 제거. 음수재고는 아래 행(거래별 승인 예외)으로만 허용 |
 | `afterQty < 0` **AND** `allowNegativeStock` 제공 **AND** 승인자가 `ADMIN`/`SCM_LEADER` **AND** 사유 존재 | 통과 + `NEGATIVE_STOCK` 예외 (**OPEN**, 담당자·기한 지정) + 감사로그 |
 | 그 외 | ❌ `INSUFFICIENT_STOCK` — **전체 롤백** |
 
@@ -612,10 +612,11 @@ class InventoryPostingService {
           const after  = before.plus(g.netQuantityDelta);     // ★ 합산값
 
           if (after.lessThan(0)) {
-            const sku = refs.sku(g.key.skuId);
+            // ✏️ 폐기 (T1-1, PENDING_v0.3 §1): sku.negativeStockAllowed 경로 제거 —
+            //    거래별 승인 예외만 허용한다. (아래 의사코드는 R1a-2 에서 예외요청
+            //    모델 기준으로 재작성한다)
             const permitted =
-                 sku.negativeStockAllowed
-              || (cmd.allowNegativeStock
+                 (cmd.allowNegativeStock
                   && hasRole(cmd.actor, ['ADMIN','SCM_LEADER'])
                   && !!cmd.allowNegativeStock.reason);
 

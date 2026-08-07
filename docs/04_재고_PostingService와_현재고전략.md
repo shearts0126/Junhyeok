@@ -251,7 +251,7 @@ locationId: null → warehouse.defaultLocationId
 |---|---|
 | `quantityDelta ≥ 0` | 검증 불필요 (증가) |
 | `balanceAfter ≥ 0` | 통과 |
-| `balanceAfter < 0` **AND** `sku.negativeStockAllowed = true` | 통과 + `NEGATIVE_STOCK` 예외 생성 (WARNING) |
+| `balanceAfter < 0` **AND** `sku.negativeStockAllowed = true` | 통과 + `NEGATIVE_STOCK` 예외 생성 (WARNING) ✏️ *(v0.1 표기 — T1-1 에서 폐기, 04 v0.2 참조)* |
 | `balanceAfter < 0` **AND** `allowNegativeStock` 제공 **AND** 승인자가 `ADMIN`/`SCM_LEADER` **AND** 사유 존재 | 통과 + `NEGATIVE_STOCK` 예외 생성 (**OPEN**, 담당자·해소기한 지정) + 감사로그 |
 | 그 외 | ❌ `INSUFFICIENT_STOCK` — 롤백 |
 
@@ -457,7 +457,7 @@ class InventoryPostingService {
           if (after.lessThan(0)) {
             const sku = refs.sku(e.skuId);
             const permitted =
-                 sku.negativeStockAllowed
+                 sku.negativeStockAllowed  // ✏️ 폐기(T1-1) — v0.2 참조
               || (cmd.allowNegativeStock
                   && hasRole(cmd.actor, ['ADMIN','SCM_LEADER'])
                   && !!cmd.allowNegativeStock.reason);

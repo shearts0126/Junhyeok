@@ -60,6 +60,10 @@ model User {
   createdCodes      CommonCode[]      @relation("CodeCreatedBy")
   updatedCodes      CommonCode[]      @relation("CodeUpdatedBy")
 
+  createdSkus  Sku[] @relation("SkuCreatedBy")
+  updatedSkus  Sku[] @relation("SkuUpdatedBy")
+  approvedSkus Sku[] @relation("SkuApprovedBy")
+
   @@map("user")
 }
 
@@ -269,8 +273,120 @@ model CommonCode {
   createdByUser User? @relation("CodeCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   updatedByUser User? @relation("CodeUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
 
+  /// SKU 가 참조하는 코드 (브랜드·대분류·소분류). RESTRICT — 참조 중 물리삭제 불가.
+  brandSkus         Sku[] @relation("SkuBrand")
+  majorCategorySkus Sku[] @relation("SkuMajorCategory")
+  minorCategorySkus Sku[] @relation("SkuMinorCategory")
+
   @@unique([groupId, code])
   @@index([groupId, active, sortOrder])
   @@index([parentCodeId])
   @@map("common_code")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SKU 마스터 (T1-1)
+//
+// 설계 문서 docs/03_ERD와_Prisma스키마_v0.2.md §Layer 1.
+//
+// T1-1 은 **스키마와 migration 만** 다룬다. CRUD API·상태전이·승인 워크플로·
+// 화면은 T1-2 이후다.
+//
+// ⛔ `negativeStockAllowed` 가 없다 — **폐기된 설계**다 (PENDING_v0.3 §1 확정).
+//    SKU 에 상시 음수재고 허용 설정을 두지 않는다. 음수재고는 각 재고 거래별로
+//    승인된 예외 요청을 검증한 경우에만 허용한다 (R1a-2 예외요청 모델).
+//
+// ⛔ 현재고 숫자 필드(stock·quantity·onHandQty …)가 없다. 현재고는
+//    InventoryLedgerEntry/InventoryBalance 소관이다. Sku 는 마스터다.
+//
+// ⛔ 물리삭제하지 않는다. 수명은 상태(INACTIVE/DISCONTINUED/ARCHIVED)로 다루며,
+//    `deleted_at` 이 있어도 `sku_code` 는 **생애 전체 전역 UNIQUE** 다 —
+//    조건부 UNIQUE 로 완화하지 않는다 (C-06).
+// ═══════════════════════════════════════════════════════════════
+
+/// SKU 수명주기 상태. 전이 규칙은 T1-2 의 Application 계층에서 구현한다.
+enum SkuStatus {
+  DRAFT
+  PENDING_APPROVAL
+  REJECTED
+  ACTIVE
+  INACTIVE
+  DISCONTINUED
+  ARCHIVED
+}
+
+/// 품목 마스터.
+model Sku {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// 전역 UNIQUE (C-06). 빈 문자열·앞뒤 공백 금지 (DB CHECK).
+  /// 코드 패턴 위반은 DB 가 아니라 후속 validation/import 의 WARNING 이다 —
+  /// 원본에 코드체계 예외 SKU 가 실존하므로 패턴 CHECK 를 걸지 않는다.
+  skuCode   String    @unique @map("sku_code") @db.VarChar(80)
+  skuName   String    @map("sku_name") @db.VarChar(255)
+  skuNameEn String?   @map("sku_name_en") @db.VarChar(255)
+  /// T0-8 코드사전에 ITEM_TYPE 그룹이 없으므로 문자열로 유지한다.
+  /// 공통코드화는 별도 설계 변경으로 처리한다 — T1-1 에서 seed 를 늘리지 않는다.
+  itemType  String    @map("item_type") @db.VarChar(40)
+  status    SkuStatus @default(DRAFT)
+
+  /// 공통코드 참조 (T0-8 정책: FK + ON DELETE RESTRICT).
+  /// ⚠️ group 일치(brandId 가 BRAND 그룹의 코드인지)는 DB FK 로 강제되지 않는다 —
+  ///    후속 SKU application validation 에서 검증한다 (T1-1 limitation).
+  brandId         String? @map("brand_id") @db.Uuid
+  majorCategoryId String? @map("major_category_id") @db.Uuid
+  minorCategoryId String? @map("minor_category_id") @db.Uuid
+
+  /// 앞자리 0 보존 — 문자열이다.
+  serialNumber   String? @map("serial_number") @db.VarChar(20)
+  additionalCode String? @map("additional_code") @db.VarChar(30)
+
+  baseUom           String  @default("EA") @map("base_uom") @db.VarChar(20)
+  purchaseUom       String? @map("purchase_uom") @db.VarChar(20)
+  unitConversionQty Decimal @default(1) @map("unit_conversion_qty") @db.Decimal(18, 6)
+
+  inventoryManaged Boolean @default(true) @map("inventory_managed")
+  sellable         Boolean @default(false)
+  purchasable      Boolean @default(false)
+  manufacturable   Boolean @default(false)
+
+  /// ✏️ D-03 — 오픈 시 전 SKU 미관리로 시작해 순차 전환한다. 기본값 true 금지.
+  lotManaged    Boolean @default(false) @map("lot_managed")
+  expiryManaged Boolean @default(false) @map("expiry_managed")
+  serialManaged Boolean @default(false) @map("serial_managed")
+
+  defaultShelfLifeDays       Int?    @map("default_shelf_life_days")
+  minimumRemainingDays       Int?    @map("minimum_remaining_days")
+  reconciliationToleranceQty Decimal @default(0) @map("reconciliation_tolerance_qty") @db.Decimal(18, 6)
+
+  /// 원본 ERP 값 보존 (G-07). 의미 변환하지 않는다.
+  erpItemType String? @map("erp_item_type") @db.VarChar(10)
+  /// T1-1 에서는 컬럼만 둔다. 값 변경 시점·규칙은 재고 구현 단계에서 확정한다.
+  hasTransaction      Boolean   @default(false) @map("has_transaction")
+  discontinuationDate DateTime? @map("discontinuation_date") @db.Date
+  note                String?
+
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  createdBy  String?   @map("created_by") @db.Uuid
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  updatedBy  String?   @map("updated_by") @db.Uuid
+  approvedAt DateTime? @map("approved_at") @db.Timestamptz
+  approvedBy String?   @map("approved_by") @db.Uuid
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz
+
+  /// SKU 가 참조 중인 공통코드는 물리삭제할 수 없다 (T0-8 RESTRICT 정책의 첫 적용).
+  brand         CommonCode? @relation("SkuBrand", fields: [brandId], references: [id], onDelete: Restrict)
+  majorCategory CommonCode? @relation("SkuMajorCategory", fields: [majorCategoryId], references: [id], onDelete: Restrict)
+  minorCategory CommonCode? @relation("SkuMinorCategory", fields: [minorCategoryId], references: [id], onDelete: Restrict)
+
+  /// 마스터는 사용자 삭제에 딸려 지워지면 안 된다 — SET NULL.
+  /// (AuditLog.actor_id 의 RESTRICT 는 감사증적용 별도 정책이다)
+  createdByUser  User? @relation("SkuCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  updatedByUser  User? @relation("SkuUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
+  approvedByUser User? @relation("SkuApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([itemType])
+  @@index([brandId, majorCategoryId, minorCategoryId])
+  @@map("sku")
 }

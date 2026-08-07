@@ -191,7 +191,6 @@ erDiagram
         bool lot_managed "★D-03 기본 false"
         bool expiry_managed "★D-03 기본 false"
         bool serial_managed "★D-03 기본 false"
-        bool negative_stock_allowed
         decimal reconciliation_tolerance_qty
         string erp_item_type "원문 보존"
         bool has_transaction "코드변경 차단"
@@ -771,7 +770,9 @@ model Sku {
   expiryManaged Boolean @default(false)
   serialManaged Boolean @default(false)
 
-  negativeStockAllowed Boolean @default(false)
+  // ✏️ 폐기 (T1-1 확정, PENDING_v0.3 §1): negativeStockAllowed 를 두지 않는다.
+  //    SKU 에 persistent 음수재고 허용 설정 없음 — 음수재고는 각 재고 거래별로
+  //    승인된 예외 요청을 검증한 경우에만 허용한다. 실제 migration 컬럼에도 없다.
   defaultShelfLifeDays Int?
   minimumRemainingDays Int?
   reconciliationToleranceQty Decimal @default(0) @db.Decimal(18, 6)
