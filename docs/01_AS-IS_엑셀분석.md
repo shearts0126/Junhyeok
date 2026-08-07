@@ -24,7 +24,7 @@
 | 시트 | 역할 | 데이터 시작 행 | 행수 | 이관 대상 |
 |---|---|---|---|---|
 | `SKU MASTER_본품` | 좌측 = **코드 사전**(브랜드/대분류/소분류/추가코드), 우측 = 완제품 SKU 데이터 | 헤더 r4, 데이터 **r5** | 102 | 좌측만 → 공통코드 |
-| `SKU MASTER_부자재 등` | 좌측 = **부자재 분류코드 39종 + 보관처 축약코드 11종**, 우측 = 부자재 SKU | 헤더 r4, 데이터 **r5** | 412 | 좌측만 → 공통코드 |
+| `SKU MASTER_부자재 등` | 좌측 = **부자재 분류코드 39행(✏️ 고유 38종 — `ET` 중복 1건, §1.6 정오 참조) + 보관처 축약코드 11종**, 우측 = 부자재 SKU | 헤더 r4, 데이터 **r5** | 412 | 좌측만 → 공통코드 |
 | `최종 SKU MASTER` | **통합 SKU 마스터 (이관 원천)** | 헤더 r4, 데이터 **r5** | 555 (유효 **490**) | ✅ 전량 |
 
 > **중요**: 코드 사전 표와 실제 SKU 데이터가 **같은 시트의 좌우에 공존**한다. 파서는 열 범위로 두 영역을 분리해야 한다 (사전 = B~N열, 데이터 = P열 이후).
@@ -97,11 +97,20 @@
 | 분류 | 코드 수 | 비고 |
 |---|---:|---|
 | 브랜드 | 2 | FB 포뷰트, BO 바디오라 |
-| 대분류 | 13 | DV, TL, SL, HC, CV, BT, ET, ST, GB, **OY(올리브영), DS(다이소), MS(무신사)** |
+| 대분류 | ✏️ **12** | DV, TL, SL, HC, CV, BT, ET, ST, GB, **OY(올리브영), DS(다이소), MS(무신사)** |
 | 소분류 | 19 | IR DR HT CW SP ES SH TR TT TN TU BM AP MN SC RF PC MG ET |
 | 추가코드 | 9 | GL EU JP US UK CN TW CA + **BK(벌크=반제품)** |
-| 부자재 분류 | 39 | MC BX IB OB IN LB SL BT TB CP PP SP PK RF ZB SF MN CH TL HD BK MD RM ET / CT SB DP PM PG / CM FC FP SV DV SM LG CF DG |
+| 부자재 분류 | ✏️ **39행 / 고유 38** | MC BX IB OB IN LB SL BT TB CP PP SP PK RF ZB SF MN CH TL HD BK MD RM **ET(순번 24)** / CT SB DP PM PG **ET(순번 30 — 중복)** / CM FC FP SV DV SM LG CF DG |
 | 보관처 축약 | 11 | BOC IJC CSM CLB MKM EZC CTK RBM JPS NNN BON |
+
+> ✏️ **T0-8 실측 정오 (2026-08)** — 이 문서 초판은 대분류를 13으로 적었으나 **원본 사전에는
+> 12행뿐이다** (초판의 집계 오기). 부자재 분류는 **39행이지만 `ET`(Etc/기타)가 순번 24(전용
+> 부자재 블록)와 순번 30(센터용 블록)에 2회 등장**해 고유 코드는 38종이다. 초판의 "39"는 이
+> 두 행을 각각 센 값이다. 채널 16종(§5.4)까지 포함한 코드사전의 현재 기준은
+> **원본 99행 / natural key(`group`, `code`) 기준 고유 98코드 / seed 98코드**다.
+> `common_code` 에는 `UNIQUE(group_id, code)` 에 따라 `ET` 가 **정확히 1건**만 들어가며,
+> 수를 맞추기 위한 `ET2` 같은 임의 코드는 만들지 않는다.
+> 상세: `prisma/seed/common-code-data.ts` 머리주석, README "공통코드" 절.
 
 > ⚠️ **설계 이슈**: 대분류에 **채널(OY/DS/MS)이 섞여 있다.** 제품 속성이 아니라 판매 채널이다. Release 1은 **원본 코드를 그대로 이전**(PRD §11.1)하되, `common_code.attribute` 에 `is_channel_category = true` 플래그를 두어 향후 분리 가능하게 한다.
 

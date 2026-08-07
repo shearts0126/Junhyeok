@@ -1009,6 +1009,12 @@ CREATE TRIGGER audit_log_no_truncate  BEFORE TRUNCATE ON audit_log FOR EACH STAT
 | 채널 | `CHANNEL` | 16 |
 | **합계** | | **98** |
 
+**원본 행과 고유 코드를 구분합니다** — 원본 코드사전 **99행** / natural key(`group`, `code`) 기준
+고유 **98코드** / 실제 seed **98코드**. `ET`(기타)가 부자재분류 원본 순번 24와 30에 2회 등장하므로
+`UNIQUE(group_id, code)` 에 따라 `common_code` 에는 **정확히 1건**만 들어가고, 수를 맞추기 위한
+`ET2` 같은 임의 코드는 만들지 않습니다. 종전 "100건"은 ① 대분류 12를 13으로 오기, ② `ET` 2행을
+각각 집계 — 두 오류의 합입니다 (문서 정오: `docs/01_AS-IS_엑셀분석.md` §1.6).
+
 시드는 idempotent 합니다 — natural key(`groupCode`, `(groupId, code)`)로 upsert 하므로 재실행해도
 중복이 없고 **UUID 가 바뀌지 않으며**, 사용자가 API 로 추가한 커스텀 코드를 건드리지 않습니다.
 전체가 **한 트랜잭션**이라 부모 코드 누락 등으로 실패하면 부분 시드 없이 롤백됩니다.
