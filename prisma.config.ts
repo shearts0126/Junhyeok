@@ -23,16 +23,24 @@ export default defineConfig({
   migrations: {
     path: 'prisma/migrations',
   },
-  datasource: {
-    url: env('DIRECT_URL'),
+  // ⚠️ datasource 는 **환경변수가 있을 때만** 구성한다.
+  //    `env()` 는 변수가 없으면 config 로딩 자체를 실패시키는데,
+  //    `prisma generate`(postinstall·CI)는 연결 URL 이 필요 없다 — .env 가 없는
+  //    CI 에서 install 이 여기서 죽으면 안 된다. migrate 계열 명령은 항상
+  //    DIRECT_URL 을 명시해 실행한다 (하네스·drift 스크립트가 주입).
+  ...(process.env['DIRECT_URL'] !== undefined && process.env['DIRECT_URL'] !== ''
+    ? {
+        datasource: {
+          url: env('DIRECT_URL'),
 
-    // drift 검사(prisma migrate diff --from-migrations) 전용 shadow DB.
-    // ⚠️ 반드시 **일회용(ephemeral) DB** 를 지정한다 — CI 는 Testcontainers 가
-    //    만든 빈 DB 를 넣는다. 운영·스테이징 DB 를 shadow 로 쓰지 않는다.
-    //    평소(migrate dev/deploy)에는 필요 없으므로 설정되어 있을 때만 전달한다.
-    ...(process.env['SHADOW_DATABASE_URL'] !== undefined &&
-    process.env['SHADOW_DATABASE_URL'] !== ''
-      ? { shadowDatabaseUrl: env('SHADOW_DATABASE_URL') }
-      : {}),
-  },
+          // drift 검사(prisma migrate diff --from-migrations) 전용 shadow DB.
+          // ⚠️ 반드시 **일회용(ephemeral) DB** 를 지정한다 — CI 는 Testcontainers 가
+          //    만든 빈 DB 를 넣는다. 운영·스테이징 DB 를 shadow 로 쓰지 않는다.
+          ...(process.env['SHADOW_DATABASE_URL'] !== undefined &&
+          process.env['SHADOW_DATABASE_URL'] !== ''
+            ? { shadowDatabaseUrl: env('SHADOW_DATABASE_URL') }
+            : {}),
+        },
+      }
+    : {}),
 });
