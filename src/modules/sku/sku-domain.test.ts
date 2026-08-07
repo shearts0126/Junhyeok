@@ -25,17 +25,18 @@ import {
 // 상태 전이 — 7×7 전체 matrix
 // ═══════════════════════════════════════════════════════════════
 
-/** 문서 근거가 있는 허용 전이의 전체 목록 (이 테이블이 기대값의 단일 기준). */
+/**
+ * 문서에 **명시**된 허용 전이의 전체 목록 (기대값의 단일 기준) — 허용 4 / 차단 45.
+ *
+ * ⛔ → ARCHIVED 는 하나도 없다. archive API 의 "거래·BOM 이력 0건" 은
+ *    usage eligibility 조건이지 source status 근거가 아니다 — source-status
+ *    정책이 명시 확정(T1-4 전)되기 전까지 일반 전이표에 넣지 않는다.
+ */
 const DOCUMENTED_ALLOWED: ReadonlyArray<readonly [SkuStatusValue, SkuStatusValue]> = [
   ['DRAFT', 'PENDING_APPROVAL'], // 05 v0.1 §11.2 승인요청
-  ['DRAFT', 'ARCHIVED'],
   ['PENDING_APPROVAL', 'ACTIVE'], // 05 v0.2 approve (상태=PENDING)
   ['PENDING_APPROVAL', 'REJECTED'], // 05 v0.1 §11.3 PENDING → ACTIVE / REJECTED
-  ['REJECTED', 'ARCHIVED'],
   ['ACTIVE', 'INACTIVE'], // 05 v0.1 §11.2 사용중지
-  ['ACTIVE', 'ARCHIVED'],
-  ['INACTIVE', 'ARCHIVED'],
-  ['DISCONTINUED', 'ARCHIVED'],
 ];
 
 function isDocumentedAllowed(from: SkuStatusValue, to: SkuStatusValue): boolean {
@@ -96,13 +97,32 @@ describe('★ SKU 상태 전이 (T1-2)', () => {
     }
   });
 
-  it('★ DISCONTINUED — 문서 근거 있는 전이(→ ARCHIVED)만 허용, 진입 전이 없음', () => {
-    // INACTIVE 별칭이 아니다: INACTIVE 와 전이 집합이 같아도 상태 자체는 구분된다.
-    expect(SKU_STATUS_TRANSITIONS.DISCONTINUED).toEqual(['ARCHIVED']);
+  it('★ DISCONTINUED — 진입·복귀 전이 모두 미문서화, 상태값은 유지 (INACTIVE 별칭 아님)', () => {
+    expect(SKU_STATUS_TRANSITIONS.DISCONTINUED).toEqual([]);
     // 진입 전이 미문서화 — 어느 상태에서도 DISCONTINUED 로 갈 수 없다.
     for (const from of SKU_STATUSES) {
       expect(canTransitionSkuStatus(from, 'DISCONTINUED'), `${from} → DISCONTINUED`).toBe(false);
     }
+    // enum 값 자체는 존재한다 — 재고 설계상 출고 목적 사용 가능한 별도 상태.
+    expect(SKU_STATUSES).toContain('DISCONTINUED');
+  });
+
+  it('★ → ARCHIVED 전이가 전이표에 하나도 없다 (source-status 정책 미확정)', () => {
+    for (const from of SKU_STATUSES) {
+      expect(canTransitionSkuStatus(from, 'ARCHIVED'), `${from} → ARCHIVED`).toBe(false);
+    }
+    for (const [, targets] of Object.entries(SKU_STATUS_TRANSITIONS)) {
+      expect(targets).not.toContain('ARCHIVED');
+    }
+  });
+
+  it('허용 4 / 차단 45 — 전이표 총량 고정', () => {
+    const allowedCount = Object.values(SKU_STATUS_TRANSITIONS).reduce(
+      (sum, targets) => sum + targets.length,
+      0,
+    );
+    expect(allowedCount).toBe(4);
+    expect(7 * 7 - allowedCount).toBe(45);
   });
 
   it('★ 미문서화 전이가 임의로 열려 있지 않다 (지시된 금지 목록)', () => {
@@ -124,7 +144,13 @@ describe('★ SKU 상태 전이 (T1-2)', () => {
       assertSkuStatusTransition('INACTIVE', 'ACTIVE');
       expect.unreachable();
     } catch (error) {
-      expect((error as DomainError).publicHint).toContain('ARCHIVED');
+      expect((error as DomainError).publicHint).toContain('(없음)');
+    }
+    try {
+      assertSkuStatusTransition('DRAFT', 'ACTIVE');
+      expect.unreachable();
+    } catch (error) {
+      expect((error as DomainError).publicHint).toContain('PENDING_APPROVAL');
     }
   });
 });
@@ -250,14 +276,17 @@ describe('★ TC-SKU-008 — SKU 폐기 자격', () => {
     }
   });
 
-  it('★ 상태 전이 허용과 폐기 자격은 별개다 — 둘 다 통과해야 폐기된다', () => {
-    // 상태상 ACTIVE → ARCHIVED 전이는 허용되지만,
-    expect(canTransitionSkuStatus('ACTIVE', 'ARCHIVED')).toBe(true);
-    // 사용 이력이 있으면 자격 규칙이 차단한다.
-    expect(canArchiveSku({ hasTransaction: true, hasBomUsage: false })).toBe(false);
-
-    // 반대로 자격이 있어도 상태상 불가하면 (ARCHIVED → ARCHIVED) 전이 규칙이 차단한다.
+  it('★ archive usage eligibility 와 status transition 은 독립 불변식이다', () => {
+    // usage 관점에서 폐기 가능(거래X·BOMX)이라고 해서 —
     expect(canArchiveSku({ hasTransaction: false, hasBomUsage: false })).toBe(true);
-    expect(canTransitionSkuStatus('ARCHIVED', 'ARCHIVED')).toBe(false);
+    // — 일반 전이표가 → ARCHIVED 를 허용하는 것은 아니다.
+    //   source-status 정책이 문서로 확정되기 전까지 전이표에는 → ARCHIVED 가 없다.
+    for (const from of SKU_STATUSES) {
+      expect(canTransitionSkuStatus(from, 'ARCHIVED'), `${from} → ARCHIVED`).toBe(false);
+    }
+
+    // 반대 방향도 독립이다: 전이표와 무관하게 usage 규칙은 사용 이력만 본다.
+    expect(canArchiveSku({ hasTransaction: true, hasBomUsage: false })).toBe(false);
+    expect(canArchiveSku({ hasTransaction: false, hasBomUsage: true })).toBe(false);
   });
 });

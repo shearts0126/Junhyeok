@@ -7,11 +7,15 @@ import { DomainError, ERROR_CODES } from '@/shared/errors';
  *
  *   **ARCHIVED 는 거래·BOM 사용 이력이 0건일 때만 가능하다.**
  *
- * ## 상태 전이와 별개다
+ * ## 상태 전이와 **별개의 독립 불변식**이다
  *
- *   `status-transition.ts` 의 `→ ARCHIVED` 허용은 "그 상태에서 폐기라는 전이가
- *   문법적으로 가능한가"이고, 이 규칙은 "사용 이력상 폐기해도 되는가"다.
- *   실제 폐기 워크플로(T1-4)는 **둘 다** 통과해야 한다.
+ *   Archive usage eligibility(이 파일)와 archive source-status eligibility 는
+ *   서로 다른 불변식이다. **T1-2 는 usage eligibility 만 확정한다**:
+ *     - 거래 사용 이력 없음, BOM 사용 이력 없음 → usage 관점에서 폐기 가능.
+ *   어느 SkuStatus 에서 ARCHIVED 로 전이할 수 있는지는 현재 authoritative
+ *   문서가 정의하지 않았다 — 그래서 일반 전이표(`SKU_STATUS_TRANSITIONS`)에는
+ *   `→ ARCHIVED` 가 **없다.** T1-4 승인 워크플로에서 `/archive` 를 구현하기
+ *   전에 source-status 정책을 별도로 명시 확정해야 한다.
  *
  * ## 사용 사실은 입력이다
  *
