@@ -25,5 +25,14 @@ export default defineConfig({
   },
   datasource: {
     url: env('DIRECT_URL'),
+
+    // drift 검사(prisma migrate diff --from-migrations) 전용 shadow DB.
+    // ⚠️ 반드시 **일회용(ephemeral) DB** 를 지정한다 — CI 는 Testcontainers 가
+    //    만든 빈 DB 를 넣는다. 운영·스테이징 DB 를 shadow 로 쓰지 않는다.
+    //    평소(migrate dev/deploy)에는 필요 없으므로 설정되어 있을 때만 전달한다.
+    ...(process.env['SHADOW_DATABASE_URL'] !== undefined &&
+    process.env['SHADOW_DATABASE_URL'] !== ''
+      ? { shadowDatabaseUrl: env('SHADOW_DATABASE_URL') }
+      : {}),
   },
 });

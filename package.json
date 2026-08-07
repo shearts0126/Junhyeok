@@ -32,7 +32,10 @@
     "prisma:studio": "prisma studio",
     "postinstall": "prisma generate",
     "db:seed": "tsx prisma/seed/index.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:unit": "vitest run --project unit",
+    "test:db": "vitest run --project db",
+    "prisma:drift": "tsx scripts/ci/check-drift.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.9.1",
@@ -52,6 +55,7 @@
   "devDependencies": {
     "@playwright/test": "^1.62.1",
     "@tailwindcss/postcss": "^4",
+    "@testcontainers/postgresql": "^12.1.0",
     "@types/node": "^20",
     "@types/pg": "^8.20.4",
     "@types/react": "^19",

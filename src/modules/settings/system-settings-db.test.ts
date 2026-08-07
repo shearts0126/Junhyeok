@@ -21,8 +21,6 @@ import {
  * `READ COMMITTED` 에서 두 요청이 같은 version 을 읽는 상황을 재현할 수 없다.
  */
 
-let available = false;
-
 const ACTOR_A_ID = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee';
 const ACTOR_B_ID = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
@@ -70,26 +68,21 @@ async function resetSetting(): Promise<number> {
 }
 
 beforeAll(async () => {
-  try {
-    await getPrismaClient().$queryRaw`SELECT 1`;
-    available = true;
-    const client = getPrismaClient();
-    await seedRolesAndPermissions(client);
-    await cleanupAuditLogs();
-    await client.user.deleteMany({ where: { id: { in: [ACTOR_A_ID, ACTOR_B_ID] } } });
-    await client.user.create({
-      data: { id: ACTOR_A_ID, email: 'req-a@deeppoint.test', name: 'A' },
-    });
-    await client.user.create({
-      data: { id: ACTOR_B_ID, email: 'req-b@deeppoint.test', name: 'B' },
-    });
-  } catch {
-    available = false;
-  }
+  await getPrismaClient().$queryRaw`SELECT 1`;
+  const client = getPrismaClient();
+  await seedRolesAndPermissions(client);
+  await cleanupAuditLogs();
+  await client.user.deleteMany({ where: { id: { in: [ACTOR_A_ID, ACTOR_B_ID] } } });
+  await client.user.create({
+    data: { id: ACTOR_A_ID, email: 'req-a@deeppoint.test', name: 'A' },
+  });
+  await client.user.create({
+    data: { id: ACTOR_B_ID, email: 'req-b@deeppoint.test', name: 'B' },
+  });
 });
 
 afterAll(async () => {
-  if (available) {
+  {
     await cleanupAuditLogs();
     await getPrismaClient()
       .user.deleteMany({ where: { id: { in: [ACTOR_A_ID, ACTOR_B_ID] } } })
@@ -98,14 +91,11 @@ afterAll(async () => {
   await disconnectPrisma().catch(() => undefined);
 });
 
-const describeDb = describe.skipIf(!process.env['DATABASE_URL']);
-
 // ═══════════════════════════════════════════════════════════════
 // 동시성
 // ═══════════════════════════════════════════════════════════════
-describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
+describe('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
   it('★ 같은 version 으로 동시 PATCH — 1건만 200, 1건은 409', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const version = await resetSetting();
     await cleanupAuditLogs();
@@ -166,7 +156,6 @@ describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
   });
 
   it('★ 같은 필드를 동시에 바꿔도 한 요청만 성공한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const version = await resetSetting();
     await cleanupAuditLogs();
@@ -194,7 +183,6 @@ describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
   });
 
   it('★ 순차 요청은 최신 version 을 쓰면 모두 성공한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     let version = await resetSetting();
     await cleanupAuditLogs();
@@ -216,7 +204,6 @@ describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
   });
 
   it('★ 오래된 version 은 409 이고 아무것도 바뀌지 않는다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const version = await resetSetting();
     await cleanupAuditLogs();
@@ -237,7 +224,6 @@ describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
   });
 
   it('성공 경로가 실제 DB 에서 동작한다', async () => {
-    if (!available) return;
     const version = await resetSetting();
 
     const result = await updateSystemSettings(
@@ -257,15 +243,13 @@ describeDb('★ SystemSetting 동시성 (실제 PostgreSQL)', () => {
 // ═══════════════════════════════════════════════════════════════
 // singleton·CHECK 제약
 // ═══════════════════════════════════════════════════════════════
-describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
+describe('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   it('id = 1 행이 존재한다', async () => {
-    if (!available) return;
     const row = await getPrismaClient().systemSetting.findUniqueOrThrow({ where: { id: 1 } });
     expect(row.id).toBe(1);
   });
 
   it('★ id = 2 INSERT 는 실패한다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().$executeRawUnsafe(
         `INSERT INTO system_setting(id, updated_at) VALUES (2, now())`,
@@ -274,7 +258,6 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ id = 0 INSERT 도 실패한다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().$executeRawUnsafe(
         `INSERT INTO system_setting(id, updated_at) VALUES (0, now())`,
@@ -283,12 +266,10 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ Prisma 로도 두 번째 행을 만들 수 없다', async () => {
-    if (!available) return;
     await expect(getPrismaClient().systemSetting.create({ data: { id: 2 } })).rejects.toThrow();
   });
 
   it('★ version = 0 INSERT·UPDATE 는 실패한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     await expect(
@@ -301,7 +282,6 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ seed 를 재실행해도 전체 행 수는 1이다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     await seedRolesAndPermissions(client);
@@ -311,7 +291,6 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ 감사로그 entity_id 는 빈 문자열일 수 없다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     for (const value of ['', '   ']) {
@@ -324,7 +303,6 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ 감사로그 entity_type 도 빈 문자열일 수 없다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().auditLog.create({
         data: { entityType: '  ', entityId: '1', action: 'X', actorId: ACTOR_A_ID },
@@ -333,7 +311,6 @@ describeDb('★ SystemSetting DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('SystemSetting 의 entity_id 는 "1" 로 저장된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const version = await resetSetting();
     await cleanupAuditLogs();

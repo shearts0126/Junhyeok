@@ -1,0 +1,72 @@
+# CI 파이프라인 (T0-9)
+#
+# 필수 흐름: tsc → eslint → vitest(unit + DB integration) → prisma migrate diff
+# 기존 품질 게이트(format:check, build)도 유지한다 — T0-9 로 약화하지 않는다.
+#
+# 재현성:
+#   - Node: .nvmrc 고정 / pnpm: package.json packageManager 고정
+#   - install 은 --frozen-lockfile
+#   - DB 는 Testcontainers 의 일회용 PostgreSQL (postgres:16-alpine)
+#     → CI secret 에 DB 자격증명이 없다. 운영·스테이징 값도 없다.
+#   - Docker/Testcontainers 가 동작하지 않으면 test:db 가 **실패**한다 (skip 없음)
+#
+# E2E 는 T0-9 CI 필수범위가 아니다 (문서상 tsc/eslint/vitest/migrate diff).
+name: CI
+
+on:
+  push:
+    branches: ['main', 'claude/**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # packageManager 필드(pnpm@10.33.0)를 그대로 사용한다 — 버전 이중 관리 금지
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node (.nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # postinstall 이 이미 수행하지만, 생성 실패를 독립 단계로 드러낸다
+      - name: Prisma generate
+        run: pnpm prisma:generate
+
+      - name: Typecheck (tsc)
+        run: pnpm typecheck
+
+      - name: Lint (eslint)
+        run: pnpm lint
+
+      - name: Format check (prettier)
+        run: pnpm format:check
+
+      - name: Unit tests (vitest)
+        run: pnpm test:unit
+
+      # Testcontainers 가 postgres:16-alpine 을 기동해 migration 을 전량 적용한다.
+      # 빈 DB → migrate deploy 전량 적용이 매 실행 검증된다.
+      - name: DB integration tests (vitest + Testcontainers)
+        run: pnpm test:db
+
+      # schema.prisma 와 migration history 불일치 시 exit 2 → 실패
+      - name: Migration drift gate (prisma migrate diff)
+        run: pnpm prisma:drift
+
+      - name: Build (next build)
+        run: pnpm build

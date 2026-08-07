@@ -24,8 +24,6 @@ import {
  * 실제 DB 에서 검증한다. 대역으로는 제약 위반과 트랜잭션 원자성을 재현할 수 없다.
  */
 
-let available = false;
-
 const ACTOR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
 const ACTOR: ActorContext = createActorContext({
@@ -71,49 +69,41 @@ async function cleanupFixtures(): Promise<void> {
 }
 
 beforeAll(async () => {
-  try {
-    const client = getPrismaClient();
-    await client.$queryRaw`SELECT 1`;
-    available = true;
-    await client.$transaction(async (tx) => {
-      await seedRolesAndPermissions(tx);
-      await seedCommonCodes(tx);
-    });
-    await cleanupFixtures();
-    await client.user.create({
-      data: { id: ACTOR_ID, email: 'code-admin@deeppoint.test', name: '코드 관리자' },
-    });
+  const client = getPrismaClient();
+  await client.$queryRaw`SELECT 1`;
+  await client.$transaction(async (tx) => {
+    await seedRolesAndPermissions(tx);
+    await seedCommonCodes(tx);
+  });
+  await cleanupFixtures();
+  await client.user.create({
+    data: { id: ACTOR_ID, email: 'code-admin@deeppoint.test', name: '코드 관리자' },
+  });
 
-    // 계층 픽스처: TG_PARENT ← TG_CHILD
-    const parent = await client.commonCodeGroup.create({
-      data: { groupCode: TG_PARENT, groupName: '테스트 상위', sortOrder: 900 },
-    });
-    await client.commonCodeGroup.create({
-      data: {
-        groupCode: TG_CHILD,
-        groupName: '테스트 하위',
-        sortOrder: 901,
-        parentGroupId: parent.id,
-      },
-    });
-  } catch {
-    available = false;
-  }
+  // 계층 픽스처: TG_PARENT ← TG_CHILD
+  const parent = await client.commonCodeGroup.create({
+    data: { groupCode: TG_PARENT, groupName: '테스트 상위', sortOrder: 900 },
+  });
+  await client.commonCodeGroup.create({
+    data: {
+      groupCode: TG_CHILD,
+      groupName: '테스트 하위',
+      sortOrder: 901,
+      parentGroupId: parent.id,
+    },
+  });
 });
 
 afterAll(async () => {
-  if (available) await cleanupFixtures();
+  await cleanupFixtures();
   await disconnectPrisma().catch(() => undefined);
 });
-
-const describeDb = describe.skipIf(!process.env['DATABASE_URL']);
 
 // ═══════════════════════════════════════════════════════════════
 // seed
 // ═══════════════════════════════════════════════════════════════
-describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
+describe('★ 코드사전 seed (실제 PostgreSQL)', () => {
   it('★ 그룹 6개, 코드 98개 (원본 실측 — 지시 100건과의 차이는 보고 대상)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const groupCodes = COMMON_CODE_GROUP_SEED.map((group) => group.groupCode);
@@ -155,7 +145,6 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
   });
 
   it('★ seed 재실행 — 중복 없음, UUID 불변', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const before = await client.commonCode.findMany({
@@ -190,7 +179,6 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
   });
 
   it('★ 사용자가 추가한 커스텀 코드는 seed 재실행에도 보존된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const brand = await client.commonCodeGroup.findUniqueOrThrow({ where: { groupCode: 'BRAND' } });
 
@@ -215,7 +203,6 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
   });
 
   it('★ seed 값 변조는 재실행 시 기준 데이터로 복원된다 (upsert)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const brand = await client.commonCodeGroup.findUniqueOrThrow({ where: { groupCode: 'BRAND' } });
 
@@ -236,7 +223,6 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
   });
 
   it('★ 부모 누락 seed 는 실패하고 전체 트랜잭션이 롤백된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const brokenData = {
@@ -276,7 +262,6 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
   });
 
   it('원본 이상값이 그대로 보존된다 (조용한 보정 금지)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const major = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: 'MAJOR_CATEGORY' },
@@ -303,9 +288,8 @@ describeDb('★ 코드사전 seed (실제 PostgreSQL)', () => {
 // ═══════════════════════════════════════════════════════════════
 // DB 제약
 // ═══════════════════════════════════════════════════════════════
-describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
+describe('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   it('★ group_code UNIQUE', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().commonCodeGroup.create({
         data: { groupCode: TG_PARENT, groupName: '중복', sortOrder: 0 },
@@ -314,7 +298,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ UNIQUE(group_id, code) — 같은 그룹 중복 차단, 다른 그룹 동일 code 허용', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const parent = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: TG_PARENT },
@@ -340,7 +323,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ code·name 공백 CHECK — 빈 값·앞뒤 공백 차단', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const parent = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: TG_PARENT },
@@ -362,7 +344,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ group_code 공백 CHECK', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().commonCodeGroup.create({
         data: { groupCode: ' BAD ', groupName: 'x', sortOrder: 0 },
@@ -371,7 +352,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ sort_order 음수 차단 (그룹·코드)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const parent = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: TG_PARENT },
@@ -389,7 +369,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ 코드가 있는 그룹은 직접 SQL 로도 삭제할 수 없다 (FK RESTRICT)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const brand = await client.commonCodeGroup.findUniqueOrThrow({ where: { groupCode: 'BRAND' } });
     await expect(
@@ -398,7 +377,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ 자식이 참조하는 parent 코드는 직접 SQL 로도 삭제할 수 없다 (FK RESTRICT)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const parent = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: TG_PARENT },
@@ -426,7 +404,6 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ 자기 자신 parent CHECK (코드·그룹)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const parent = await client.commonCodeGroup.findUniqueOrThrow({
       where: { groupCode: TG_PARENT },
@@ -452,9 +429,8 @@ describeDb('★ 공통코드 DB 제약 (실제 PostgreSQL)', () => {
 // ═══════════════════════════════════════════════════════════════
 // Application Service — 실제 DB 통합
 // ═══════════════════════════════════════════════════════════════
-describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
+describe('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   it('그룹 목록 — 수량 집계와 정렬', async () => {
-    if (!available) return;
     const groups = await listCodeGroups(ACTOR);
     const brand = groups.find((group) => group.groupCode === 'BRAND');
     expect(brand?.parentGroupCode).toBeNull();
@@ -469,7 +445,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('★ 생성 → 감사로그 CREATE 1건이 같은 트랜잭션으로 남는다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const view = await createCode(
@@ -498,8 +473,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('★ 하위 코드 생성·수정·비활성화·재활성화 전체 흐름 + active 필터', async () => {
-    if (!available) return;
-
     // 부모 생성
     await createCode(ACTOR, TG_PARENT, {
       code: 'FLOW_P',
@@ -569,7 +542,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('★ 동일 값 PATCH 는 400 이고 감사로그가 남지 않는다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const before = await client.auditLog.count({ where: { actorId: ACTOR_ID } });
 
@@ -581,7 +553,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('★ 존재하지 않는 그룹은 404', async () => {
-    if (!available) return;
     await expect(listCodes(ACTOR, 'NO_SUCH', 'true')).rejects.toMatchObject({
       code: ERROR_CODES.NOT_FOUND,
       httpStatus: 404,
@@ -589,7 +560,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('정렬 — sort_order ASC, code ASC', async () => {
-    if (!available) return;
     const { codes } = await listCodes(ACTOR, 'MAJOR_CATEGORY', 'all');
     const keys = codes.map((row) => [row.sortOrder, row.code] as const);
     const sorted = [...keys].sort((a, b) => a[0] - b[0] || a[1].localeCompare(b[1], 'en'));
@@ -598,7 +568,6 @@ describeDb('★ 공통코드 서비스 통합 (실제 PostgreSQL)', () => {
   });
 
   it('seed 코드의 attributes 가 원본 값 그대로 조회된다', async () => {
-    if (!available) return;
     const { codes } = await listCodes(ACTOR, 'CHANNEL', 'all');
     const channelA = codes.find((row) => row.code === 'A');
     expect(channelA?.name).toBe('자사몰');

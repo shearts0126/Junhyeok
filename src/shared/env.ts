@@ -111,3 +111,66 @@ export function loadDatabaseEnv(source: NodeJS.ProcessEnv = process.env): Databa
 
   return { databaseUrl, directUrl };
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 환경 식별자 — dev / stg / prod 3분리 (T0-9)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 애플리케이션 환경 식별자.
+ *
+ * `NODE_ENV` 는 빌드 모드(development/production/test)라서 **staging 을 표현하지
+ * 못한다** — staging 도 production 빌드로 돌기 때문이다. 그래서 배포 환경은
+ * `APP_ENV` 로 구분한다.
+ *
+ * ┌─────────────┬──────────────┬───────────────────────────────────────────┐
+ * │ APP_ENV     │ NODE_ENV     │ 값 주입 위치                              │
+ * ├─────────────┼──────────────┼───────────────────────────────────────────┤
+ * │ development │ development  │ .env.local (개발자 로컬)                  │
+ * │ staging     │ production   │ 호스팅 환경변수 (.env.staging.example 참고)│
+ * │ production  │ production   │ 호스팅 환경변수 (.env.production.example) │
+ * └─────────────┴──────────────┴───────────────────────────────────────────┘
+ *
+ * ⚠️ staging·production 값(DB URL, Supabase 키)은 저장소·CI 에 두지 않는다.
+ *    호스팅(예: Vercel) 환경변수로만 주입한다. 저장소에는 example 만 있다.
+ * ⚠️ 테스트는 이 값과 무관하게 **하네스가 만든 일회용 DB** 만 쓴다
+ *    (tests/db/harness.ts) — 운영 자격증명이 테스트에 자동 선택될 경로가 없다.
+ */
+export const APP_ENVS = ['development', 'staging', 'production'] as const;
+
+export type AppEnv = (typeof APP_ENVS)[number];
+
+/**
+ * 환경 식별자를 읽고 검증한다.
+ *
+ * - `APP_ENV` 미설정: `NODE_ENV=production` 이면 `production`, 아니면 `development`.
+ *   **staging 은 반드시 명시**해야 한다 — 기본값으로 staging 이 되는 일은 없다.
+ * - `staging`/`production` 은 `NODE_ENV=production`(production 빌드)을 요구한다.
+ *   개발 빌드가 운영 환경 행세를 하는 조합을 기동 시점에 거부한다.
+ */
+export function loadAppEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
+  const raw = source['APP_ENV']?.trim();
+  const nodeEnv = source['NODE_ENV'] ?? 'development';
+
+  if (raw === undefined || raw === '') {
+    return nodeEnv === 'production' ? 'production' : 'development';
+  }
+
+  if (!(APP_ENVS as readonly string[]).includes(raw)) {
+    throw new EnvironmentError(
+      'APP_ENV',
+      `허용되지 않은 값 '${raw}' 입니다. development | staging | production 중 하나여야 합니다.`,
+    );
+  }
+  const appEnv = raw as AppEnv;
+
+  if ((appEnv === 'staging' || appEnv === 'production') && nodeEnv !== 'production') {
+    throw new EnvironmentError(
+      'APP_ENV',
+      `APP_ENV='${appEnv}' 는 production 빌드(NODE_ENV=production)에서만 허용됩니다. ` +
+        `(현재 NODE_ENV='${nodeEnv}')`,
+    );
+  }
+
+  return appEnv;
+}

@@ -13,8 +13,6 @@ import { seedRolesAndPermissions } from '../../../prisma/seed/roles';
  * T0-9 의 Testcontainers 하네스가 생기면 이 조건부 skip 을 제거한다.
  */
 
-let available = false;
-
 const USER_A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const USER_B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
@@ -25,26 +23,19 @@ async function cleanup(): Promise<void> {
 }
 
 beforeAll(async () => {
-  try {
-    await getPrismaClient().$queryRaw`SELECT 1`;
-    available = true;
-    await cleanup();
-  } catch {
-    available = false;
-  }
+  await getPrismaClient().$queryRaw`SELECT 1`;
+  await cleanup();
 });
 
 afterAll(async () => {
-  if (available) await cleanup();
+  await cleanup();
   await disconnectPrisma().catch(() => undefined);
 });
 
 /** DB 가 없으면 통째로 건너뛴다. */
-const describeDb = describe.skipIf(!process.env['DATABASE_URL']);
 
-describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
+describe('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   it('중복 email 을 차단한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     await client.user.create({
@@ -57,7 +48,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('중복 roleCode 를 차단한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     await expect(
       client.role.create({ data: { roleCode: 'ADMIN', roleName: '중복' } }),
@@ -65,7 +55,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('중복 permissionKey 를 차단한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     await expect(
       client.permission.create({ data: { permissionKey: 'role.read', description: '중복' } }),
@@ -73,7 +62,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('중복 UserRole 을 차단한다 (복합 PK)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const admin = await client.role.findUniqueOrThrow({ where: { roleCode: 'ADMIN' } });
 
@@ -84,7 +72,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('중복 RolePermission 을 차단한다 (복합 PK)', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const admin = await client.role.findUniqueOrThrow({ where: { roleCode: 'ADMIN' } });
     const permission = await client.permission.findUniqueOrThrow({
@@ -99,7 +86,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('존재하지 않는 FK 를 차단한다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     await expect(
@@ -117,14 +103,12 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('active 기본값은 true 다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const user = await client.user.findUniqueOrThrow({ where: { id: USER_A } });
     expect(user.active).toBe(true);
   });
 
   it('UserRole 에 grantedAt·grantedBy 가 있다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const admin = await client.role.findUniqueOrThrow({ where: { roleCode: 'ADMIN' } });
     const userRole = await client.userRole.findUniqueOrThrow({
@@ -136,7 +120,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ seed 를 재실행해도 중복이 생기지 않는다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const before = {
@@ -156,7 +139,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('★ ADMIN 만 role.read 를 가진다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     const grants = await client.rolePermission.findMany({
@@ -168,7 +150,6 @@ describeDb('★ 인증 모델 제약 (실제 PostgreSQL)', () => {
   });
 
   it('역할 5종이 시드된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const roles = await client.role.findMany({ orderBy: { roleCode: 'asc' } });
 

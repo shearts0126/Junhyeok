@@ -13,8 +13,6 @@ import { seedRolesAndPermissions } from '../../../prisma/seed/roles';
  * T0-9 의 Testcontainers 하네스가 생기면 조건부 skip 을 제거한다.
  */
 
-let available = false;
-
 const ACTOR_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 const OTHER_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
@@ -44,33 +42,25 @@ async function cleanup(): Promise<void> {
 }
 
 beforeAll(async () => {
-  try {
-    await getPrismaClient().$queryRaw`SELECT 1`;
-    available = true;
-    await cleanup();
-    const client = getPrismaClient();
-    await seedRolesAndPermissions(client);
-    await client.user.create({
-      data: { id: ACTOR_ID, email: 'audit@deeppoint.test', name: '감사 테스트' },
-    });
-    await client.user.create({
-      data: { id: OTHER_ID, email: 'other@deeppoint.test', name: '기타' },
-    });
-  } catch {
-    available = false;
-  }
+  await getPrismaClient().$queryRaw`SELECT 1`;
+  await cleanup();
+  const client = getPrismaClient();
+  await seedRolesAndPermissions(client);
+  await client.user.create({
+    data: { id: ACTOR_ID, email: 'audit@deeppoint.test', name: '감사 테스트' },
+  });
+  await client.user.create({
+    data: { id: OTHER_ID, email: 'other@deeppoint.test', name: '기타' },
+  });
 });
 
 afterAll(async () => {
-  if (available) await cleanup();
+  await cleanup();
   await disconnectPrisma().catch(() => undefined);
 });
 
-const describeDb = describe.skipIf(!process.env['DATABASE_URL']);
-
-describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
+describe('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   it('INSERT 는 성공한다', async () => {
-    if (!available) return;
     const created = await withTransaction(async (tx) =>
       auditLogger.write(tx, {
         actor: ACTOR,
@@ -87,7 +77,6 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 
   it('★ UPDATE 는 AUDIT_LOG_IMMUTABLE 로 실패한다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().$executeRawUnsafe(
         `UPDATE audit_log SET action = 'HACKED' WHERE actor_id = $1`,
@@ -97,28 +86,24 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 
   it('★ DELETE 는 AUDIT_LOG_IMMUTABLE 로 실패한다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().$executeRawUnsafe(`DELETE FROM audit_log WHERE actor_id = $1`, ACTOR_ID),
     ).rejects.toThrow(/AUDIT_LOG_IMMUTABLE/);
   });
 
   it('★ 대량 DELETE 도 실패한다', async () => {
-    if (!available) return;
     await expect(getPrismaClient().$executeRawUnsafe(`DELETE FROM audit_log`)).rejects.toThrow(
       /AUDIT_LOG_IMMUTABLE/,
     );
   });
 
   it('★ TRUNCATE 도 실패한다', async () => {
-    if (!available) return;
     await expect(getPrismaClient().$executeRawUnsafe(`TRUNCATE audit_log`)).rejects.toThrow(
       /AUDIT_LOG_IMMUTABLE/,
     );
   });
 
   it('★ Prisma 의 update·delete 도 막힌다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const row = await client.auditLog.findFirstOrThrow({ where: { actorId: ACTOR_ID } });
 
@@ -131,7 +116,6 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 
   it('★ 존재하지 않는 actor 는 FK 로 차단된다', async () => {
-    if (!available) return;
     await expect(
       getPrismaClient().auditLog.create({
         data: {
@@ -145,12 +129,10 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 
   it('★ 감사로그가 있는 User 는 삭제되지 않는다 (ON DELETE RESTRICT)', async () => {
-    if (!available) return;
     await expect(getPrismaClient().user.delete({ where: { id: ACTOR_ID } })).rejects.toThrow();
   });
 
   it('★ 두 인덱스가 존재한다', async () => {
-    if (!available) return;
     const rows = await getPrismaClient().$queryRawUnsafe<Array<{ indexname: string }>>(
       `SELECT indexname FROM pg_indexes WHERE tablename = 'audit_log' ORDER BY indexname`,
     );
@@ -161,14 +143,12 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 
   it('★ occurred_at 은 DB 기본값으로 채워진다', async () => {
-    if (!available) return;
     const row = await getPrismaClient().auditLog.findFirstOrThrow({ where: { actorId: ACTOR_ID } });
     expect(row.occurredAt).toBeInstanceOf(Date);
     expect(row.occurredAt.getTime()).toBeGreaterThan(0);
   });
 
   it('updated_at 컬럼이 없다', async () => {
-    if (!available) return;
     const rows = await getPrismaClient().$queryRawUnsafe<Array<{ column_name: string }>>(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'audit_log'`,
     );
@@ -176,9 +156,8 @@ describeDb('★ 감사로그 불변성 (실제 PostgreSQL)', () => {
   });
 });
 
-describeDb('★ 감사로그 트랜잭션 결합 (실제 PostgreSQL)', () => {
+describe('★ 감사로그 트랜잭션 결합 (실제 PostgreSQL)', () => {
   it('★ 업무 변경이 실패하면 감사로그도 남지 않는다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const before = await client.auditLog.count({ where: { entityType: 'RollbackProbe' } });
 
@@ -196,7 +175,6 @@ describeDb('★ 감사로그 트랜잭션 결합 (실제 PostgreSQL)', () => {
   });
 
   it('★ 설정 변경과 감사로그가 같은 트랜잭션에서 커밋된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
     const setting = await client.systemSetting.findUniqueOrThrow({ where: { id: 1 } });
 
@@ -229,9 +207,8 @@ describeDb('★ 감사로그 트랜잭션 결합 (실제 PostgreSQL)', () => {
   });
 });
 
-describeDb('★ 시스템 설정 singleton (실제 PostgreSQL)', () => {
+describe('★ 시스템 설정 singleton (실제 PostgreSQL)', () => {
   it('★ seed 재실행에도 1행만 유지된다', async () => {
-    if (!available) return;
     const client = getPrismaClient();
 
     await seedRolesAndPermissions(client);
@@ -243,7 +220,6 @@ describeDb('★ 시스템 설정 singleton (실제 PostgreSQL)', () => {
   });
 
   it('★ 설정 권한 2종이 ADMIN 에만 부여된다', async () => {
-    if (!available) return;
     const grants = await getPrismaClient().rolePermission.findMany({
       where: {
         permission: { permissionKey: { in: ['system_setting.read', 'system_setting.update'] } },
@@ -256,7 +232,6 @@ describeDb('★ 시스템 설정 singleton (실제 PostgreSQL)', () => {
   });
 
   it('일반 allow_self_approval 컬럼이 없다', async () => {
-    if (!available) return;
     const rows = await getPrismaClient().$queryRawUnsafe<Array<{ column_name: string }>>(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'system_setting'`,
     );

@@ -122,10 +122,13 @@ curl -s http://localhost:3000/api/health | jq
 | `pnpm lint:fix` | ESLint 자동 수정 |
 | `pnpm format` | Prettier 적용 |
 | `pnpm format:check` | Prettier 검사 (CI용) |
-| `pnpm test` | Vitest 1회 실행 |
+| `pnpm test` | Vitest 전체 (unit + db 프로젝트) |
+| `pnpm test:unit` | 단위 테스트만 (DB 불필요, 파일 병렬) |
+| `pnpm test:db` | DB 통합 테스트 (일회용 PostgreSQL 자동 기동, 직렬) |
 | `pnpm test:watch` | Vitest watch |
 | `pnpm test:e2e` | Playwright E2E (스텁 Supabase + next dev 자동 기동) |
-| **`pnpm verify`** | **typecheck → lint → format:check → test → build 전체 검증** |
+| `pnpm prisma:drift` | schema ↔ migration history 불일치 검사 (불일치 시 exit 2) |
+| **`pnpm verify`** | **typecheck → lint → format:check → test(unit+db) → build 전체 검증** |
 
 ### 데이터베이스
 
@@ -145,6 +148,51 @@ curl -s http://localhost:3000/api/health | jq
 
 > `typecheck` 가 `next typegen` 을 선행하는 이유: Next.js 16은 `LayoutProps` / `PageProps` 등
 > 라우트 타입을 `.next/types` 에 생성합니다. `tsc` 단독 실행 시 이 타입을 찾지 못합니다.
+
+---
+
+## 테스트 구조와 CI (T0-9)
+
+### unit / db 2개 Vitest 프로젝트
+
+| 프로젝트 | 대상 | 병렬 | DB |
+|---|---|---|---|
+| `unit` | `*-db.test.ts` 를 제외한 전부 | 파일 병렬 | 없음 (대역만) |
+| `db` | `src/**/*-db.test.ts` + `tests/db/**` | **직렬** | 일회용 PostgreSQL |
+
+`db` 프로젝트는 `tests/db/global-setup.ts` 가 **일회용 PostgreSQL 을 자동 기동**하고
+빈 DB 에 `prisma migrate deploy` 로 **migration history 를 전량 적용**한 뒤 테스트를
+돌립니다 (`db push` 우회 없음 — "빈 DB → 전량 적용 재현"이 매 실행 검증됩니다).
+
+- 기본은 **Testcontainers** (`postgres:16-alpine` — docker-compose 와 동일 버전).
+  Docker 가 없으면 **실패합니다** — `DATABASE_URL` 유무로 skip 하던 구조는 제거됐습니다.
+- Docker 를 쓸 수 없는 환경은 `DB_TEST_SERVER_URL` 로 **일회용 PostgreSQL 서버**를
+  명시할 수 있습니다. 하네스는 그 서버에 `scm_test_<random>` DB 를 만들어 쓰고 DROP
+  합니다 — 기존 DB 를 건드리지 않습니다. CI 는 이 변수를 쓰지 않습니다.
+- 테스트는 `.env` 의 `DATABASE_URL` 을 읽지 않습니다 — 개발자·운영 DB 로 향하는
+  경로가 구조적으로 없습니다.
+
+`db` 프로젝트만 직렬인 이유(실측): db 파일들은 하나의 DB 를 공유하며 ① 정리 단계의
+`audit_log` 트리거 DISABLE/ENABLE ② seed 행(singleton·공통코드) 변경·검증이 병렬에서
+경합합니다 — 병렬 실행 시 seed upsert 유니크 충돌로 3건 실패를 재현했습니다. 파일 6개
+직렬 합계가 수 초라 파일별 DB 격리의 복잡도 대비 이득이 없습니다. unit 프로젝트의
+전역 직렬화는 제거되어 병렬입니다.
+
+### CI (GitHub Actions — `.github/workflows/ci.yml`)
+
+```text
+checkout → pnpm(packageManager 고정) → node(.nvmrc 고정) → install --frozen-lockfile
+→ prisma generate → typecheck → lint → format:check
+→ test:unit → test:db(Testcontainers) → prisma:drift → build
+```
+
+- **drift 게이트**: `prisma migrate diff --from-migrations … --to-schema … --exit-code`.
+  schema.prisma 를 바꾸고 migration 을 만들지 않으면 exit 2 로 CI 가 실패합니다.
+  shadow DB 는 일회용 PostgreSQL 입니다 — 운영·스테이징 DB 를 shadow 로 쓰지 않습니다.
+- CI 에는 DB·Supabase **secret 이 없습니다.** DB 는 Testcontainers, 인증이 필요한
+  E2E 는 CI 필수범위가 아닙니다 (로컬 `pnpm test:e2e`).
+- Docker 가 CI 에서 동작하지 않으면 `test:db` 가 실패합니다 — skip 으로 green 을
+  만들지 않습니다.
 
 ---
 
@@ -335,6 +383,36 @@ pnpm dlx shadcn@latest add table dialog form
 | `PGBOSS_DATABASE_URL` | | 잡 큐 | T4-1 |
 
 `.env.example` 에는 **형식과 설명만** 있으며 운영 자격증명은 포함되지 않습니다.
+
+### 환경 3분리 — development / staging / production (T0-9)
+
+`NODE_ENV` 는 빌드 모드일 뿐 staging 을 표현하지 못하므로, 배포 환경은 **`APP_ENV`** 로
+구분합니다 (`src/shared/env.ts` `loadAppEnv`).
+
+| | development | staging | production |
+|---|---|---|---|
+| `APP_ENV` | (기본값) | **`staging` 명시 필수** | `production` |
+| `NODE_ENV` | development | production | production |
+| 키 정의 | `.env.example` | `.env.staging.example` | `.env.production.example` |
+| 값 주입 위치 | 개발자 로컬 `.env.local` | 호스팅 환경변수 | 호스팅 환경변수 |
+| app URL | `http://localhost:3000` | staging 도메인 | 운영 도메인 |
+| database | 로컬 docker PG | **staging 전용** Supabase 프로젝트 | 운영 Supabase 프로젝트 |
+| Supabase 인증 | 로컬/개발 프로젝트 | staging 전용 프로젝트 | 운영 프로젝트 |
+| `ENABLE_ERROR_PREVIEW` | 선택 | ⛔ 금지 | ⛔ 금지 |
+
+규칙:
+
+- **환경 간 값이 섞이지 않습니다.** 각 환경은 별도 Supabase 프로젝트·별도 DB 를 쓰고,
+  키 이름은 같되 값은 그 환경의 주입 위치에만 존재합니다.
+- **staging·production 값은 저장소·CI 에 없습니다.** example 파일은 키 목록과 주입 위치
+  정의일 뿐이며, 실제 값은 호스팅 환경변수로만 주입합니다.
+- `APP_ENV=staging|production` 은 production 빌드(`NODE_ENV=production`)를 요구하며,
+  잘못된 값·조합은 기동 시점에 `EnvironmentError` 로 거부됩니다.
+- staging 은 **기본값이 될 수 없습니다** — 미설정 시 development(개발 빌드) 또는
+  production(운영 빌드)이며, staging 은 항상 명시해야 합니다.
+- **테스트·CI 는 이 값들과 무관합니다.** DB 통합 테스트는 하네스(`tests/db/harness.ts`)가
+  만든 일회용 PostgreSQL 만 사용하고 `.env` 의 `DATABASE_URL` 을 읽지 않으므로, 운영
+  자격증명이 local/test 에서 자동 선택되는 경로가 없습니다.
 
 ### `DATABASE_URL` 과 `DIRECT_URL` 을 분리하는 이유
 

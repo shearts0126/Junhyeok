@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { assertPostgresUrl, describeConnection, EnvironmentError, loadDatabaseEnv } from './env';
+import {
+  assertPostgresUrl,
+  describeConnection,
+  EnvironmentError,
+  loadAppEnv,
+  loadDatabaseEnv,
+} from './env';
 
 const VALID_POOLED =
   'postgresql://postgres:secretpw@127.0.0.1:55432/deeppoint_scm?pgbouncer=true&connection_limit=1';
@@ -120,5 +126,50 @@ describe('loadDatabaseEnv', () => {
     } catch (e) {
       expect((e as EnvironmentError).variable).toBe('DIRECT_URL');
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// APP_ENV — dev / stg / prod 3분리 (T0-9)
+// ═══════════════════════════════════════════════════════════════
+describe('loadAppEnv', () => {
+  it('development — 기본값 (NODE_ENV=development, APP_ENV 미설정)', () => {
+    expect(loadAppEnv(env({ NODE_ENV: 'development' }))).toBe('development');
+    expect(loadAppEnv(env({}))).toBe('development');
+  });
+
+  it('production — NODE_ENV=production 이면 기본값이 production', () => {
+    expect(loadAppEnv(env({ NODE_ENV: 'production' }))).toBe('production');
+    expect(loadAppEnv(env({ NODE_ENV: 'production', APP_ENV: 'production' }))).toBe('production');
+  });
+
+  it('★ staging 은 기본값이 될 수 없다 — 반드시 명시해야 한다', () => {
+    expect(loadAppEnv(env({ NODE_ENV: 'production', APP_ENV: 'staging' }))).toBe('staging');
+    // 어떤 NODE_ENV 조합에서도 미설정 → staging 이 나오지 않는다.
+    expect(loadAppEnv(env({ NODE_ENV: 'production' }))).not.toBe('staging');
+    expect(loadAppEnv(env({ NODE_ENV: 'development' }))).not.toBe('staging');
+  });
+
+  it('★ 허용되지 않은 값은 EnvironmentError', () => {
+    expect(() => loadAppEnv(env({ APP_ENV: 'qa' }))).toThrow(EnvironmentError);
+    expect(() => loadAppEnv(env({ APP_ENV: 'prod' }))).toThrow(EnvironmentError);
+  });
+
+  it('★ 개발 빌드가 staging/production 행세를 할 수 없다', () => {
+    expect(() => loadAppEnv(env({ NODE_ENV: 'development', APP_ENV: 'production' }))).toThrow(
+      EnvironmentError,
+    );
+    expect(() => loadAppEnv(env({ NODE_ENV: 'test', APP_ENV: 'staging' }))).toThrow(
+      EnvironmentError,
+    );
+  });
+
+  it('★ 테스트 하네스는 APP_ENV·.env 와 무관하게 자체 DB 를 쓴다 (구조 계약)', () => {
+    // tests/db/global-setup.ts 는 DATABASE_URL/DIRECT_URL 을 하네스가 만든
+    // 일회용 DB 로 **덮어쓴다**. 여기서는 그 계약의 반대편 — loadAppEnv 가
+    // DB 선택에 관여하지 않음을 고정한다: 반환값은 식별자일 뿐 연결 정보가 없다.
+    const appEnv = loadAppEnv(env({ NODE_ENV: 'production', APP_ENV: 'production' }));
+    expect(typeof appEnv).toBe('string');
+    expect(appEnv).not.toContain('://');
   });
 });
