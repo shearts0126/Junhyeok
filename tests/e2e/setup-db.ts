@@ -25,11 +25,12 @@ async function main(): Promise<void> {
     await seedCommonCodes(tx);
   });
 
-  const [adminUser, staffUser] = E2E_USERS;
+  const [adminUser, staffUser, financeUser] = E2E_USERS;
 
   for (const [fixture, roleCode, name] of [
     [adminUser, 'ADMIN', 'E2E 관리자'],
     [staffUser, 'SCM_STAFF', 'E2E 담당자'],
+    [financeUser, 'FINANCE', 'E2E 재무'],
   ] as const) {
     await prisma.user.upsert({
       where: { id: fixture.id },
@@ -46,6 +47,46 @@ async function main(): Promise<void> {
 
   // 이전 실행 잔여물 정리 — E2E 가 만든 코드는 전부 ZZE_ 접두사를 쓴다.
   await prisma.commonCode.deleteMany({ where: { code: { startsWith: 'ZZE_' } } });
+
+  // ── SKU 목록 화면(T1-5A) 픽스처 — 접두사 ZZS- ──────────────────
+  // 감사로그를 만들지 않는 순수 데이터 픽스처다 (화면 조회 검증용).
+  await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
+  const brandGroup = await prisma.commonCodeGroup.findUniqueOrThrow({
+    where: { groupCode: 'BRAND' },
+  });
+  const brandFb = await prisma.commonCode.findUniqueOrThrow({
+    where: { groupId_code: { groupId: brandGroup.id, code: 'FB' } },
+  });
+  await prisma.sku.createMany({
+    data: [
+      {
+        skuCode: 'ZZS-E2E-001',
+        skuName: 'E2E 활성 샴푸',
+        skuNameEn: 'E2E Active Shampoo',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        brandId: brandFb.id,
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-002',
+        skuName: 'E2E 작성중 트리트먼트',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-003',
+        skuName: 'E2E 중지 소모품',
+        itemType: 'CONSUMABLE',
+        status: 'INACTIVE',
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id,
+      },
+    ],
+  });
 
   // 부모 비활성화 차단 시나리오 픽스처: E2EP(상위) ← E2EC(하위)
   const parentGroup = await prisma.commonCodeGroup.upsert({
