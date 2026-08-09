@@ -10,8 +10,18 @@ export {
   SKU_DEACTIVATE_PERMISSION,
   SKU_READ_PERMISSION,
   SKU_SUBMIT_PERMISSION,
+  SKU_SUGGEST_CODE_PERMISSION,
   SKU_UPDATE_PERMISSION,
 } from './policy';
+export {
+  parseSuggestSkuCodeInput,
+  suggestSkuCode,
+  suggestSkuCodeSchema,
+  type SuggestCodeClient,
+  type SuggestCodeDependencies,
+  type SuggestSkuCodeInput,
+  type SuggestSkuCodeResult,
+} from './suggest-code';
 export {
   SKU_SORTS,
   createSkuSchema,

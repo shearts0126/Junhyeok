@@ -39,6 +39,9 @@ export const ERROR_CODES = {
   // ── SKU 승인 워크플로 (T1-4A) ────────────────────────────
   SKU_APPROVAL_VALIDATION_FAILED: 'SKU_APPROVAL_VALIDATION_FAILED',
 
+  // ── SKU 코드 추천 (T03-7) ────────────────────────────────
+  SKU_CODE_SEQUENCE_EXHAUSTED: 'SKU_CODE_SEQUENCE_EXHAUSTED',
+
   // ── 재고 (R1a-2, 설계 05 v0.2 §10.18) ────────────────────
   INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
   REVERSAL_OF_REVERSAL_NOT_ALLOWED: 'REVERSAL_OF_REVERSAL_NOT_ALLOWED',
@@ -81,6 +84,7 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.SKU_CODE_DUPLICATE]: 409,
   [ERROR_CODES.SKU_ACTIVE_UPDATE_RESTRICTED]: 422,
   [ERROR_CODES.SKU_APPROVAL_VALIDATION_FAILED]: 422,
+  [ERROR_CODES.SKU_CODE_SEQUENCE_EXHAUSTED]: 409,
 
   [ERROR_CODES.ENVIRONMENT_ERROR]: 500,
   [ERROR_CODES.INTERNAL_ERROR]: 500,
@@ -128,6 +132,8 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.SKU_CODE_DUPLICATE]: '이미 사용 중인 SKU 코드입니다.',
   [ERROR_CODES.SKU_ACTIVE_UPDATE_RESTRICTED]: '활성(ACTIVE) SKU 는 현재 일반 수정이 제한됩니다.',
   [ERROR_CODES.SKU_APPROVAL_VALIDATION_FAILED]: '승인 전 검증을 통과하지 못했습니다.',
+  [ERROR_CODES.SKU_CODE_SEQUENCE_EXHAUSTED]:
+    '해당 브랜드/대분류/소분류 조합의 SKU 일련번호가 모두 사용되었습니다. 코드 정책 검토가 필요합니다.',
   [ERROR_CODES.ENVIRONMENT_ERROR]: '서버 설정 오류가 발생했습니다.',
   [ERROR_CODES.INTERNAL_ERROR]: '요청을 처리하지 못했습니다.',
 };

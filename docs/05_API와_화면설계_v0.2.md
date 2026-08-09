@@ -94,6 +94,8 @@
 > ✏️ **`/api/skus/import` 가 202가 아닌 200인 이유**: R1a-1 시점에는 pg-boss 워커가 없다. 490행은 단일 요청에서 5~15초에 완결되므로 동기 처리가 적절하다. **`ImportJob`/`ImportRow` 레코드는 동일하게 생성**해 이력·오류행 다운로드를 지원하고, R1a-4에서 비동기로 전환할 때 검증 로직을 재사용한다.
 >
 > ✏️ **2026-08-09 설계복구**: 위 표의 "승인 전 검증 9종"의 원문(SKU·BOM 상세 PRD v0.1 §15.1)이 repository 에 존재하지 않아, 목록을 **`08_설계복구_승인전검증9종.md`** 의 **V1~V9** 로 복구 확정했다. submit 과 approve 직전 모두 재검증한다. archive 는 BOM usage provider 부재로 **T1-4B 연기**.
+>
+> ✏️ **2026-08-09 설계복구 (코드 추천)**: 위 표의 `POST /api/skus/{id}/suggest-code` 는 원문(PRD §11.1·§11.5) 유실 + 신규 등록 시 `{id}` 부재라는 구조적 모순으로 **supersede** 되었다. 최종 경로는 **`POST /api/skus/suggest-code`**, 응답은 `{suggestedCode, serialNumber}`, 권한은 신규 **`sku.suggest_code`** 다. 자동 추천 범위는 `브랜드-대분류-소분류-일련번호`(**STANDARD_PRODUCT_V1**) 하나이며 부자재·공용부자재·보관처 분기 등 레거시 체계는 대상이 아니다(사용자 직접 입력 계속 허용). 규칙 전문은 **`09_설계복구_SKU코드추천.md`**.
 
 ## 10.5 바코드
 

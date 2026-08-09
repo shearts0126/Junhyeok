@@ -73,6 +73,14 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'common_code.manage',
   },
 
+  // SKU 코드 추천 (T03-7) — 저장이 없는 독립 capability 다. 일반 POST(생성)
+  // 정책보다 앞에 두어 `sku.create` 로 잘못 매칭되지 않게 한다.
+  {
+    prefix: '/api/skus/suggest-code',
+    methods: ['POST'],
+    permission: 'sku.suggest_code',
+  },
+
   // SKU 승인 워크플로 (T1-4A) — 일반 POST(생성) 정책보다 앞에 둔다.
   // reject 는 sku.approve — 승인/반려는 동일 authority (별도 sku.reject 없음).
   // ⛔ archive 는 T1-4B — 정책도 라우트도 아직 없다.

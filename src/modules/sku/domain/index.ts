@@ -22,3 +22,14 @@ export {
   type SkuArchiveBlocker,
   type SkuUsageFacts,
 } from './archive-eligibility';
+export {
+  SKU_CODE_POLICY,
+  SKU_SERIAL_DIGITS,
+  SKU_SERIAL_MAX,
+  SKU_SERIAL_MIN,
+  buildSkuCodePrefix,
+  formatSkuSerial,
+  nextSkuSerial,
+  skuSerialExhausted,
+  usedSkuSerials,
+} from './code-suggestion';

@@ -991,7 +991,8 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     const { fileURLToPath } = await import('node:url');
     const skusDir = fileURLToPath(new URL('../../app/api/skus', import.meta.url));
     const entries = readdirSync(skusDir).sort();
-    expect(entries).toEqual(['[id]', 'route.ts']);
+    // ✏️ T03-7 에서 `suggest-code`(코드 추천, 저장 없음)가 추가됐다.
+    expect(entries).toEqual(['[id]', 'route.ts', 'suggest-code']);
     const detailEntries = readdirSync(`${skusDir}/[id]`).sort();
     // T1-4A: submit/approve/reject/deactivate 만.
     // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다. history 등도 없음.
