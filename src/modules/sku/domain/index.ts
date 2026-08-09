@@ -33,3 +33,13 @@ export {
   skuSerialExhausted,
   usedSkuSerials,
 } from './code-suggestion';
+export {
+  BARCODE_EMPTY_SENTINELS,
+  BARCODE_ERROR_CODES,
+  BARCODE_ISSUE_CODES,
+  BARCODE_UNVERIFIED_SENTINELS,
+  normalizeBarcode,
+  type BarcodeErrorCode,
+  type BarcodeIssueCode,
+  type BarcodeNormalizationResult,
+} from './barcode-normalization';
