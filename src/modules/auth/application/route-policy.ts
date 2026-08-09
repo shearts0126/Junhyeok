@@ -30,6 +30,13 @@ export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 
 export interface RoutePermissionPolicy {
   readonly prefix: string;
   /**
+   * 경로가 이 suffix 로 끝날 때만 적용된다 (`/api/skus/{id}/submit` 같은
+   * action 하위 경로용). 생략하면 prefix 만 본다.
+   *
+   * suffix 지정 정책은 같은 prefix 의 일반 정책보다 **앞에** 둔다.
+   */
+  readonly suffix?: string;
+  /**
    * 이 정책이 적용되는 메서드. 생략하면 모든 메서드에 적용된다.
    *
    * 여러 정책이 같은 prefix 를 가질 수 있으므로, **더 구체적인(메서드 지정)
@@ -66,6 +73,14 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'common_code.manage',
   },
 
+  // SKU 승인 워크플로 (T1-4A) — 일반 POST(생성) 정책보다 앞에 둔다.
+  // reject 는 sku.approve — 승인/반려는 동일 authority (별도 sku.reject 없음).
+  // ⛔ archive 는 T1-4B — 정책도 라우트도 아직 없다.
+  { prefix: '/api/skus', suffix: '/submit', methods: ['POST'], permission: 'sku.submit' },
+  { prefix: '/api/skus', suffix: '/approve', methods: ['POST'], permission: 'sku.approve' },
+  { prefix: '/api/skus', suffix: '/reject', methods: ['POST'], permission: 'sku.approve' },
+  { prefix: '/api/skus', suffix: '/deactivate', methods: ['POST'], permission: 'sku.deactivate' },
+
   // SKU CRUD (T1-3). 조회는 read, 생성은 create, 수정은 update.
   // ⚠️ DELETE 라우트는 존재하지 않지만(405), 1차 가드는 update 로 묶어
   //    read 권한만 가진 사용자의 변경성 요청이 핸들러에 닿지 않게 한다.
@@ -97,6 +112,7 @@ export function resolveRoutePermission(query: RoutePermissionQuery): string | un
 
   const match = ROUTE_PERMISSIONS.find((policy) => {
     if (!query.pathname.startsWith(policy.prefix)) return false;
+    if (policy.suffix !== undefined && !query.pathname.endsWith(policy.suffix)) return false;
     if (policy.methods === undefined) return true;
     return policy.methods.some((allowed) => allowed === method);
   });
