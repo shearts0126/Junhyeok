@@ -29,6 +29,14 @@ export interface CodeRefPatch {
   readonly minorCategoryId?: string | null | undefined;
 }
 
+export interface CodeRefValidationOptions {
+  /**
+   * 오류 `fieldErrors.path` 를 요청 필드명으로 바꾼다.
+   * (예: 코드 추천 API 의 요청 필드는 `majorId`·`minorId` 다)
+   */
+  readonly paths?: Partial<Record<CodeRefField, string>>;
+}
+
 /**
  * 새로 설정되는(값이 제공되고 null 이 아닌) 참조만 검증한다.
  * 기존 SKU 가 이미 비활성 코드를 참조 중이어도, PATCH 가 그 필드를 건드리지
@@ -39,6 +47,7 @@ export interface CodeRefPatch {
 export async function assertValidCodeRefs(
   client: CommonCodeRefClient,
   patch: CodeRefPatch,
+  options: CodeRefValidationOptions = {},
 ): Promise<void> {
   const targets = (Object.keys(EXPECTED_GROUPS) as CodeRefField[])
     .map((field) => ({ field, id: patch[field] }))
@@ -55,23 +64,24 @@ export async function assertValidCodeRefs(
   const fieldErrors: Array<{ path: string; message: string }> = [];
   for (const { field, id } of targets) {
     const expectedGroup = EXPECTED_GROUPS[field];
+    const path = options.paths?.[field] ?? field;
     const ref = byId.get(id);
 
     if (ref === undefined) {
-      fieldErrors.push({ path: field, message: '존재하지 않는 공통코드입니다.' });
+      fieldErrors.push({ path, message: '존재하지 않는 공통코드입니다.' });
       continue;
     }
     if (ref.groupCode !== expectedGroup) {
       // ⚠️ 다른 그룹의 실존 코드 ID 를 넣는 경우 — DB FK 는 통과하므로 여기서 막는다.
       fieldErrors.push({
-        path: field,
+        path,
         message: `'${expectedGroup}' 그룹의 코드여야 합니다. (현재: '${ref.groupCode}')`,
       });
       continue;
     }
     if (!ref.active) {
       fieldErrors.push({
-        path: field,
+        path,
         message: '비활성 공통코드는 새로 선택할 수 없습니다.',
       });
     }

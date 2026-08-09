@@ -40,6 +40,7 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'sku.submit', description: 'SKU 승인 요청' },
   { permissionKey: 'sku.approve', description: 'SKU 승인·반려 (동일 authority)' },
   { permissionKey: 'sku.deactivate', description: 'SKU 사용중지' },
+  { permissionKey: 'sku.suggest_code', description: 'SKU 코드 추천 (저장 없음)' },
 ];
 
 /**
@@ -83,6 +84,10 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'SCM_LEADER', permissionKey: 'sku.approve' },
   { roleCode: 'ADMIN', permissionKey: 'sku.deactivate' },
   { roleCode: 'SCM_LEADER', permissionKey: 'sku.deactivate' },
+  // 코드 추천(T03-7) — 작성 계열과 역할집합이 같아도 독립 permission 이다.
+  { roleCode: 'ADMIN', permissionKey: 'sku.suggest_code' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'sku.suggest_code' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'sku.suggest_code' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */
