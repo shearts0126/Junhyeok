@@ -64,6 +64,8 @@ model User {
   updatedSkus  Sku[] @relation("SkuUpdatedBy")
   approvedSkus Sku[] @relation("SkuApprovedBy")
 
+  approvedSkuBarcodes SkuBarcode[] @relation("SkuBarcodeApprovedBy")
+
   idempotencyRecords IdempotencyRecord[] @relation("IdempotencyActor")
 
   @@map("user")
@@ -387,10 +389,96 @@ model Sku {
   updatedByUser  User? @relation("SkuUpdatedBy", fields: [updatedBy], references: [id], onDelete: SetNull)
   approvedByUser User? @relation("SkuApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
 
+  /// SKU 별 다중 바코드 (T04-1).
+  barcodes SkuBarcode[]
+
   @@index([status])
   @@index([itemType])
   @@index([brandId, majorCategoryId, minorCategoryId])
   @@map("sku")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// SKU 바코드 (T04-1)
+//
+// 설계 문서 docs/03_ERD와_Prisma스키마.md §Layer 1 (SKU_BARCODE) 및
+// §고유조건·인덱스 (Layer 1·2) 의 `sku_barcode` 행.
+//
+// T04-1 은 **스키마·migration·DB 제약만** 다룬다.
+//   - T04-2 바코드 정규화 (지수표기 판정·공백/하이픈 제거·`-` NULL 처리)
+//   - T04-3 Barcode CRUD API
+//   - T04-4 중복 예외 승인 API/UI
+// 는 아직 없다. 이 단계에서 만들어지는 것은 **테이블과 제약뿐**이다.
+//
+// ⛔ `deletedAt` 이 없다 — 삭제 대신 `status = 'INACTIVE'` 로 비활성화한다.
+//    물리삭제 금지는 T04-3 Application/API 에서 강제한다.
+// ⛔ 적용기간 overlap 제약·`effective_from <= effective_to` CHECK 를 두지 않는다 —
+//    authoritative 문서에 해당 요구가 없다. CRUD 단계에서 정책 확인 후 결정한다.
+// ⛔ `status IN ('ACTIVE','INACTIVE')` allowlist CHECK 를 두지 않는다 —
+//    본 프로젝트에는 String 컬럼에 열거값 CHECK 를 거는 convention 이 없다
+//    (`sku.item_type` 도 VARCHAR + not-blank CHECK 만 있다). limitation 으로 보고한다.
+// ═══════════════════════════════════════════════════════════════
+
+/// 바코드의 **포장/용도 구분**이다. 바코드 문자열 포맷(EAN13·UPC·QR …)이 아니다.
+/// 문자열 포맷 판정 타입을 여기에 추가하지 않는다.
+enum BarcodeType {
+  UNIT
+  INNER_BOX
+  OUTER_BOX
+  CHANNEL
+  LEGACY
+}
+
+/// SKU 별 다중 바코드.
+///
+/// 조건부 UNIQUE 2종은 Prisma 스키마 언어로 표현할 수 없어 migration 의
+/// **raw SQL** 로 추가한다 (서로 다른 규칙이며 하나의 composite unique 로 합치지 않는다):
+///   - `ux_barcode_active`  : `UNIQUE(barcode)  WHERE status='ACTIVE' AND duplicate_exception = false`
+///     → 바코드 **값 자체**의 전역 활성 중복 차단
+///   - `ux_barcode_primary` : `UNIQUE(sku_id)   WHERE is_primary = true AND status='ACTIVE'`
+///     → **한 SKU 안**의 활성 대표 바코드 1개 강제
+model SkuBarcode {
+  id    String @id @default(uuid()) @db.Uuid
+  skuId String @map("sku_id") @db.Uuid
+
+  /// ★ 반드시 문자열이다. Int/BigInt/Decimal/Float 금지 —
+  ///   앞자리 0 보존과 지수표기 오손 방지가 목적이다 (§00 L-07).
+  ///   T04-1 은 값을 변환하지 않는다. 정규화 판정은 T04-2 다.
+  barcode     String      @db.VarChar(100)
+  barcodeType BarcodeType @default(UNIT) @map("barcode_type")
+  isPrimary   Boolean     @default(false) @map("is_primary")
+
+  countryCode String? @map("country_code") @db.VarChar(10)
+  channelCode String? @map("channel_code") @db.VarChar(30)
+
+  /// 업무값은 현재 `ACTIVE` / `INACTIVE` 다. 상태전이 규칙(state machine)은
+  /// T04-3 이후 Application 계층에서 정의한다 — T04-1 에서 발명하지 않는다.
+  status String @default("ACTIVE") @db.VarChar(20)
+
+  /// 중복 예외 여부. **T04-1 에서는 필드와 DB 조건만 존재한다.**
+  /// 누가·어떻게 true 로 만들 수 있는지(예외 승인)는 T04-4 범위다.
+  duplicateException Boolean @default(false) @map("duplicate_exception")
+  exceptionReason    String? @map("exception_reason")
+  /// 예외 승인자. T04-4 전에는 Application 이 이 값을 쓰지 않는다.
+  approvedBy         String? @map("approved_by") @db.Uuid
+
+  effectiveFrom DateTime? @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// SKU 는 물리삭제 대상이 아니다 (상태·soft delete 로 다룬다).
+  /// 바코드가 딸려 물리삭제되면 안 되므로 **RESTRICT** 다 — CASCADE 금지.
+  sku Sku @relation(fields: [skuId], references: [id], onDelete: Restrict)
+
+  /// 승인 actor FK 는 마스터 테이블의 기존 정책(`sku.approved_by`)과 동일하게
+  /// SET NULL 이다 — 사용자를 지워도 마스터 행이 사라지면 안 된다.
+  /// (`audit_log.approved_by` 의 RESTRICT 는 감사증적 전용 별도 정책이다.)
+  approvedByUser User? @relation("SkuBarcodeApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  @@index([skuId])
+  @@index([barcode])
+  @@map("sku_barcode")
 }
 
 // ═══════════════════════════════════════════════════════════════
