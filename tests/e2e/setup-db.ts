@@ -25,12 +25,14 @@ async function main(): Promise<void> {
     await seedCommonCodes(tx);
   });
 
-  const [adminUser, staffUser, financeUser] = E2E_USERS;
+  const [adminUser, staffUser, financeUser, leaderUser, execUser] = E2E_USERS;
 
   for (const [fixture, roleCode, name] of [
     [adminUser, 'ADMIN', 'E2E 관리자'],
     [staffUser, 'SCM_STAFF', 'E2E 담당자'],
     [financeUser, 'FINANCE', 'E2E 재무'],
+    [leaderUser, 'SCM_LEADER', 'E2E 리더'],
+    [execUser, 'EXECUTIVE', 'E2E 경영진'],
   ] as const) {
     await prisma.user.upsert({
       where: { id: fixture.id },

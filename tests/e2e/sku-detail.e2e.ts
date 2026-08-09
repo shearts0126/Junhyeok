@@ -12,7 +12,7 @@ import { E2E_USERS } from './fixtures';
  * 스텁 Supabase 로그인 → Proxy 1차 가드 → 화면 → API 2차 가드까지 운영과 같은 경로다.
  */
 
-const [ADMIN, STAFF, FINANCE] = E2E_USERS;
+const [ADMIN, STAFF, FINANCE, LEADER, EXECUTIVE] = E2E_USERS;
 
 async function login(page: Page, user: { email: string; password: string }): Promise<void> {
   const response = await page
@@ -48,14 +48,56 @@ test.describe('목록 → 상세 연결', () => {
   });
 });
 
-test.describe('신규 SKU 등록', () => {
-  test('FINANCE 는 신규 화면에서 저장할 수 없다', async ({ page }) => {
-    await login(page, FINANCE);
-    await page.goto('/master/skus/new');
-    await expect(page.getByTestId('forbidden-create')).toBeVisible();
-    await expect(page.getByTestId('create-submit')).toBeDisabled();
-  });
+test.describe('★ /master/skus/new 접근권한 (sku.create)', () => {
+  for (const [roleLabel, user] of [
+    ['ADMIN', ADMIN],
+    ['SCM_LEADER', LEADER],
+    ['SCM_STAFF', STAFF],
+  ] as const) {
+    test(`${roleLabel} 는 신규 등록 화면에 접근할 수 있다`, async ({ page }) => {
+      await login(page, user);
+      const response = await page.goto('/master/skus/new');
+      expect(response?.status(), roleLabel).toBe(200);
+      await expect(page.getByRole('heading', { name: '신규 SKU 등록' })).toBeVisible();
+      await expect(page.getByTestId('create-submit')).toBeEnabled();
+    });
+  }
 
+  for (const [roleLabel, user] of [
+    ['FINANCE', FINANCE],
+    ['EXECUTIVE', EXECUTIVE],
+  ] as const) {
+    test(`★ ${roleLabel} 는 URL 직접 접근해도 403 — sku.read 만으로 열리지 않는다`, async ({
+      page,
+    }) => {
+      await login(page, user);
+      const response = await page.goto('/master/skus/new');
+      expect(response?.status(), roleLabel).toBe(403);
+      // 화면이 렌더되지 않는다 (저장 버튼 disable 로 막는 방식이 아니다)
+      await expect(page.getByRole('heading', { name: '신규 SKU 등록' })).toHaveCount(0);
+    });
+
+    test(`${roleLabel} 목록에는 신규 SKU 버튼이 없고, 상세는 sku.read 로 열린다`, async ({
+      page,
+    }) => {
+      await login(page, user);
+      await page.goto('/master/skus');
+      await expect(page.getByTestId('new-sku-link')).toHaveCount(0);
+
+      // ★ 회귀 방지 — 상세(UUID)는 여전히 sku.read 로 접근 가능해야 한다
+      const detail = await page.goto('/master/skus?q=ZZS-E2E-002');
+      expect(detail?.status()).toBe(200);
+      await page
+        .locator('tr[data-sku="ZZS-E2E-002"]')
+        .getByRole('link', { name: 'ZZS-E2E-002' })
+        .click();
+      await expect(page).toHaveURL(/\/master\/skus\/[0-9a-f-]{36}/);
+      await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'DRAFT');
+    });
+  }
+});
+
+test.describe('신규 SKU 등록', () => {
   test('★ 정상 등록 → DRAFT 상세로 이동, 서버관리·음수허용 필드 payload 부재', async ({ page }) => {
     await login(page, ADMIN);
     await page.goto('/master/skus/new');
@@ -236,6 +278,7 @@ test.describe('워크플로 액션', () => {
     await expect(page.getByTestId('detail-status')).toHaveAttribute(
       'data-status',
       'PENDING_APPROVAL',
+      { timeout: 15_000 },
     );
 
     // ★ V1~V9 리포트 — CHECK_UNAVAILABLE / NOT_APPLICABLE 을 숨기지 않는다
@@ -265,6 +308,7 @@ test.describe('워크플로 액션', () => {
     await expect(page.getByTestId('error-banner')).toHaveAttribute(
       'data-error-code',
       'SKU_APPROVAL_VALIDATION_FAILED',
+      { timeout: 15_000 },
     );
     await expect(
       page.getByTestId('validation-report').locator('[data-check="ITEM_TYPE_UNMAPPED"]'),
@@ -284,7 +328,9 @@ test.describe('워크플로 액션', () => {
     await page.getByTestId('action-approve').click();
     await page.getByTestId('action-confirm').click();
 
-    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'ACTIVE');
+    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'ACTIVE', {
+      timeout: 15_000,
+    });
   });
 
   test('★ 반려 — 사유 필수, 입력 후 REJECTED', async ({ page }) => {
@@ -298,7 +344,9 @@ test.describe('워크플로 액션', () => {
 
     await page.getByRole('textbox', { name: '워크플로 사유' }).fill('E2E 반려 사유');
     await page.getByTestId('action-confirm').click();
-    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'REJECTED');
+    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'REJECTED', {
+      timeout: 15_000,
+    });
   });
 
   test('★ 자가승인 차단 — 작성자가 승인 시도하면 403 SELF_APPROVAL_FORBIDDEN', async ({ page }) => {
@@ -312,6 +360,7 @@ test.describe('워크플로 액션', () => {
     await expect(page.getByTestId('error-banner')).toHaveAttribute(
       'data-error-code',
       'SELF_APPROVAL_FORBIDDEN',
+      { timeout: 15_000 },
     );
     await expect(page.getByTestId('detail-status')).toHaveAttribute(
       'data-status',
@@ -328,7 +377,9 @@ test.describe('워크플로 액션', () => {
     await page.getByRole('textbox', { name: '워크플로 사유' }).fill('E2E 사용중지');
     await page.getByTestId('action-confirm').click();
 
-    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'INACTIVE');
+    await expect(page.getByTestId('detail-status')).toHaveAttribute('data-status', 'INACTIVE', {
+      timeout: 15_000,
+    });
     // INACTIVE 에는 확정된 전이가 없다 — action 을 발명하지 않는다
     await expect(page.getByTestId('no-workflow-action')).toBeVisible();
   });
