@@ -90,6 +90,7 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
 
   // 관리 화면도 1차에서 조회 권한을 요구한다 (2차는 화면이 부르는 API가 검사).
   { prefix: '/admin/codes', methods: ['GET', 'HEAD'], permission: 'common_code.read' },
+  { prefix: '/master/skus', methods: ['GET', 'HEAD'], permission: 'sku.read' },
 ];
 
 export function isPublicPath(pathname: string): boolean {
