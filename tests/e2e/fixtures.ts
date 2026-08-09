@@ -20,4 +20,14 @@ export const E2E_USERS = [
     email: 'e2e-finance@deeppoint.test',
     password: 'e2e-password-finance',
   },
+  {
+    id: 'e2e00000-0000-4000-8000-000000001ead',
+    email: 'e2e-leader@deeppoint.test',
+    password: 'e2e-password-leader',
+  },
+  {
+    id: 'e2e00000-0000-4000-8000-0000000e0ec0',
+    email: 'e2e-exec@deeppoint.test',
+    password: 'e2e-password-exec',
+  },
 ] as const;

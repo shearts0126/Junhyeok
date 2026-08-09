@@ -25,12 +25,14 @@ async function main(): Promise<void> {
     await seedCommonCodes(tx);
   });
 
-  const [adminUser, staffUser, financeUser] = E2E_USERS;
+  const [adminUser, staffUser, financeUser, leaderUser, execUser] = E2E_USERS;
 
   for (const [fixture, roleCode, name] of [
     [adminUser, 'ADMIN', 'E2E 관리자'],
     [staffUser, 'SCM_STAFF', 'E2E 담당자'],
     [financeUser, 'FINANCE', 'E2E 재무'],
+    [leaderUser, 'SCM_LEADER', 'E2E 리더'],
+    [execUser, 'EXECUTIVE', 'E2E 경영진'],
   ] as const) {
     await prisma.user.upsert({
       where: { id: fixture.id },
@@ -45,18 +47,38 @@ async function main(): Promise<void> {
     });
   }
 
+  // ⚠️ SKU 픽스처를 **먼저** 지운다 — SKU 가 참조 중인 공통코드는 FK RESTRICT 로
+  //    삭제되지 않기 때문이다.
+  await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
+
   // 이전 실행 잔여물 정리 — E2E 가 만든 코드는 전부 ZZE_ 접두사를 쓴다.
   await prisma.commonCode.deleteMany({ where: { code: { startsWith: 'ZZE_' } } });
 
-  // ── SKU 목록 화면(T1-5A) 픽스처 — 접두사 ZZS- ──────────────────
-  // 감사로그를 만들지 않는 순수 데이터 픽스처다 (화면 조회 검증용).
-  await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
+  // 자가승인 차단(403) 시나리오가 결정적이도록 설정을 기본값으로 되돌린다.
+  await prisma.systemSetting.updateMany({
+    where: { id: 1 },
+    data: { allowSelfApprovalSku: false },
+  });
+
+  // ── SKU 화면 픽스처 (T1-5A 목록 / T1-6A 상세·워크플로) — 접두사 ZZS- ──
+  // 감사로그를 만들지 않는 순수 데이터 픽스처다 (화면 검증용).
   const brandGroup = await prisma.commonCodeGroup.findUniqueOrThrow({
     where: { groupCode: 'BRAND' },
   });
   const brandFb = await prisma.commonCode.findUniqueOrThrow({
     where: { groupId_code: { groupId: brandGroup.id, code: 'FB' } },
   });
+  // 비활성 참조 시나리오용 — 활성 목록에 없는 브랜드를 SKU 가 참조한 상태.
+  const inactiveBrand = await prisma.commonCode.create({
+    data: {
+      groupId: brandGroup.id,
+      code: 'ZZE_OFF_BRAND',
+      name: 'E2E 비활성 브랜드',
+      sortOrder: 995,
+      active: false,
+    },
+  });
+
   await prisma.sku.createMany({
     data: [
       {
@@ -84,6 +106,73 @@ async function main(): Promise<void> {
         status: 'INACTIVE',
         createdBy: adminUser.id,
         updatedBy: adminUser.id,
+      },
+      // ── T1-6A 워크플로 픽스처 ─────────────────────────────────
+      // 작성자를 STAFF 로 두어 ADMIN 이 자가승인 없이 승인/반려할 수 있게 한다.
+      {
+        skuCode: 'ZZS-E2E-004',
+        skuName: 'E2E 승인요청 대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        // ⚠️ 이 SKU 는 워크플로 E2E 에서 ACTIVE→INACTIVE 까지 진행된다.
+        //    목록 E2E 의 "INACTIVE + FINISHED_GOOD = 결과 없음" 시나리오와
+        //    겹치지 않도록 품목구분을 달리 둔다.
+        skuCode: 'ZZS-E2E-005',
+        skuName: 'E2E 승인 대상',
+        itemType: 'SEMI_FINISHED_GOOD',
+        status: 'PENDING_APPROVAL',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-006',
+        skuName: 'E2E 반려 대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'PENDING_APPROVAL',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 작성자 = ADMIN → ADMIN 이 승인 시도하면 자가승인 403 (설정 false)
+      {
+        skuCode: 'ZZS-E2E-007',
+        skuName: 'E2E 자가승인 대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'PENDING_APPROVAL',
+        createdBy: adminUser.id,
+        updatedBy: adminUser.id,
+      },
+      // 승인 전 검증 V3(품목구분 미매핑) ERROR 시나리오
+      {
+        skuCode: 'ZZS-E2E-008',
+        skuName: 'E2E 검증실패 대상',
+        itemType: 'LEGACY_UNMAPPED',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 거래 이력 있음 → skuCode 읽기 전용
+      {
+        skuCode: 'ZZS-E2E-009',
+        skuName: 'E2E 거래이력 SKU',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        hasTransaction: true,
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 비활성 브랜드를 참조 중 — 다른 필드만 수정하는 PATCH 가 막히면 안 된다
+      {
+        skuCode: 'ZZS-E2E-010',
+        skuName: 'E2E 비활성참조 SKU',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        brandId: inactiveBrand.id,
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
       },
     ],
   });

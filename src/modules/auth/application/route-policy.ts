@@ -90,6 +90,10 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
 
   // 관리 화면도 1차에서 조회 권한을 요구한다 (2차는 화면이 부르는 API가 검사).
   { prefix: '/admin/codes', methods: ['GET', 'HEAD'], permission: 'common_code.read' },
+  // ⚠️ 신규 등록 화면은 조회 권한만으로 열리면 안 된다 — 더 구체적인 경로
+  //    정책을 일반 `/master/skus` read 정책보다 **앞에** 둔다 (첫 일치 우선).
+  //    SKU id 는 UUID 라 `/master/skus/{id}` 가 이 prefix 에 걸리지 않는다.
+  { prefix: '/master/skus/new', methods: ['GET', 'HEAD'], permission: 'sku.create' },
   { prefix: '/master/skus', methods: ['GET', 'HEAD'], permission: 'sku.read' },
 ];
 

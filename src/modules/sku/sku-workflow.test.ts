@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AuditLogger, AuditWriteInput } from '@/modules/audit/application/audit-logger';
 import {
+  ROUTE_PERMISSIONS,
   createActorContext,
   resolveRoutePermission,
   type ActorContext,
@@ -355,6 +356,25 @@ describe('★ T1-4A 권한 배정 (RolePermission seed 표)', () => {
         expect(keys, `${role}:${denied}`).not.toContain(denied);
       }
     }
+  });
+});
+
+describe('★ 1차 가드 — SKU 화면 라우트 정책 (T1-6A)', () => {
+  const resolvePage = (pathname: string) => resolveRoutePermission({ pathname, method: 'GET' });
+
+  it('★ /master/skus/new 는 sku.create — 일반 /master/skus read 정책보다 우선한다', () => {
+    expect(resolvePage('/master/skus/new')).toBe('sku.create');
+    // 목록·상세는 그대로 sku.read (신규 정책이 회귀를 만들지 않는다)
+    expect(resolvePage('/master/skus')).toBe(SKU_READ_PERMISSION);
+    expect(resolvePage('/master/skus?status=DRAFT')).toBe(SKU_READ_PERMISSION);
+    expect(resolvePage(`/master/skus/${SKU_DRAFT_ID}`)).toBe(SKU_READ_PERMISSION);
+  });
+
+  it('정책 배열에서 new 정책이 일반 정책보다 앞에 있다 (첫 일치 우선 규칙)', () => {
+    const newIndex = ROUTE_PERMISSIONS.findIndex((policy) => policy.prefix === '/master/skus/new');
+    const listIndex = ROUTE_PERMISSIONS.findIndex((policy) => policy.prefix === '/master/skus');
+    expect(newIndex).toBeGreaterThanOrEqual(0);
+    expect(newIndex).toBeLessThan(listIndex);
   });
 });
 

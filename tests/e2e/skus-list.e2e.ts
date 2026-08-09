@@ -45,8 +45,10 @@ test.describe('SKU 목록 — 조회·검색 (ADMIN)', () => {
     for (const label of ['hasBom', 'mappingStatus', 'hasIssue']) {
       await expect(page.locator(`[name="${label}"]`)).toHaveCount(0);
     }
-    // ⛔ 금지 액션 버튼 부재
-    for (const forbidden of ['엑셀 업로드', '엑셀 다운로드', '일괄', '신규 SKU', '삭제']) {
+    // ⛔ 금지 액션 버튼 부재.
+    //    ✏️ T1-6A 에서 `신규 SKU`(등록 화면 링크)만 추가됐다 — 업로드·다운로드·
+    //       일괄 처리는 계속 없다 (sku-detail.e2e.ts 가 노출 조건을 검증한다).
+    for (const forbidden of ['엑셀 업로드', '엑셀 다운로드', '일괄', '삭제']) {
       await expect(page.getByRole('button', { name: forbidden })).toHaveCount(0);
     }
   });
