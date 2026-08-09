@@ -22,9 +22,12 @@ export {
 export { assertValidCodeRefs, type CodeRefField, type CodeRefPatch } from './code-ref-validation';
 export { SKU_VIEW_INCLUDE, toSkuView, type SkuCodeRefView, type SkuView } from './views';
 export {
+  SKU_CREATE_ROUTE_SCOPE,
   SKU_ENTITY_TYPE,
   createSku,
   duplicateSkuCode,
+  skuCreateRequestHash,
+  type CreateSkuResult,
   type SkuMutateDependencies,
 } from './create-sku';
 export { skuNotFound, updateSku } from './update-sku';

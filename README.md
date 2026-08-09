@@ -887,6 +887,26 @@ ADMIN·SCM_LEADER·SCM_STAFF 만 — FINANCE·EXECUTIVE 는 read-only 입니다.
 DELETE 핸들러는 없으며(405), 승인 워크플로(submit/approve/…)·비활성화·폐기·이력 API 는
 T1-4 이후의 별도 endpoint 입니다.
 
+### POST 멱등성 — `Idempotency-Key` 헤더
+
+`POST /api/skus` 는 선택적 `Idempotency-Key` 헤더(비어 있지 않은 값, **200자 이하**,
+대소문자·공백 변환 없음)를 지원합니다. 기반은 공용 인프라(`src/shared/idempotency/`,
+`idempotency_record` 테이블)이며 멱등 scope 는 `(actor, HTTP method, route template, key)`
+입니다 — key 단독이 아니므로 다른 사용자·다른 endpoint 의 동일 key 는 서로 독립입니다.
+
+| 요청 | 응답 |
+|---|---|
+| 헤더 없음 | 일반 생성 `201` (멱등 기록 없음) |
+| 같은 키 + 같은 내용 재요청 | 저장된 최초 결과 replay `200` — SKU·감사로그 각 1건 유지 |
+| 같은 키 + 다른 내용 | `409 IDEMPOTENCY_KEY_REUSED` |
+| 다른 키 + 같은 skuCode | `409 SKU_CODE_DUPLICATE` (멱등 replay 아님) |
+
+request hash 는 raw 본문이 아니라 **검증된 DTO 의 canonical JSON**(key 정렬, 배열 순서
+보존, Decimal 문자열)의 SHA-256 입니다. claim → 생성 → 감사로그 → 응답 snapshot 저장이
+**한 트랜잭션**이라 실패 시 전부 롤백되며, 실패한 요청이 key 를 점유하지 않습니다.
+동시 요청은 PostgreSQL UNIQUE(`INSERT ... ON CONFLICT`)가 직렬화합니다.
+TTL·정리 작업은 현재 범위가 아닙니다 (운영 retention 정책은 별도 결정).
+
 ```bash
 pnpm db:seed        # 역할 5종 + role.read + ADMIN 부여 (재실행 안전)
 ```

@@ -64,6 +64,8 @@ model User {
   updatedSkus  Sku[] @relation("SkuUpdatedBy")
   approvedSkus Sku[] @relation("SkuApprovedBy")
 
+  idempotencyRecords IdempotencyRecord[] @relation("IdempotencyActor")
+
   @@map("user")
 }
 
@@ -389,4 +391,47 @@ model Sku {
   @@index([itemType])
   @@index([brandId, majorCategoryId, minorCategoryId])
   @@map("sku")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 공용 멱등성 (T1-3 보완)
+// ═══════════════════════════════════════════════════════════════
+
+/// 멱등 요청 기록 — **공용 인프라** (SKU 전용이 아니다).
+///
+/// 전역 계약:
+///   - 동일 scope + 동일 key + 동일 request hash → 저장된 최초 결과 replay (HTTP 200)
+///   - 동일 scope + 동일 key + 다른 request hash → 409 IDEMPOTENCY_KEY_REUSED
+///
+/// 멱등 scope = (actor_id, http_method, route_scope, idempotency_key).
+/// key 단독이 아니다 — 다른 actor·다른 endpoint 의 동일 key 는 서로 독립이며,
+/// 다른 사용자의 응답이 replay 되는 일이 없어야 한다.
+///
+/// `route_scope` 는 raw URL 이 아니라 **정규화된 route template** ("/api/skus")이다.
+///
+/// claim 과 business 작업과 response snapshot 저장은 **하나의 트랜잭션**이다.
+/// 실패하면 전부 함께 롤백되므로 영속 "IN_PROGRESS" 상태가 필요 없다
+/// (TTL·cleanup·상태 컬럼은 현재 요구사항에 없어 두지 않는다 — 운영 retention 은 별도 결정).
+model IdempotencyRecord {
+  id             String @id @default(uuid()) @db.Uuid
+  actorId        String @map("actor_id") @db.Uuid
+  httpMethod     String @map("http_method") @db.VarChar(10)
+  routeScope     String @map("route_scope") @db.VarChar(200)
+  idempotencyKey String @map("idempotency_key") @db.VarChar(200)
+  /// 검증된 DTO 의 canonical JSON 에 대한 SHA-256 hex (64자, DB CHECK).
+  requestHash    String @map("request_hash") @db.Char(64)
+
+  /// reservation 시점에는 NULL — 같은 트랜잭션에서 business 성공 후 반드시
+  /// 채워져 commit 된다. 커밋된 행에서 NULL 인 경우는 없다.
+  responseStatus Int?  @map("response_status")
+  responseBody   Json? @map("response_body")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// 멱등 기록은 응답 replay 의 근거다 — 사용자 삭제에 딸려 지워지면 안 된다
+  /// (AuditLog.actor_id 와 같은 RESTRICT 정책).
+  actor User @relation("IdempotencyActor", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@unique([actorId, httpMethod, routeScope, idempotencyKey], map: "idempotency_record_scope_key")
+  @@map("idempotency_record")
 }

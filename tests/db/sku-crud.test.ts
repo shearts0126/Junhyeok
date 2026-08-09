@@ -123,7 +123,7 @@ describe('★ createSku (실제 PostgreSQL)', () => {
       codeId('MINOR_CATEGORY', 'SH'),
     ]);
 
-    const view = await createSku(
+    const { sku: view } = await createSku(
       ACTOR,
       parseCreateSkuInput({
         skuCode: CODE('C1'),
@@ -211,7 +211,7 @@ describe('★ createSku (실제 PostgreSQL)', () => {
 
 describe('★ updateSku (실제 PostgreSQL)', () => {
   it('★ 수정 + 감사로그 UPDATE(before/after) 커밋, 감사 실패 시 수정 롤백', async () => {
-    const created = await createSku(
+    const { sku: created } = await createSku(
       ACTOR,
       parseCreateSkuInput({ skuCode: CODE('U1'), skuName: '수정 전', itemType: 'FINISHED' }),
     );
@@ -245,7 +245,7 @@ describe('★ updateSku (실제 PostgreSQL)', () => {
   });
 
   it('★ ACTIVE SKU 일반 수정 차단 (422) — 실 상태값 기준', async () => {
-    const created = await createSku(
+    const { sku: created } = await createSku(
       ACTOR,
       parseCreateSkuInput({ skuCode: CODE('U2'), skuName: '활성화 예정', itemType: 'FINISHED' }),
     );
@@ -258,7 +258,7 @@ describe('★ updateSku (실제 PostgreSQL)', () => {
   });
 
   it('★ TC-SKU-007 위임 — hasTransaction=true 코드 변경 422, 코드 외 수정은 허용', async () => {
-    const created = await createSku(
+    const { sku: created } = await createSku(
       ACTOR,
       parseCreateSkuInput({ skuCode: CODE('U3'), skuName: '거래 발생', itemType: 'FINISHED' }),
     );
@@ -281,7 +281,7 @@ describe('★ updateSku (실제 PostgreSQL)', () => {
 
   it('비활성 코드를 새로 선택하면 실패, null 해제는 허용', async () => {
     const brandId = await codeId('BRAND', 'FB');
-    const created = await createSku(
+    const { sku: created } = await createSku(
       ACTOR,
       parseCreateSkuInput({
         skuCode: CODE('U4'),
@@ -322,7 +322,7 @@ describe('★ updateSku (실제 PostgreSQL)', () => {
 
 describe('★ getSku · listSkus (실제 PostgreSQL)', () => {
   it('★ soft-delete 는 상세 404·목록 제외, q 는 3필드 검색', async () => {
-    const keep = await createSku(
+    const { sku: keep } = await createSku(
       ACTOR,
       parseCreateSkuInput({
         skuCode: CODE('L1'),
@@ -330,7 +330,7 @@ describe('★ getSku · listSkus (실제 PostgreSQL)', () => {
         itemType: 'FINISHED',
       }),
     );
-    const removed = await createSku(
+    const { sku: removed } = await createSku(
       ACTOR,
       parseCreateSkuInput({
         skuCode: CODE('L2'),

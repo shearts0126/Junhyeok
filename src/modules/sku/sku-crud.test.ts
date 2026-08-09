@@ -24,6 +24,7 @@ import {
   parseListSkusQuery,
   parseSkuId,
   parseUpdateSkuInput,
+  skuCreateRequestHash,
   updateSku,
   type SkuReadClient,
 } from './application';
@@ -569,15 +570,55 @@ describe('★ 2차 가드 — application 권한 재검사', () => {
 // ═══════════════════════════════════════════════════════════════
 // createSku
 // ═══════════════════════════════════════════════════════════════
+describe('skuCreateRequestHash — 검증된 DTO 기준 (T1-3 보완)', () => {
+  it('★ property 순서만 다른 요청 본문은 같은 hash', () => {
+    const a = parseCreateSkuInput({ skuCode: 'DP-H-1', skuName: '이름', itemType: 'FINISHED' });
+    const b = parseCreateSkuInput({ itemType: 'FINISHED', skuName: '이름', skuCode: 'DP-H-1' });
+    expect(skuCreateRequestHash(a)).toBe(skuCreateRequestHash(b));
+  });
+
+  it('★ 필드 생략과 명시 전달을 합치지 않는다 — server 강제값은 hash 에 없다', () => {
+    const omitted = parseCreateSkuInput({
+      skuCode: 'DP-H-2',
+      skuName: '이름',
+      itemType: 'FINISHED',
+    });
+    const explicit = parseCreateSkuInput({
+      skuCode: 'DP-H-2',
+      skuName: '이름',
+      itemType: 'FINISHED',
+      baseUom: 'EA', // DB 기본값과 같은 값이라도 "명시 전달" 은 다른 요청 표현이다
+    });
+    expect(skuCreateRequestHash(omitted)).not.toBe(skuCreateRequestHash(explicit));
+  });
+
+  it('Decimal 표기 차이는 같은 값이면 같은 hash', () => {
+    const a = parseCreateSkuInput({
+      skuCode: 'DP-H-3',
+      skuName: '이름',
+      itemType: 'FINISHED',
+      unitConversionQty: '2.500000',
+    });
+    const b = parseCreateSkuInput({
+      skuCode: 'DP-H-3',
+      skuName: '이름',
+      itemType: 'FINISHED',
+      unitConversionQty: '2.5',
+    });
+    expect(skuCreateRequestHash(a)).toBe(skuCreateRequestHash(b));
+  });
+});
+
 describe('createSku', () => {
   it('★ server-managed 필드를 강제한다 — status=DRAFT·hasTransaction=false·작성자=Actor', async () => {
     const store = makeStore();
-    const view = await createSku(
+    const { sku: view, replayed } = await createSku(
       WRITER,
       parseCreateSkuInput({ ...MINIMAL_CREATE, brandId: BRAND_ID, unitConversionQty: '2' }),
       fakeDependencies(store),
     );
 
+    expect(replayed).toBe(false);
     expect(view.status).toBe('DRAFT');
     expect(view.hasTransaction).toBe(false);
     expect(view.createdBy).toBe(ACTOR_ID);
@@ -595,7 +636,7 @@ describe('createSku', () => {
 
   it('★ 감사로그 CREATE 가 같은 트랜잭션에서 기록된다 — entityId 는 UUID', async () => {
     const store = makeStore();
-    const view = await createSku(
+    const { sku: view } = await createSku(
       WRITER,
       parseCreateSkuInput(MINIMAL_CREATE),
       fakeDependencies(store),
