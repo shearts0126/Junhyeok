@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -226,6 +227,8 @@ export function SkusListClient() {
   const [minorOptions, setMinorOptions] = useState<readonly CodeOption[]>([]);
 
   const canRead = permissions?.includes('sku.read') ?? false;
+  // 신규 등록 버튼 노출은 UX — 실제 차단은 `POST /api/skus` 의 `sku.create` 가 한다.
+  const canCreate = permissions?.includes('sku.create') ?? false;
 
   // ⚠️ effect 안에서는 setState 를 동기 호출하지 않는다 — 모든 갱신은 .then 콜백.
 
@@ -334,13 +337,20 @@ export function SkusListClient() {
 
   return (
     <main className="mx-auto w-full max-w-7xl space-y-6 px-6 py-10">
-      <header className="space-y-1">
-        <p className="text-muted-foreground font-mono text-sm">DEEPPOINT SCM OS</p>
-        <h1 className="text-2xl font-semibold tracking-tight">SKU 목록</h1>
-        <p className="text-muted-foreground text-sm">
-          코드·상품명·영문명 통합검색과 상태·품목구분·분류 필터를 지원합니다. 바코드·외부몰 별칭
-          검색과 BOM·매핑 관련 열은 해당 모듈 도입 후 제공됩니다.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="space-y-1">
+          <p className="text-muted-foreground font-mono text-sm">DEEPPOINT SCM OS</p>
+          <h1 className="text-2xl font-semibold tracking-tight">SKU 목록</h1>
+          <p className="text-muted-foreground text-sm">
+            코드·상품명·영문명 통합검색과 상태·품목구분·분류 필터를 지원합니다. 바코드·외부몰 별칭
+            검색과 BOM·매핑 관련 열은 해당 모듈 도입 후 제공됩니다.
+          </p>
+        </div>
+        {canCreate && (
+          <Link href="/master/skus/new" data-testid="new-sku-link">
+            <Button size="sm">신규 SKU</Button>
+          </Link>
+        )}
       </header>
 
       {error !== null && listState !== 'forbidden' && (
@@ -528,7 +538,15 @@ export function SkusListClient() {
                     <td className="px-3 py-2">
                       <StatusBadge status={item.status} />
                     </td>
-                    <td className="px-3 py-2 font-mono">{item.skuCode}</td>
+                    <td className="px-3 py-2 font-mono">
+                      <Link
+                        href={`/master/skus/${item.id}`}
+                        className="underline underline-offset-2"
+                        data-testid="sku-detail-link"
+                      >
+                        {item.skuCode}
+                      </Link>
+                    </td>
                     <td className="px-3 py-2">
                       {item.skuName}
                       {item.skuNameEn !== null && (
