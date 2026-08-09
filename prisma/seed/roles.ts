@@ -34,12 +34,17 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'system_setting.update', description: '시스템 설정 변경' },
   { permissionKey: 'common_code.read', description: '공통코드 조회' },
   { permissionKey: 'common_code.manage', description: '공통코드 생성·수정·비활성화' },
+  { permissionKey: 'sku.read', description: 'SKU 조회' },
+  { permissionKey: 'sku.create', description: 'SKU 생성' },
+  { permissionKey: 'sku.update', description: 'SKU 수정' },
 ];
 
 /**
  * 역할 → 권한.
  *
  * 공통코드(T0-8): 조회는 전 역할, 관리는 ADMIN 만.
+ * SKU(T1-3, 05 API 권한표): 조회는 전 역할 / 생성·수정은 ADMIN·SCM_LEADER·SCM_STAFF.
+ *   FINANCE·EXECUTIVE 는 read-only — 작성 권한을 부여하지 않는다.
  * ADMIN 도 이 표의 행으로만 권한을 얻는다 — 코드상 무조건 통과 없음.
  */
 export const ROLE_PERMISSION_SEED: ReadonlyArray<{
@@ -55,6 +60,17 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'SCM_STAFF', permissionKey: 'common_code.read' },
   { roleCode: 'FINANCE', permissionKey: 'common_code.read' },
   { roleCode: 'EXECUTIVE', permissionKey: 'common_code.read' },
+  { roleCode: 'ADMIN', permissionKey: 'sku.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'sku.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'sku.read' },
+  { roleCode: 'FINANCE', permissionKey: 'sku.read' },
+  { roleCode: 'EXECUTIVE', permissionKey: 'sku.read' },
+  { roleCode: 'ADMIN', permissionKey: 'sku.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'sku.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'sku.create' },
+  { roleCode: 'ADMIN', permissionKey: 'sku.update' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'sku.update' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'sku.update' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

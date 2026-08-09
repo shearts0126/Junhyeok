@@ -66,6 +66,13 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'common_code.manage',
   },
 
+  // SKU CRUD (T1-3). 조회는 read, 생성은 create, 수정은 update.
+  // ⚠️ DELETE 라우트는 존재하지 않지만(405), 1차 가드는 update 로 묶어
+  //    read 권한만 가진 사용자의 변경성 요청이 핸들러에 닿지 않게 한다.
+  { prefix: '/api/skus', methods: ['GET', 'HEAD'], permission: 'sku.read' },
+  { prefix: '/api/skus', methods: ['POST'], permission: 'sku.create' },
+  { prefix: '/api/skus', methods: ['PATCH', 'PUT', 'DELETE'], permission: 'sku.update' },
+
   // 관리 화면도 1차에서 조회 권한을 요구한다 (2차는 화면이 부르는 API가 검사).
   { prefix: '/admin/codes', methods: ['GET', 'HEAD'], permission: 'common_code.read' },
 ];
