@@ -92,6 +92,8 @@
 | POST | `/api/skus/import/validate` | 검증만 (미리보기) | `multipart` | `{valid[], errors[]}` | S,L,A | 반영하지 않음 | — |
 
 > ✏️ **`/api/skus/import` 가 202가 아닌 200인 이유**: R1a-1 시점에는 pg-boss 워커가 없다. 490행은 단일 요청에서 5~15초에 완결되므로 동기 처리가 적절하다. **`ImportJob`/`ImportRow` 레코드는 동일하게 생성**해 이력·오류행 다운로드를 지원하고, R1a-4에서 비동기로 전환할 때 검증 로직을 재사용한다.
+>
+> ✏️ **2026-08-09 설계복구**: 위 표의 "승인 전 검증 9종"의 원문(SKU·BOM 상세 PRD v0.1 §15.1)이 repository 에 존재하지 않아, 목록을 **`08_설계복구_승인전검증9종.md`** 의 **V1~V9** 로 복구 확정했다. submit 과 approve 직전 모두 재검증한다. archive 는 BOM usage provider 부재로 **T1-4B 연기**.
 
 ## 10.5 바코드
 

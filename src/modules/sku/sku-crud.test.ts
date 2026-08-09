@@ -986,14 +986,15 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     expect(Object.keys(detail).sort()).toEqual(['GET', 'PATCH', 'dynamic']);
   });
 
-  it('승인 워크플로·기타 T1-4+ 라우트 디렉터리가 없다', async () => {
+  it('노출 라우트 디렉터리 고정 — T1-4A 워크플로 4종까지, archive·history 등 없음', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const skusDir = fileURLToPath(new URL('../../app/api/skus', import.meta.url));
     const entries = readdirSync(skusDir).sort();
     expect(entries).toEqual(['[id]', 'route.ts']);
     const detailEntries = readdirSync(`${skusDir}/[id]`).sort();
-    // submit/approve/reject/deactivate/archive/history 등 하위 경로 없음
-    expect(detailEntries).toEqual(['route.ts']);
+    // T1-4A: submit/approve/reject/deactivate 만.
+    // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다. history 등도 없음.
+    expect(detailEntries).toEqual(['approve', 'deactivate', 'reject', 'route.ts', 'submit']);
   });
 });

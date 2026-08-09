@@ -843,6 +843,10 @@ resolveRoutePermission({ pathname: '/api/roles',           method: 'POST'  }); /
 | `/api/code-groups` | `GET`, `HEAD` | `common_code.read` |
 | `/api/codes` | `GET`, `HEAD` | `common_code.read` |
 | `/api/codes` | `POST`, `PATCH`, `PUT`, `DELETE` | `common_code.manage` |
+| `/api/skus/…/submit` | `POST` | `sku.submit` |
+| `/api/skus/…/approve` | `POST` | `sku.approve` |
+| `/api/skus/…/reject` | `POST` | `sku.approve` (승인/반려 동일 authority) |
+| `/api/skus/…/deactivate` | `POST` | `sku.deactivate` |
 | `/api/skus` | `GET`, `HEAD` | `sku.read` |
 | `/api/skus` | `POST` | `sku.create` |
 | `/api/skus` | `PATCH`, `PUT`, `DELETE` | `sku.update` |
@@ -881,11 +885,33 @@ Proxy 는 경로 기반이라 새 라우트에서 누락될 수 있고, 서버 �
 | `GET /api/skus/{id}` | `sku.read` |
 | `POST /api/skus` | `sku.create` |
 | `PATCH /api/skus/{id}` | `sku.update` |
+| `POST /api/skus/{id}/submit` | `sku.submit` |
+| `POST /api/skus/{id}/approve` | `sku.approve` |
+| `POST /api/skus/{id}/reject` | `sku.approve` |
+| `POST /api/skus/{id}/deactivate` | `sku.deactivate` |
 
-SKU 권한 배정 (T1-3): `sku.read` 는 5개 역할 전부, `sku.create`·`sku.update` 는
-ADMIN·SCM_LEADER·SCM_STAFF 만 — FINANCE·EXECUTIVE 는 read-only 입니다.
-DELETE 핸들러는 없으며(405), 승인 워크플로(submit/approve/…)·비활성화·폐기·이력 API 는
-T1-4 이후의 별도 endpoint 입니다.
+SKU 권한 배정: `sku.read` 는 5개 역할 전부, `sku.create`·`sku.update`·`sku.submit` 은
+ADMIN·SCM_LEADER·SCM_STAFF, `sku.approve`(반려 겸용)·`sku.deactivate` 는
+ADMIN·SCM_LEADER 만 — FINANCE·EXECUTIVE 는 read-only 입니다. DELETE 핸들러는
+없습니다(405).
+
+### SKU 승인 워크플로 (T1-4A)
+
+- 상태전이는 T1-2 domain matrix(허용 4)만 따릅니다: submit(DRAFT→PENDING) /
+  approve(PENDING→ACTIVE) / reject(PENDING→REJECTED, `reason` 필수) /
+  deactivate(ACTIVE→INACTIVE). 동시 요청은 조건부 원자 update 로 직렬화되어
+  정확히 하나만 성공합니다.
+- **승인 전 검증 9종(V1~V9)** — 원 PRD §15.1 유실로
+  `docs/08_설계복구_승인전검증9종.md` 에 복구 확정된 contract 를 submit 과
+  **approve 직전 재검증** 모두에 적용합니다. ERROR FAIL → 422
+  `SKU_APPROVAL_VALIDATION_FAILED` + 검증 결과, WARNING 은 응답에 포함하되
+  진행을 막지 않습니다. V7~V9(바코드)는 NOT_APPLICABLE, V6(코드체계)은
+  CHECK_UNAVAILABLE 로 정직하게 노출합니다.
+- 자가승인은 트랜잭션 안에서 읽은 최신 `allow_self_approval_sku` 로만 판정합니다
+  (기본 false → 403 `SELF_APPROVAL_FORBIDDEN`).
+- **archive 는 T1-4B** — BOM usage provider 부재로 연기 (`hasBomUsage=false`
+  상수 가정 금지). 라우트 stub 없음(404). 워크플로 5종 POST 는 멱등 대상이
+  아니므로 Idempotency-Key 를 지원하지 않습니다.
 
 ### POST 멱등성 — `Idempotency-Key` 헤더
 
