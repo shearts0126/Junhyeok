@@ -18,7 +18,8 @@ import { toSkuBarcodeView, type SkuBarcodeView } from './views';
  *   - 응답은 **raw 배열**이다 (`{items, page, …}` envelope 아님).
  *     05 §10.4 의 응답 컬럼이 `SkuBarcode[]` 이므로 그것을 따른다.
  *   - pagination 없음 · query filter 없음.
- *   - ★ `ACTIVE` 와 `INACTIVE` 를 **모두 포함**한다. DELETE 가 물리삭제가 아니라
+ *   - ★ `ACTIVE`·`INACTIVE`·`PENDING_DUPLICATE`(T04-4A 승인 대기 후보)를
+ *     **모두 포함**한다. UI 는 status 로 승인 대기 후보를 식별한다. DELETE 가 물리삭제가 아니라
  *     비활성 이력을 남기므로 조회 API 가 그것을 볼 수 있어야 한다.
  *     ⛔ ACTIVE-only 필터를 만들지 않는다.
  *   - 정렬은 `createdAt DESC, id DESC` 로 **결정적**이다.

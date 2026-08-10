@@ -109,6 +109,8 @@
 
 > ✏️ **2026-08-10 설계복구 (바코드 CRUD)**: 위 표의 POST/PATCH 요청 DTO 가 원문에서 말줄임표로 끝나 확정되지 않았고, `DataIssue` 모델·migration·서비스가 repository 에 **존재하지 않음**을 확인해 T04-3 을 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`10_설계복구_BarcodeCRUD.md`** 로 확정한다.
 >
+> ✏️ **2026-08-10 설계복구 (바코드 중복 예외 승인)**: 위 표의 `approve-duplicate` 는 승인할 `{bid}` 후보가 **어떻게 생기는지**를 정의하지 않아 T04-4 를 PRE-FLIGHT BLOCKED 로 보고했다(candidate 생성·상태, 승인 후 상태, 중복 범위, 재승인, 자가승인, 동시성 7항목 미결). 계약은 **`11_설계복구_Barcode중복예외승인.md`** 로 확정한다 — 일반 POST 의 409 계약은 유지하고, 신규 **`POST /api/skus/{id}/barcodes/duplicate-candidates`** 가 `status='PENDING_DUPLICATE'` 후보를 만든 뒤 원문 endpoint 로 승인한다. 중복은 **cross-SKU ACTIVE 공유만** 인정하며(같은 SKU 중복은 422), 승인은 `status→ACTIVE`·`duplicateException=true`·`exceptionReason`·`approvedBy` 4개 필드만 바꾼다. 권한은 신규 **`barcode.request_duplicate`**(S,L,A) / **`barcode.approve_duplicate`**(L,A) 다. UI(T04-4B)는 T1-6B 바코드 탭과 함께 진행하므로 T04-4 전체는 아직 **PARTIAL** 이다.
+>
 > 특히 POST 행의 **"`확인필요`·`확인불가`는 거부 + DataIssue"** 중 **DataIssue 생성 부분은 인터랙티브 CRUD 에 한해 supersede** 되었다 — T04-3 은 **422 `BARCODE_UNVERIFIED`** 로 거부만 하고 DataIssue 를 만들지 않는다. **Excel import·마이그레이션·외부 데이터 수집 경로의 DataIssue 요구는 그대로 유효**하다(`06_데이터_마이그레이션설계.md` §12.5 는 supersede 대상이 아니다). `-`·공란은 **204 No Content**(저장 없음), 지수표기는 422 `BARCODE_SCIENTIFIC_NOTATION`, 숫자 전용 위반은 422 `BARCODE_INVALID_FORMAT` 이며, 활성 중복은 409 `BARCODE_DUPLICATE`, SKU당 활성 대표 중복은 409 `BARCODE_PRIMARY_CONFLICT` 다(자동 교체 없음). 권한은 `sku.*` 재사용이 아니라 신규 **`barcode.read`/`create`/`update`/`deactivate`** 다. `approve-duplicate` 는 T04-4 로 계속 미착수다.
 
 ## 10.6 외부 상품 매핑

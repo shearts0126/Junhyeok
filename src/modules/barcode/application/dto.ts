@@ -16,9 +16,30 @@ import { ValidationError } from '@/shared/errors';
 export const BARCODE_TYPES = ['UNIT', 'INNER_BOX', 'OUTER_BOX', 'CHANNEL', 'LEGACY'] as const;
 export type BarcodeTypeValue = (typeof BARCODE_TYPES)[number];
 
-/** 업무 status 2종. T04-1 은 DB CHECK 를 두지 않으므로 여기가 유일한 게이트다. */
+/**
+ * **일반 PATCH 로 지정할 수 있는** status 2종.
+ *
+ * ⚠️ 업무 status 는 T04-4A 에서 `PENDING_DUPLICATE` 를 포함해 3종이 되었지만,
+ *    일반 PATCH DTO 는 계속 `ACTIVE|INACTIVE` 만 받는다 — 사용자가 임의로
+ *    승인 대기 상태를 만들거나 승인 endpoint 를 우회할 수 없어야 한다.
+ */
 export const BARCODE_STATUSES = ['ACTIVE', 'INACTIVE'] as const;
 export type BarcodeStatusValue = (typeof BARCODE_STATUSES)[number];
+
+/**
+ * 중복 예외 승인 대기 상태 (T04-4A).
+ *
+ * `sku_barcode.status` 는 VARCHAR(20) 이고 열거값 CHECK 가 없으므로 스키마 변경 없이
+ * 저장된다. 이 값은 **승인 endpoint 만** 만들고 소비한다.
+ */
+export const BARCODE_STATUS_PENDING_DUPLICATE = 'PENDING_DUPLICATE';
+
+/** 저장될 수 있는 전체 업무 status. 조회·판정용이며 입력 DTO 가 아니다. */
+export const BARCODE_ALL_STATUSES = [
+  'ACTIVE',
+  'INACTIVE',
+  BARCODE_STATUS_PENDING_DUPLICATE,
+] as const;
 
 /**
  * POST body.
@@ -82,6 +103,46 @@ export function parseUpdateBarcodeInput(body: unknown): UpdateBarcodeInput {
   const result = updateBarcodeSchema.safeParse(body);
   if (!result.success) {
     throw toValidationError(result.error.issues, '바코드 수정 요청이 올바르지 않습니다.');
+  }
+  return result.data;
+}
+
+/**
+ * 중복 예외 요청 body (T04-4A) — **T04-3 POST 와 동일한 최소 strict 계약**이다.
+ *
+ * 정규화도 T04-2/T04-3 경로를 그대로 재사용한다. 별도 필드를 늘리지 않는다.
+ */
+export const requestDuplicateCandidateSchema = createBarcodeSchema;
+export type RequestDuplicateCandidateInput = CreateBarcodeInput;
+
+export function parseRequestDuplicateCandidateInput(body: unknown): RequestDuplicateCandidateInput {
+  const result = requestDuplicateCandidateSchema.safeParse(body);
+  if (!result.success) {
+    throw toValidationError(result.error.issues, '중복 예외 요청이 올바르지 않습니다.');
+  }
+  return result.data;
+}
+
+/**
+ * 중복 예외 승인 body (T04-4A) — `{reason}` **필수**.
+ *
+ * ⚠️ trim 후 비어 있으면 400 이다. 저장·기록되는 값은 **trim 된 문자열**이다.
+ * ⛔ 임의 최대 길이를 추가하지 않는다 — `exception_reason`·`audit_log.reason` 모두
+ *    TEXT 이고 원문에 상한 근거가 없다 (docs/11 §13).
+ */
+export const approveDuplicateSchema = z.strictObject({
+  reason: z
+    .string({ error: '사유는 문자열이어야 합니다.' })
+    .transform((value) => value.trim())
+    .refine((value) => value.length > 0, { error: '사유는 비워 둘 수 없습니다.' }),
+});
+
+export type ApproveDuplicateInput = z.infer<typeof approveDuplicateSchema>;
+
+export function parseApproveDuplicateInput(body: unknown): ApproveDuplicateInput {
+  const result = approveDuplicateSchema.safeParse(body);
+  if (!result.success) {
+    throw toValidationError(result.error.issues, '중복 예외 승인 요청이 올바르지 않습니다.');
   }
   return result.data;
 }

@@ -6,7 +6,8 @@ import { withTransaction } from '@/shared/db';
 import { translateBarcodeWriteError } from './constraint-errors';
 import type { BarcodeMutateDependencies } from './create-barcode';
 import { BARCODE_ENTITY_TYPE } from './create-barcode';
-import { parseBarcodeId, type UpdateBarcodeInput } from './dto';
+import { BARCODE_STATUS_PENDING_DUPLICATE, parseBarcodeId, type UpdateBarcodeInput } from './dto';
+import { duplicateApprovalPending } from './duplicate-exception';
 import { assertParentSkuExists, findOwnedBarcode } from './parent-sku';
 import { BARCODE_UPDATE_PERMISSION } from './policy';
 import { toSkuBarcodeView, type SkuBarcodeView } from './views';
@@ -62,6 +63,13 @@ export async function updateSkuBarcode(
     // ★ 소유권까지 확인 — 다른 SKU 의 바코드는 존재해도 404 다.
     const current = await findOwnedBarcode(tx, skuId, barcodeId);
     const before = toSkuBarcodeView(current);
+
+    // ★ 승인 대기 후보(T04-4A)는 일반 PATCH 로 만질 수 없다 — 특히
+    //   `PATCH {status:'ACTIVE'}` 로 승인 endpoint 를 우회할 수 없어야 한다.
+    //   취소하려면 DELETE(비활성)를 쓴다 (docs/11 §23·§24).
+    if (current.status === BARCODE_STATUS_PENDING_DUPLICATE) {
+      throw duplicateApprovalPending(barcodeId);
+    }
 
     const nextIsPrimary = patch.isPrimary ?? current.isPrimary;
     const nextStatus = patch.status ?? current.status;

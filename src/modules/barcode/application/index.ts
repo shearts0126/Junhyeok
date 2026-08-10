@@ -13,21 +13,51 @@ export {
   BARCODE_CREATE_PERMISSION,
   BARCODE_UPDATE_PERMISSION,
   BARCODE_DEACTIVATE_PERMISSION,
+  BARCODE_REQUEST_DUPLICATE_PERMISSION,
+  BARCODE_APPROVE_DUPLICATE_PERMISSION,
 } from './policy';
 
 export {
   BARCODE_TYPES,
   BARCODE_STATUSES,
+  BARCODE_ALL_STATUSES,
+  BARCODE_STATUS_PENDING_DUPLICATE,
   createBarcodeSchema,
   updateBarcodeSchema,
+  requestDuplicateCandidateSchema,
+  approveDuplicateSchema,
   parseCreateBarcodeInput,
   parseUpdateBarcodeInput,
+  parseRequestDuplicateCandidateInput,
+  parseApproveDuplicateInput,
   parseBarcodeId,
   type BarcodeTypeValue,
   type BarcodeStatusValue,
   type CreateBarcodeInput,
   type UpdateBarcodeInput,
+  type RequestDuplicateCandidateInput,
+  type ApproveDuplicateInput,
 } from './dto';
+
+export {
+  countActualDuplicates,
+  duplicateApprovalInvalidState,
+  duplicateApprovalPending,
+  duplicateCandidateExists,
+  duplicateExceptionNotApplicable,
+  lockActualDuplicates,
+  lockBarcodeRow,
+} from './duplicate-exception';
+
+export {
+  BARCODE_CANDIDATE_ROUTE_SCOPE,
+  BARCODE_REQUEST_DUPLICATE_ACTION,
+  barcodeCandidateRequestHash,
+  requestDuplicateCandidate,
+  type RequestDuplicateCandidateResult,
+} from './request-duplicate-candidate';
+
+export { BARCODE_APPROVE_DUPLICATE_ACTION, approveDuplicateBarcode } from './approve-duplicate';
 
 export { toSkuBarcodeView, type SkuBarcodeView } from './views';
 

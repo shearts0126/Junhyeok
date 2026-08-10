@@ -515,9 +515,15 @@ function normalizePredicate(raw: string): string {
 }
 
 describe('★ PostgreSQL catalog — 조건부 UNIQUE 2종이 실제로 존재한다', () => {
-  it('partial UNIQUE 인덱스는 정확히 2개이며 이름이 ux_barcode_active / ux_barcode_primary 다', async () => {
+  it('T04-1 의 두 partial UNIQUE 가 이름 그대로 존재한다', async () => {
     const rows = await partialUniqueIndexes();
-    expect(rows.map((r) => r.indexname)).toEqual(['ux_barcode_active', 'ux_barcode_primary']);
+    // ✏️ T04-4A 에서 `ux_barcode_pending_duplicate`(승인 대기 후보)가 추가됐다.
+    //    T04-1 의 두 index 는 이름·규칙 그대로여야 한다.
+    expect(rows.map((r) => r.indexname)).toEqual([
+      'ux_barcode_active',
+      'ux_barcode_pending_duplicate',
+      'ux_barcode_primary',
+    ]);
     for (const row of rows) {
       expect(row.isunique, row.indexname).toBe(true);
       expect(row.ispartial, row.indexname).toBe(true);
@@ -544,12 +550,15 @@ describe('★ PostgreSQL catalog — 조건부 UNIQUE 2종이 실제로 존재�
     );
   });
 
-  it('두 규칙이 하나의 composite UNIQUE 로 합쳐져 있지 않다', async () => {
+  it('T04-1 의 두 규칙이 하나의 composite UNIQUE 로 합쳐져 있지 않다', async () => {
     const rows = await partialUniqueIndexes();
-    for (const row of rows) {
-      // 각 인덱스는 단일 컬럼이다 — (barcode, sku_id) 같은 복합 UNIQUE 가 아니다.
-      expect(row.columns.split(','), row.indexname).toHaveLength(1);
-    }
+    const byName = new Map(rows.map((row) => [row.indexname, row]));
+    // T04-1 의 두 index 는 각각 단일 컬럼이다 — (barcode, sku_id) 복합 UNIQUE 가 아니다.
+    expect(byName.get('ux_barcode_active')?.columns).toBe('barcode');
+    expect(byName.get('ux_barcode_primary')?.columns).toBe('sku_id');
+    // ✏️ T04-4A 의 `ux_barcode_pending_duplicate` 는 **다른 규칙**이라 2컬럼이며,
+    //    위 두 규칙과 합쳐진 것이 아니다 (predicate 가 PENDING_DUPLICATE 로 서로 배타적).
+    expect(byName.get('ux_barcode_pending_duplicate')?.columns).toBe('sku_id,barcode');
   });
 
   it('일반(비조건부) 조회 인덱스 (sku_id) · (barcode) 도 함께 존재한다', async () => {
