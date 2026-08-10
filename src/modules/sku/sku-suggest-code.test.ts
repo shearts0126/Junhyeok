@@ -362,9 +362,10 @@ describe('★ 1차 가드 — 라우트 정책 우선순위', () => {
     const { fileURLToPath } = await import('node:url');
     const skusDir = fileURLToPath(new URL('../../app/api/skus', import.meta.url));
     expect(readdirSync(skusDir).sort()).toEqual(['[id]', 'route.ts', 'suggest-code']);
-    // 상세 하위에는 워크플로 4종만 — suggest-code 없음
+    // 상세 하위에는 워크플로 4종 + 바코드(T04-3) 만 — suggest-code 없음
     expect(readdirSync(`${skusDir}/[id]`).sort()).toEqual([
       'approve',
+      'barcodes',
       'deactivate',
       'reject',
       'route.ts',

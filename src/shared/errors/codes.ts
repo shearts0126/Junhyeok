@@ -42,6 +42,16 @@ export const ERROR_CODES = {
   // ── SKU 코드 추천 (T03-7) ────────────────────────────────
   SKU_CODE_SEQUENCE_EXHAUSTED: 'SKU_CODE_SEQUENCE_EXHAUSTED',
 
+  // ── 바코드 CRUD (T04-3, docs/10_설계복구_BarcodeCRUD.md) ──
+  // ⚠️ `BARCODE_READ_AS_NUMBER` 는 여기 없다 — JSON API 는 Zod 가 문자열을
+  //    강제하므로 그 분류는 공개 오류코드가 아니라 import/parser 전용
+  //    도메인 결과값이다 (T04-2 `BarcodeErrorCode`).
+  BARCODE_SCIENTIFIC_NOTATION: 'BARCODE_SCIENTIFIC_NOTATION',
+  BARCODE_UNVERIFIED: 'BARCODE_UNVERIFIED',
+  BARCODE_INVALID_FORMAT: 'BARCODE_INVALID_FORMAT',
+  BARCODE_DUPLICATE: 'BARCODE_DUPLICATE',
+  BARCODE_PRIMARY_CONFLICT: 'BARCODE_PRIMARY_CONFLICT',
+
   // ── 재고 (R1a-2, 설계 05 v0.2 §10.18) ────────────────────
   INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
   REVERSAL_OF_REVERSAL_NOT_ALLOWED: 'REVERSAL_OF_REVERSAL_NOT_ALLOWED',
@@ -85,6 +95,14 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.SKU_ACTIVE_UPDATE_RESTRICTED]: 422,
   [ERROR_CODES.SKU_APPROVAL_VALIDATION_FAILED]: 422,
   [ERROR_CODES.SKU_CODE_SEQUENCE_EXHAUSTED]: 409,
+
+  // 정규화 분류 실패는 요청 형식이 아니라 **업무규칙** 위반이다 → 422.
+  [ERROR_CODES.BARCODE_SCIENTIFIC_NOTATION]: 422,
+  [ERROR_CODES.BARCODE_UNVERIFIED]: 422,
+  [ERROR_CODES.BARCODE_INVALID_FORMAT]: 422,
+  // 조건부 UNIQUE 2종(T04-1) 위반은 상태 충돌 → 409.
+  [ERROR_CODES.BARCODE_DUPLICATE]: 409,
+  [ERROR_CODES.BARCODE_PRIMARY_CONFLICT]: 409,
 
   [ERROR_CODES.ENVIRONMENT_ERROR]: 500,
   [ERROR_CODES.INTERNAL_ERROR]: 500,
@@ -134,6 +152,12 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.SKU_APPROVAL_VALIDATION_FAILED]: '승인 전 검증을 통과하지 못했습니다.',
   [ERROR_CODES.SKU_CODE_SEQUENCE_EXHAUSTED]:
     '해당 브랜드/대분류/소분류 조합의 SKU 일련번호가 모두 사용되었습니다. 코드 정책 검토가 필요합니다.',
+  [ERROR_CODES.BARCODE_SCIENTIFIC_NOTATION]:
+    '바코드가 지수표기로 손상되었습니다. 원본 숫자를 문자열로 다시 입력하세요.',
+  [ERROR_CODES.BARCODE_UNVERIFIED]: '확인이 필요한 표시값은 바코드로 저장할 수 없습니다.',
+  [ERROR_CODES.BARCODE_INVALID_FORMAT]: '바코드는 숫자로만 이루어져야 합니다.',
+  [ERROR_CODES.BARCODE_DUPLICATE]: '이미 활성 상태로 사용 중인 바코드입니다.',
+  [ERROR_CODES.BARCODE_PRIMARY_CONFLICT]: '이 SKU 에는 이미 활성 대표 바코드가 있습니다.',
   [ERROR_CODES.ENVIRONMENT_ERROR]: '서버 설정 오류가 발생했습니다.',
   [ERROR_CODES.INTERNAL_ERROR]: '요청을 처리하지 못했습니다.',
 };
