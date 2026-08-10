@@ -152,36 +152,51 @@ export async function requestDuplicateCandidate(
   }
   const barcode = resolved.barcode;
 
-  const { getPrismaClient } = await import('@/shared/db');
-  const db = getPrismaClient();
+  /**
+   * ★ business 판정 — **멱등 claim 이후에만** 실행된다.
+   *
+   *   부모 SKU 404 → 실제 중복(cross-SKU ACTIVE) → 기존 후보 → INSERT
+   *
+   * 여기서 던지는 404/422/409 는 claim 과 함께 롤백되므로 실패한 요청이
+   * key 를 점유하지 않는다.
+   *
+   * 반환 status 가 계약을 그대로 담는다: 신규 생성 **201**, 동일 내용의 기존
+   * 후보 재사용 **200**(row·AuditLog 없음).
+   */
+  const performBusiness = async (
+    tx: TransactionClient,
+  ): Promise<{ readonly status: number; readonly view: SkuBarcodeView }> => {
+    await assertParentSkuExists(tx, skuId);
 
-  try {
-    return await run(async (tx) => {
-      await assertParentSkuExists(tx, skuId);
+    // ★ 실제 중복(cross-SKU ACTIVE)이 없으면 후보를 만들지 않는다.
+    if ((await countActualDuplicates(tx, { skuId, barcode })) === 0) {
+      throw duplicateExceptionNotApplicable(barcode);
+    }
 
-      // ★ 실제 중복(cross-SKU ACTIVE)이 없으면 후보를 만들지 않는다.
-      if ((await countActualDuplicates(tx, { skuId, barcode })) === 0) {
-        throw duplicateExceptionNotApplicable(barcode);
-      }
+    // 같은 SKU·바코드의 승인 대기 후보가 이미 있으면 새로 만들지 않는다.
+    const existing = await tx.skuBarcode.findFirst({
+      where: { skuId, barcode, status: BARCODE_STATUS_PENDING_DUPLICATE },
+    });
+    if (existing !== null) {
+      if (!sameCandidateFields(existing, input)) throw duplicateCandidateExists(existing.id);
+      return { status: 200, view: toSkuBarcodeView(existing) };
+    }
 
-      // 같은 SKU·바코드의 승인 대기 후보가 이미 있으면 새로 만들지 않는다.
-      const existing = await tx.skuBarcode.findFirst({
-        where: { skuId, barcode, status: BARCODE_STATUS_PENDING_DUPLICATE },
-      });
-      if (existing !== null) {
-        if (!sameCandidateFields(existing, input)) throw duplicateCandidateExists(existing.id);
-        // 내용까지 동일 — row·AuditLog·멱등기록 없이 기존 후보를 그대로 낸다.
-        return { barcode: toSkuBarcodeView(existing), replayed: false, existing: true };
-      }
+    return { status: 201, view: await performRequest(tx, actor, skuId, barcode, input, logger) };
+  };
 
+  const attempt = async (): Promise<RequestDuplicateCandidateResult> =>
+    run(async (tx) => {
       if (idempotencyKey === undefined) {
-        return {
-          barcode: await performRequest(tx, actor, skuId, barcode, input, logger),
-          replayed: false,
-          existing: false,
-        };
+        const result = await performBusiness(tx);
+        return { barcode: result.view, replayed: false, existing: result.status === 200 };
       }
 
+      // ★★ 전역 멱등 계약이 business 판정보다 **먼저**다 (docs/11 §10).
+      //    동일 scope+key 의 기존 기록이 있으면 hash 만 보고 즉시 결론난다:
+      //      같은 hash → 저장된 snapshot replay (business state 재평가 없음)
+      //      다른 hash → 409 IDEMPOTENCY_KEY_REUSED
+      //    새로 claim 한 경우에만 아래 execute 가 business 판정을 수행한다.
       const outcome = await executeWithIdempotency(
         tx,
         {
@@ -191,29 +206,33 @@ export async function requestDuplicateCandidate(
           idempotencyKey,
         },
         barcodeCandidateRequestHash(skuId, input),
-        async () => ({
-          responseStatus: 201,
-          responseBody: await performRequest(tx, actor, skuId, barcode, input, logger),
-        }),
+        async () => {
+          const result = await performBusiness(tx);
+          return { responseStatus: result.status, responseBody: result.view };
+        },
         parseCandidateSnapshot,
       );
-      return { barcode: outcome.responseBody, replayed: outcome.replayed, existing: false };
+      return {
+        barcode: outcome.responseBody,
+        replayed: outcome.replayed,
+        // 기존 후보 재사용으로 성공한 요청도 snapshot 이 200 으로 저장된다.
+        existing: outcome.responseStatus === 200,
+      };
     });
+
+  try {
+    return await attempt();
   } catch (error) {
     // ★ 동시 요청 경합 — `ux_barcode_pending_duplicate` 가 최종 방어선이다.
-    //   트랜잭션은 이미 abort 되었으므로 밖에서 다시 읽어 §9 규칙을 적용한다.
+    //   트랜잭션이 abort 되었으므로 **처음부터 한 번 더** 실행한다. 두 번째
+    //   시도는 기존 후보를 보고 200 으로 끝나며, 그 결과가 이 key 의 snapshot 이
+    //   되어 §4(성공한 key 는 기억된다) 계약이 유지된다.
     if (
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002' &&
       resolveBarcodeUniqueViolation(error) === 'ux_barcode_pending_duplicate'
     ) {
-      const existing = await db.skuBarcode.findFirst({
-        where: { skuId, barcode, status: BARCODE_STATUS_PENDING_DUPLICATE },
-      });
-      if (existing !== null && sameCandidateFields(existing, input)) {
-        return { barcode: toSkuBarcodeView(existing), replayed: false, existing: true };
-      }
-      throw duplicateCandidateExists(existing?.id ?? '');
+      return attempt();
     }
     throw error;
   }

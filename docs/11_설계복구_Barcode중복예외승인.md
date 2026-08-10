@@ -167,7 +167,9 @@ PostgreSQL catalog 로 이름·컬럼·predicate·유일성을 직접 검증한�
 | 업무 필드가 다름 | **409 `BARCODE_DUPLICATE_CANDIDATE_EXISTS`** |
 
 ⛔ 기존 후보를 자동 수정하지 않는다. 동시 요청은 `ux_barcode_pending_duplicate` 가
-최종 방어선이며, 제약 위반 후 재조회해 위 규칙을 그대로 적용한다.
+최종 방어선이며, 제약 위반 후 처음부터 한 번 더 실행해 위 규칙을 그대로 적용한다.
+
+⚠️ 이 business-level 재사용 판정은 **전역 멱등 판정보다 나중**이다 (§10 참조).
 
 ---
 
@@ -180,7 +182,42 @@ PostgreSQL catalog 로 이름·컬럼·predicate·유일성을 직접 검증한�
 - first **201** / same key+hash **200 replay** / same key+different hash **409 `IDEMPOTENCY_KEY_REUSED`**
 
 candidate INSERT + AuditLog + 멱등 snapshot 은 **같은 트랜잭션**이다.
-검증 실패(400/422)와 "기존 후보 반환"은 mutation 이 없으므로 멱등기록도 남기지 않는다.
+
+### ★ 전역 멱등 계약이 business 판정보다 우선한다
+
+```
+same scope + same key + same requestHash      → 저장된 결과 replay
+same scope + same key + different requestHash → 409 IDEMPOTENCY_KEY_REUSED
+```
+
+는 **business-level candidate 재사용(§9)보다 먼저** 성립한다. 처리 순서는:
+
+```
+권한 → strict DTO → 정규화·물리 입력 검증 → requestHash 계산
+→ 멱등 claim / 기존 기록 판정
+     기존 + 같은 hash → 저장된 snapshot 즉시 replay
+     기존 + 다른 hash → 409 즉시 반환
+     새로 claim      → 아래 business 판정 진행
+→ 부모 SKU → 실제 중복 → 기존 후보 → INSERT / 기존 후보 200 → snapshot
+```
+
+두 가지가 직접 따라온다.
+
+1. **정규화 결과가 같아도 원문이 다르면 409다.** 같은 key 로 `"001-234"` 다음
+   `"001234"` 를 보내면 business 후보는 동일하지만 hash 가 다르므로
+   **409 `IDEMPOTENCY_KEY_REUSED`** 이며, 200 기존 후보로 빠지지 않는다.
+2. **replay 는 현재 business state 를 재평가하지 않는다.** 최초 요청 후 상대
+   ACTIVE 바코드가 사라져 지금이라면 422 일 상황이어도, 같은 key + 같은 hash 는
+   저장된 snapshot 을 그대로 200 으로 낸다 — 새 row·AuditLog 를 만들지 않는다.
+
+### 기존 후보 재사용도 "성공한 요청"이다
+
+기존 후보를 그대로 돌려주는 200 응답은 `SkuBarcode` INSERT 0 · AuditLog 0 이지만,
+**`IdempotencyRecord` 는 그 key 를 기억한다**(status 200 snapshot 저장). 따라서
+그 key 로의 후속 요청은 같은 hash 면 replay, 다른 hash 면 409 다.
+`Idempotency-Key` 헤더가 없으면 기존대로 멱등기록을 만들지 않는다.
+
+검증 실패(400/422/409)는 claim 과 함께 롤백되므로 **실패한 요청이 key 를 점유하지 않는다.**
 
 ---
 

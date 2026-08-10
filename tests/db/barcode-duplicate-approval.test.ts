@@ -542,6 +542,189 @@ describe('★ §31 중복 예외 요청 API', () => {
     ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', httpStatus: 409 });
   });
 
+  it('★ 보완-1. 같은 key + 정규화 결과만 같은 다른 원문 → 409 IDEMPOTENCY_KEY_REUSED', async () => {
+    // ★ 전역 멱등 계약이 business-level candidate 재사용보다 **우선**한다.
+    //   raw DTO 가 다르면 requestHash 가 다르므로 200 existing 으로 빠지면 안 된다.
+    const barcode = `001${NUM}`;
+    const otherSkuId = await newSku('idem-priority-other');
+    const targetSkuId = await newSku('idem-priority-target');
+    await activeBarcodeOn(otherSkuId, barcode);
+    const key = `dup-priority-${RUN}`;
+
+    // 첫 요청은 하이픈이 들어간 원문 (`001-234` 형태) — 정규화하면 barcode 가 된다.
+    const hyphenated = `${barcode.slice(0, 3)}-${barcode.slice(3)}`;
+    const first = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(hyphenated),
+      {},
+      key,
+    );
+    expect(first.barcode.barcode).toBe(barcode);
+    expect(first.existing).toBe(false);
+
+    // 정규화 결과는 동일하지만 원문이 다르다 → hash 불일치 → 409
+    await expect(
+      requestDuplicateCandidate(STAFF, targetSkuId, candidateInput(barcode), {}, key),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', httpStatus: 409 });
+
+    // 후보·감사로그는 그대로다.
+    expect(
+      await getPrismaClient().skuBarcode.count({
+        where: { skuId: targetSkuId, status: BARCODE_STATUS_PENDING_DUPLICATE },
+      }),
+    ).toBe(1);
+    expect(await auditRows(first.barcode.id)).toHaveLength(1);
+  });
+
+  it('★ 보완-2. replay 는 현재 business state 를 재평가하지 않는다', async () => {
+    const barcode = BC('70');
+    const otherSkuId = await newSku('idem-replay-other');
+    const targetSkuId = await newSku('idem-replay-target');
+    const other = await activeBarcodeOn(otherSkuId, barcode);
+    const key = `dup-replay-${RUN}`;
+
+    const first = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(barcode),
+      {},
+      key,
+    );
+    expect(first.replayed).toBe(false);
+
+    // 상대 ACTIVE 바코드가 사라진다 — 지금 새로 요청하면 422 일 상황이다.
+    await deactivateSkuBarcode(LEADER, otherSkuId, other.id);
+    await expect(
+      requestDuplicateCandidate(STAFF, await newSku('idem-replay-fresh'), candidateInput(barcode)),
+    ).rejects.toMatchObject({ code: 'BARCODE_DUPLICATE_EXCEPTION_NOT_APPLICABLE' });
+
+    // ★ 그래도 같은 key + 같은 원문은 저장된 snapshot 을 그대로 replay 한다.
+    const replay = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(barcode),
+      {},
+      key,
+    );
+    expect(replay.replayed).toBe(true);
+    expect(replay.barcode.id).toBe(first.barcode.id);
+
+    // 새 row·AuditLog 없음.
+    expect(
+      await getPrismaClient().skuBarcode.count({
+        where: { skuId: targetSkuId, status: BARCODE_STATUS_PENDING_DUPLICATE },
+      }),
+    ).toBe(1);
+    expect(await auditRows(first.barcode.id)).toHaveLength(1);
+  });
+
+  it('★ 보완-3·4·5. 기존 후보 + 새 key K2 → 200 이며 K2 도 기억된다', async () => {
+    const client = getPrismaClient();
+    const { targetSkuId, barcode, candidate } = await preparedCandidate('idem-k2');
+    const k2 = `dup-k2-${RUN}`;
+
+    // 3. 기존 후보 + 처음 쓰는 key → 200 existing, SkuBarcode·AuditLog 증가 없음
+    const viaK2 = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(barcode),
+      {},
+      k2,
+    );
+    expect(viaK2.barcode.id).toBe(candidate.id);
+    expect(viaK2.existing).toBe(true);
+    expect(viaK2.replayed).toBe(false);
+
+    expect(
+      await client.skuBarcode.count({
+        where: { skuId: targetSkuId, status: BARCODE_STATUS_PENDING_DUPLICATE },
+      }),
+    ).toBe(1);
+    expect(await auditRows(candidate.id)).toHaveLength(1);
+
+    // ★ 성공한 요청이므로 K2 의 IdempotencyRecord·snapshot 이 저장되어야 한다.
+    const record = await client.idempotencyRecord.findFirstOrThrow({
+      where: { actorId: STAFF_ID, idempotencyKey: k2 },
+    });
+    expect(record.routeScope).toBe('/api/skus/{id}/barcodes/duplicate-candidates');
+    expect(record.responseStatus).toBe(200);
+    expect(record.responseBody).not.toBeNull();
+
+    // 4. K2 + same hash → replay
+    const replay = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(barcode),
+      {},
+      k2,
+    );
+    expect(replay.replayed).toBe(true);
+    expect(replay.barcode.id).toBe(candidate.id);
+
+    // 5. K2 + different hash → 409
+    await expect(
+      requestDuplicateCandidate(
+        STAFF,
+        targetSkuId,
+        candidateInput(barcode, { barcodeType: 'INNER_BOX' }),
+        {},
+        k2,
+      ),
+    ).rejects.toMatchObject({ code: 'IDEMPOTENCY_KEY_REUSED', httpStatus: 409 });
+
+    // 불변식: 후보 1건, REQUEST_DUPLICATE 감사로그 1건.
+    expect(
+      await client.skuBarcode.count({
+        where: { skuId: targetSkuId, status: BARCODE_STATUS_PENDING_DUPLICATE },
+      }),
+    ).toBe(1);
+    expect(await auditRows(candidate.id)).toHaveLength(1);
+  });
+
+  it('★ 보완-6. Idempotency-Key 가 없으면 기존 후보 200 이고 멱등기록도 없다', async () => {
+    const { targetSkuId, barcode, candidate } = await preparedCandidate('idem-nokey');
+    const before = await getPrismaClient().idempotencyRecord.count({
+      where: { actorId: STAFF_ID },
+    });
+
+    const again = await requestDuplicateCandidate(STAFF, targetSkuId, candidateInput(barcode));
+    expect(again.barcode.id).toBe(candidate.id);
+    expect(again.existing).toBe(true);
+
+    expect(await getPrismaClient().idempotencyRecord.count({ where: { actorId: STAFF_ID } })).toBe(
+      before,
+    );
+    expect(await auditRows(candidate.id)).toHaveLength(1);
+  });
+
+  it('★ 보완-7. 신규 key claim 후 business 실패는 key 를 점유하지 않는다', async () => {
+    const client = getPrismaClient();
+    const targetSkuId = await newSku('idem-fail-key');
+    const key = `dup-failkey-${RUN}`;
+
+    // 실제 중복이 없어 422 — claim 과 함께 롤백된다.
+    await expect(
+      requestDuplicateCandidate(STAFF, targetSkuId, candidateInput(BC('71')), {}, key),
+    ).rejects.toMatchObject({ code: 'BARCODE_DUPLICATE_EXCEPTION_NOT_APPLICABLE' });
+    expect(
+      await client.idempotencyRecord.count({ where: { actorId: STAFF_ID, idempotencyKey: key } }),
+    ).toBe(0);
+
+    // 조건을 갖춘 뒤 같은 key 로 재시도하면 정상 생성된다.
+    const otherSkuId = await newSku('idem-fail-key-other');
+    await activeBarcodeOn(otherSkuId, BC('71'));
+    const retry = await requestDuplicateCandidate(
+      STAFF,
+      targetSkuId,
+      candidateInput(BC('71')),
+      {},
+      key,
+    );
+    expect(retry.barcode.status).toBe('PENDING_DUPLICATE');
+    expect(retry.existing).toBe(false);
+  });
+
   it('23. ★ 감사로그 실패 시 후보·멱등기록이 함께 롤백된다', async () => {
     const barcode = BC('21');
     const otherSkuId = await newSku('req-rollback-other');
