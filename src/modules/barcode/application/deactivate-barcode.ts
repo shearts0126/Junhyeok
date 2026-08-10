@@ -34,6 +34,13 @@ import { toSkuBarcodeView, type SkuBarcodeView } from './views';
  *
  * ⛔ 다른 바코드를 자동으로 대표 승격하지 않는다. 활성 대표가 0개인 SKU 상태를
  *    허용한다 — DB 는 "최대 1개"를 강제할 뿐 "정확히 1개"를 강제하지 않는다.
+ *
+ * ## 중복 예외 후보 취소 (T04-4A, docs/11 §24)
+ *
+ * `status='PENDING_DUPLICATE'` 인 승인 대기 후보도 이 경로로 `INACTIVE` 가 된다 —
+ * 그것이 **후보 취소**다. 별도 취소 endpoint 를 만들지 않으며 감사 action 도
+ * 기존 `DEACTIVATE` 를 그대로 쓴다. 취소 후 승인을 시도하면 422
+ * `BARCODE_DUPLICATE_APPROVAL_INVALID_STATE` 다.
  */
 
 export async function deactivateSkuBarcode(

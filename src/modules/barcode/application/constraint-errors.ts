@@ -54,18 +54,30 @@ function constraintFieldsFromTarget(meta: Record<string, unknown>): readonly str
 }
 
 /** ③ 최후 fallback — 원문 메시지의 인덱스 이름. 1차 계약으로 삼지 않는다. */
-function indexNameFromMessage(meta: Record<string, unknown>): string | undefined {
+function indexNameFromMessage(
+  meta: Record<string, unknown>,
+): 'ux_barcode_active' | 'ux_barcode_primary' | 'ux_barcode_pending_duplicate' | undefined {
   const cause = asRecord(asRecord(meta['driverAdapterError'])?.['cause']);
   const message = cause?.['originalMessage'];
   if (typeof message !== 'string') return undefined;
+  // 더 긴 이름을 먼저 본다 — `ux_barcode_pending_duplicate` 는 다른 이름을 포함하지
+  // 않지만, 순서를 명시해 두어 향후 이름 추가 시에도 오판이 없게 한다.
+  if (message.includes('ux_barcode_pending_duplicate')) return 'ux_barcode_pending_duplicate';
   if (message.includes('ux_barcode_active')) return 'ux_barcode_active';
   if (message.includes('ux_barcode_primary')) return 'ux_barcode_primary';
   return undefined;
 }
 
-export type BarcodeUniqueViolation = 'ux_barcode_active' | 'ux_barcode_primary';
+export type BarcodeUniqueViolation =
+  'ux_barcode_active' | 'ux_barcode_primary' | 'ux_barcode_pending_duplicate';
 
-/** P2002 가 어느 조건부 UNIQUE 인지 판정한다. 알 수 없으면 `undefined`. */
+/**
+ * P2002 가 어느 조건부 UNIQUE 인지 판정한다. 알 수 없으면 `undefined`.
+ *
+ * ⚠️ 판정 순서가 중요하다. `ux_barcode_pending_duplicate`(T04-4A)는 **2컬럼**
+ *    `(sku_id, barcode)` 이므로 단일 컬럼 index 보다 **먼저** 확인해야 한다.
+ *    그러지 않으면 `barcode` 포함만 보고 `ux_barcode_active` 로 오판한다.
+ */
 export function resolveBarcodeUniqueViolation(
   error: Prisma.PrismaClientKnownRequestError,
 ): BarcodeUniqueViolation | undefined {
@@ -73,11 +85,15 @@ export function resolveBarcodeUniqueViolation(
 
   const fields = constraintFieldsFromAdapter(meta) ?? constraintFieldsFromTarget(meta);
   if (fields !== undefined) {
-    if (fields.includes(BARCODE_COLUMN)) return 'ux_barcode_active';
-    if (SKU_ID_COLUMNS.some((column) => fields.includes(column))) return 'ux_barcode_primary';
+    const hasBarcode = fields.includes(BARCODE_COLUMN);
+    const hasSkuId = SKU_ID_COLUMNS.some((column) => fields.includes(column));
+
+    if (hasBarcode && hasSkuId) return 'ux_barcode_pending_duplicate';
+    if (hasBarcode) return 'ux_barcode_active';
+    if (hasSkuId) return 'ux_barcode_primary';
   }
 
-  return indexNameFromMessage(meta) as BarcodeUniqueViolation | undefined;
+  return indexNameFromMessage(meta);
 }
 
 export function duplicateActiveBarcode(barcode: string): ConflictError {

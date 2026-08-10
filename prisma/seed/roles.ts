@@ -45,6 +45,8 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'barcode.create', description: 'SKU 바코드 추가' },
   { permissionKey: 'barcode.update', description: 'SKU 바코드 수정' },
   { permissionKey: 'barcode.deactivate', description: 'SKU 바코드 비활성 (물리삭제 아님)' },
+  { permissionKey: 'barcode.request_duplicate', description: 'SKU 바코드 중복 예외 요청' },
+  { permissionKey: 'barcode.approve_duplicate', description: 'SKU 바코드 중복 예외 승인' },
 ];
 
 /**
@@ -109,6 +111,13 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'barcode.deactivate' },
   { roleCode: 'SCM_LEADER', permissionKey: 'barcode.deactivate' },
   { roleCode: 'SCM_STAFF', permissionKey: 'barcode.deactivate' },
+  // 중복 예외(T04-4A, docs/11 §3) — 요청은 S·L·A, 승인은 **L·A** 다.
+  // 역할집합이 다르므로 barcode.create·barcode.update 를 재사용하지 않는다.
+  { roleCode: 'ADMIN', permissionKey: 'barcode.request_duplicate' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.request_duplicate' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'barcode.request_duplicate' },
+  { roleCode: 'ADMIN', permissionKey: 'barcode.approve_duplicate' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.approve_duplicate' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

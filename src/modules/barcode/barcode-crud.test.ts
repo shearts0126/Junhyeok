@@ -120,8 +120,13 @@ describe('★ 바코드 권한 — 독립 capability (sku.* 재사용 아님)', 
     }
   });
 
-  it('★ barcode.approve_duplicate 는 아직 존재하지 않는다 (T04-4)', () => {
-    expect(keys).not.toContain('barcode.approve_duplicate');
+  it('✏️ T04-4A 에서 중복 예외 permission 2종이 추가됐다 — CRUD 4종과 별개다', () => {
+    // T04-3 시점에는 두 키가 없었다. T04-4A(docs/11 §3)에서 신설되었고,
+    // 역할집합이 달라 barcode.create·barcode.update 를 재사용하지 않는다.
+    expect(keys).toContain('barcode.request_duplicate');
+    expect(keys).toContain('barcode.approve_duplicate');
+    expect(rolesOf('barcode.request_duplicate')).toEqual(['ADMIN', 'SCM_LEADER', 'SCM_STAFF']);
+    expect(rolesOf('barcode.approve_duplicate')).toEqual(['ADMIN', 'SCM_LEADER']);
   });
 });
 
@@ -457,16 +462,18 @@ describe('★ 멱등 계약', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('★ T04-3 범위 고정', () => {
-  it('approve-duplicate 라우트가 없다 (T04-4)', async () => {
+  it('바코드 라우트 디렉터리 고정 — ✏️ T04-4A 의 2개 경로까지', async () => {
     const { readdir } = await import('node:fs/promises');
     const entries = await readdir(
       new URL('../../app/api/skus/[id]/barcodes', import.meta.url).pathname,
     );
-    expect(entries.sort()).toEqual(['[bid]', 'route.ts']);
+    // ✏️ T04-4A 에서 `duplicate-candidates`(중복 예외 요청)가 추가됐다.
+    expect(entries.sort()).toEqual(['[bid]', 'duplicate-candidates', 'route.ts']);
 
     const item = await readdir(
       new URL('../../app/api/skus/[id]/barcodes/[bid]', import.meta.url).pathname,
     );
-    expect(item).toEqual(['route.ts']);
+    // ✏️ T04-4A 에서 원문 endpoint `approve-duplicate` 가 추가됐다.
+    expect(item.sort()).toEqual(['approve-duplicate', 'route.ts']);
   });
 });

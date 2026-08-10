@@ -174,10 +174,10 @@ describe('★ 권한 — 2겹 가드, ADMIN bypass 없음', () => {
     for (const key of ['barcode.create', 'barcode.update', 'barcode.deactivate']) {
       expect(rolesOf(key), key).toEqual(['ADMIN', 'SCM_LEADER', 'SCM_STAFF']);
     }
-    // T04-4 는 아직 없다.
-    expect(rows.some((row) => row.permission.permissionKey.includes('approve_duplicate'))).toBe(
-      false,
-    );
+    // ✏️ T04-4A 에서 중복 예외 permission 2종이 추가됐다 — CRUD 4종의 배정은 위와 같이
+    //    그대로이고, 요청은 S·L·A / 승인은 **L·A** 로 역할집합이 다르다 (docs/11 §3).
+    expect(rolesOf('barcode.request_duplicate')).toEqual(['ADMIN', 'SCM_LEADER', 'SCM_STAFF']);
+    expect(rolesOf('barcode.approve_duplicate')).toEqual(['ADMIN', 'SCM_LEADER']);
   });
 
   it('2·4·5. 쓰기 권한 보유 actor 는 POST·PATCH·DELETE 에 성공한다', async () => {

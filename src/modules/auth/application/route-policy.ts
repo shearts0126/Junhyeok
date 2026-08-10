@@ -89,6 +89,23 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'sku.suggest_code',
   },
 
+  // 바코드 중복 예외 (T04-4A, docs/11_설계복구_Barcode중복예외승인.md §3) —
+  // 요청과 승인은 서로 다른 capability 이며 역할집합도 다르다.
+  // ⚠️ 아래 일반 바코드 정책보다 **앞에** 둔다. 뒤에 두면 두 경로가 POST →
+  //    `barcode.create` 로 잡혀 승인 통제가 무너진다.
+  {
+    prefix: '/api/skus',
+    suffix: '/barcodes/duplicate-candidates',
+    methods: ['POST'],
+    permission: 'barcode.request_duplicate',
+  },
+  {
+    prefix: '/api/skus',
+    suffix: '/approve-duplicate',
+    methods: ['POST'],
+    permission: 'barcode.approve_duplicate',
+  },
+
   // 바코드 CRUD (T04-3, docs/10_설계복구_BarcodeCRUD.md §4) — **독립 capability** 다.
   // ⚠️ 반드시 일반 `/api/skus` 정책보다 **앞에** 둔다. 뒤에 두면
   //    `/api/skus/{id}/barcodes` 가 prefix 매칭으로 `sku.read`/`sku.create`/
