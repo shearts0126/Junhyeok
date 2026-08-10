@@ -147,6 +147,24 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
   { prefix: '/api/skus', methods: ['POST'], permission: 'sku.create' },
   { prefix: '/api/skus', methods: ['PATCH', 'PUT', 'DELETE'], permission: 'sku.update' },
 
+  // 외부 상품 매핑 CRUD (T05-2, docs/13_설계복구_외부상품매핑CRUD.md §11).
+  // ⛔ `sku.*` 재사용 없음 — 독립 capability 다.
+  // ⚠️ 향후 `/api/external-mappings/import`·`/unmatched` 가 생기면 **이 세 줄보다
+  //    앞에** 특수 정책을 둬야 한다 (첫 일치 우선). 이번 Task 에서는 만들지 않는다.
+  // ⚠️ DELETE 라우트는 존재하지 않지만(405), 1차 가드는 update 로 묶어
+  //    read 권한만 가진 사용자의 변경성 요청이 핸들러에 닿지 않게 한다.
+  {
+    prefix: '/api/external-mappings',
+    methods: ['GET', 'HEAD'],
+    permission: 'external_mapping.read',
+  },
+  { prefix: '/api/external-mappings', methods: ['POST'], permission: 'external_mapping.create' },
+  {
+    prefix: '/api/external-mappings',
+    methods: ['PATCH', 'PUT', 'DELETE'],
+    permission: 'external_mapping.update',
+  },
+
   // 관리 화면도 1차에서 조회 권한을 요구한다 (2차는 화면이 부르는 API가 검사).
   { prefix: '/admin/codes', methods: ['GET', 'HEAD'], permission: 'common_code.read' },
   // ⚠️ 신규 등록 화면은 조회 권한만으로 열리면 안 된다 — 더 구체적인 경로
