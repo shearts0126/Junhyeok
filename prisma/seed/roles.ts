@@ -47,6 +47,9 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'barcode.deactivate', description: 'SKU 바코드 비활성 (물리삭제 아님)' },
   { permissionKey: 'barcode.request_duplicate', description: 'SKU 바코드 중복 예외 요청' },
   { permissionKey: 'barcode.approve_duplicate', description: 'SKU 바코드 중복 예외 승인' },
+  { permissionKey: 'external_mapping.read', description: '외부 상품 매핑 조회' },
+  { permissionKey: 'external_mapping.create', description: '외부 상품 매핑 생성' },
+  { permissionKey: 'external_mapping.update', description: '외부 상품 매핑 수정' },
 ];
 
 /**
@@ -118,6 +121,20 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'SCM_STAFF', permissionKey: 'barcode.request_duplicate' },
   { roleCode: 'ADMIN', permissionKey: 'barcode.approve_duplicate' },
   { roleCode: 'SCM_LEADER', permissionKey: 'barcode.approve_duplicate' },
+  // 외부 상품 매핑 (T05-2, docs/13 §11).
+  // ★ read 에 **EXECUTIVE 가 없다** — API 표의 "전체"와 화면별 권한표
+  //   (`외부 상품 매핑 … E = —`)가 충돌했고 화면별 권한표를 채택했다.
+  //   sku.read·barcode.read 는 화면표에서도 E=R 이라 5역할이다 (다른 사례다).
+  { roleCode: 'ADMIN', permissionKey: 'external_mapping.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'external_mapping.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'external_mapping.read' },
+  { roleCode: 'FINANCE', permissionKey: 'external_mapping.read' },
+  { roleCode: 'ADMIN', permissionKey: 'external_mapping.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'external_mapping.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'external_mapping.create' },
+  { roleCode: 'ADMIN', permissionKey: 'external_mapping.update' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'external_mapping.update' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'external_mapping.update' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

@@ -124,6 +124,8 @@
 | GET | `/api/external-mappings/unmatched` | 미매칭 목록 | S,L,A | | — |
 | POST | `/api/external-mappings/resolve` | SKU 해석 (내부) | — | ①코드 ②바코드 ③승인된 상품명 ④미매칭 | — |
 
+> ✏️ **2026-08-10 설계복구 (외부 상품 매핑 CRUD)**: PATCH DTO 에 identifier 필드가 없어 `REVIEW_REQUIRED → MATCHED` 경로가 성립하지 않는 등 8개 항목이 미결이라 T05-2 를 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`13_설계복구_외부상품매핑CRUD.md`** 로 확정한다 — GET·POST·PATCH 3개만 구현하고, `mappingStatus` 는 server-derived, `UNMATCHED` 는 interactive 생성 금지, `warehouseId` 는 T08-1 까지 입력 불가, 매핑 해제는 PATCH `effectiveTo`, 권한은 신규 `external_mapping.*`(read 는 경영진 제외)다. `resolve`(T05-3)·`import`·`unmatched` 는 T05-2 범위 밖이다.
+
 ## 10.7 거래처 · 공급조건
 
 | Method | URL | 목적 | 권한 | 주요 검증 | 멱등 |

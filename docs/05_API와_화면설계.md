@@ -83,6 +83,8 @@
 | POST | `/api/external-mappings/import` | 대량 업로드 | `multipart` | `202 {jobId}` | S,L,A | | ✅ |
 | GET | `/api/external-mappings/unmatched` | 미매칭 목록 | `externalSystemId, page` | `UnmatchedRow[]` | S,L,A | 스냅샷·업로드에서 발생한 미매칭 | — |
 
+> ✏️ **2026-08-10 설계복구 (외부 상품 매핑 CRUD)**: 위 PATCH 요청 DTO `{mappingStatus?, isPrimary?, effectiveTo?}` 에는 **identifier 필드가 없어** 같은 행의 검증("`MATCHED` 전환은 외부코드 또는 바코드 필수")과 화면 상태변화(`REVIEW_REQUIRED → MATCHED`, 외부코드·바코드 확보 시에만)를 만족할 경로가 존재하지 않았고, `CreateMappingDto` 는 이름만 있고 필드 정의가 없었다. 또 `UNMATCHED` 의 생산 주체, `warehouseId` 입력 가부, `isPrimary` 충돌 정책, `effectiveTo`(매핑 해제) 규칙, GET 응답 shape, read 권한의 경영진 취급이 모두 미결이라 T05-2 를 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`13_설계복구_외부상품매핑CRUD.md`** 로 확정한다 — `mappingStatus` 는 **server-derived**(입력 시 400)이고 PATCH 가 identifier 3종을 받으며, 식별자가 하나도 없으면 422 다. `UNMATCHED` 는 enum 만 유지하고 interactive API 가 생성·전환하지 않는다(실제 미매칭은 스냅샷·대사 계층). `warehouseId` 는 `Warehouse` FK 가 없는 T08-1 전까지 **입력 불가·항상 null**. 대표는 자동 교체 없이 409 이며, 매핑 해제는 DELETE 가 아니라 PATCH `effectiveTo`(`null→date`, 오늘 이하, 대표는 동시 해제 필수)다. 권한은 신규 **`external_mapping.read`(S,L,A,F) / `.create` / `.update`(S,L,A)** 이며, 위 GET 행의 "전체"보다 §11.20 화면별 권한표(`외부 상품 매핑 … E = —`)를 채택해 **경영진을 제외**했다. `/import`·`/unmatched` 는 각각 T15(업로드 파이프라인)·T17(스냅샷) 선행 모델이 없어 **T05-2 범위 밖**이다(stub 도 만들지 않는다).
+
 ## 10.6 거래처 · 공급조건
 
 | Method | URL | 목적 | 요청 | 응답 | 권한 | 주요 검증 | 멱등 |
