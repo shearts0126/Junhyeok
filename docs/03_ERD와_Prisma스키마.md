@@ -294,6 +294,8 @@ erDiagram
 
 > **적용기간 중첩 차단**: PostgreSQL `EXCLUDE USING gist (parent_sku_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&) WHERE (status = 'ACTIVE')`. Prisma가 지원하지 않으므로 **raw SQL 마이그레이션**으로 추가한다.
 
+> ✏️ **2026-08-10 설계복구 (외부 상품 매핑 스키마, T05-1)**: 위 `sku_external_mapping` 행의 **조건부 UNIQUE 2종**이 authoritative 다(모델 선언 주석에는 1종만 있다). 두 predicate 는 원문 그대로 구현했고 index 이름은 문서에 없어 **`ux_external_mapping_code` · `ux_external_mapping_primary`** 로 확정했다. 특히 primary 쪽에 `AND effective_to IS NULL` 을 **추가하지 않으며**, code 쪽에 `external_product_code IS NOT NULL` 도 **추가하지 않는다**(`NULL <> ''` 는 NULL 이라 partial index 대상에서 이미 제외된다). 한편 `SkuExternalMapping.warehouseId` 는 `Warehouse`(T08-1) 가, `ExternalSystem.snapshots` 는 `ExternalInventorySnapshot`(T17-1) 이 아직 없어 T05-1 을 PRE-FLIGHT BLOCKED 로 보고했다 — `warehouseId` 는 **scalar 컬럼만** 만들고 FK/relation 은 T08-1 에서, `snapshots` 는 T17-1 에서 양방향으로 추가한다. 감사 컬럼은 §공통 규약의 4종이 아니라 **각 모델의 명시 선언**을 따른다(`SkuExternalMapping` = `createdAt` 만, `ExternalSystem` = 없음). 전문은 **`12_설계복구_외부상품매핑스키마.md`**.
+
 ## 6.3 ERD — Layer 3 (재고 코어) ★
 
 ```mermaid

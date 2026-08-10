@@ -392,6 +392,10 @@ model Sku {
   /// SKU 별 다중 바코드 (T04-1).
   barcodes SkuBarcode[]
 
+  /// 외부시스템 상품 매핑 (T05-1). `SkuExternalMapping.sku` 의 필수 inverse relation 이다 —
+  /// 신규 업무 컬럼이 아니다.
+  externalMappings SkuExternalMapping[]
+
   @@index([status])
   @@index([itemType])
   @@index([brandId, majorCategoryId, minorCategoryId])
@@ -479,6 +483,106 @@ model SkuBarcode {
   @@index([skuId])
   @@index([barcode])
   @@map("sku_barcode")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 외부시스템 · SKU 외부 상품 매핑 (T05-1)
+//
+// 근거: docs/12_설계복구_외부상품매핑스키마.md
+//       (2026-08-10 External Mapping Schema Design Recovery Decision)
+//       원 설계는 docs/03_ERD와_Prisma스키마.md §Layer 1(EXTERNAL_SYSTEM ·
+//       SKU_EXTERNAL_MAPPING) 및 §고유조건·인덱스의 `sku_external_mapping` 행.
+//
+// T05-1 은 **스키마·migration·DB 제약까지만** 다룬다.
+//   - T05-2 매핑 CRUD API (코드 없이 상품명만 → REVIEW_REQUIRED 강제)
+//   - T05-3 SKU 해석 서비스 (코드 → 바코드 → 승인된 상품명 → 미매칭)
+//   - T05-4 매핑 화면 · 미매칭 목록
+// 은 아직 없다. 이 단계에서 만들어지는 것은 **테이블과 제약뿐**이다.
+//
+// ⛔ Application service·API·permission·route policy·AuditLog action 을 만들지 않는다.
+// ⛔ 적용기간 CHECK(`effective_from <= effective_to`)·overlap EXCLUDE·자동 마감·
+//    current flag 를 두지 않는다 — authoritative 문서에 근거가 없다.
+// ⛔ `external_product_code` 에 not-blank/trim CHECK 를 두지 않는다 —
+//    조건부 UNIQUE predicate 가 빈 문자열을 **명시적으로 허용**(제외)하므로 모순이다.
+// ═══════════════════════════════════════════════════════════════
+
+/// 외부시스템 매핑의 판정 상태.
+///
+/// `REVIEW_REQUIRED`(상품명 기반)는 자동 원장 반영 대상이 아니다 (재고 PRD §20.5).
+/// 판정 로직 자체는 T05-2 범위이며, T05-1 은 값 집합만 고정한다.
+/// ⛔ 값을 추가하지 않는다 — 원 설계의 3값이 authoritative 다.
+enum MappingStatus {
+  MATCHED
+  UNMATCHED
+  REVIEW_REQUIRED
+}
+
+/// 외부시스템 정의 (LEGACY_ERP, EBUT_MANAGER, OLPUN, PUMGO, RODIT, OLIVEYOUNG …).
+///
+/// ⚠️ `systemName` 에 길이 제한을 두지 않는다 — 원 선언이 `String`(PostgreSQL TEXT) 이다.
+/// ⚠️ `systemType` 도 String 이다. 주석의 `ERP / WMS / THREE_PL / CHANNEL` 은 **예시**이며
+///    authoritative enum 이 아니다 — `ExternalSystemType` 같은 enum 을 만들지 않는다.
+/// ⛔ 감사 컬럼(`createdAt`·`createdBy`·`updatedAt`·`updatedBy`·`deletedAt`)을 두지 않는다.
+///    일반 ERD 감사 컬럼 규약과 충돌하지만, **모델별 명시 선언이 우선**한다는
+///    T04-1 과 동일한 원칙을 Design Recovery Decision 으로 확정했다.
+/// ⛔ `snapshots ExternalInventorySnapshot[]` 은 T17-1 에서 양쪽 relation 을 함께 추가한다 —
+///    T17-1 의 선행조건이 T05-1 이므로 여기서 stub 을 먼저 만들면 의존이 역전된다.
+model ExternalSystem {
+  id         String  @id @default(uuid()) @db.Uuid
+  systemCode String  @unique @map("system_code") @db.VarChar(50)
+  systemName String  @map("system_name")
+  systemType String  @map("system_type") @db.VarChar(30)
+  active     Boolean @default(true)
+
+  mappings SkuExternalMapping[]
+
+  @@map("external_system")
+}
+
+/// 내부 SKU ↔ 외부 상품코드·상품명.
+///
+/// 조건부 UNIQUE 2종은 Prisma 스키마 언어로 표현할 수 없어 migration 의
+/// **raw SQL** 로 추가한다 (서로 다른 규칙이며 하나로 합치지 않는다):
+///   - `ux_external_mapping_code`
+///     : `UNIQUE(external_system_id, external_product_code)`
+///       `WHERE external_product_code <> '' AND effective_to IS NULL`
+///     → **현행(미종료)** 매핑에 한해 시스템별 외부코드 중복 차단
+///   - `ux_external_mapping_primary`
+///     : `UNIQUE(sku_id, external_system_id) WHERE is_primary = true`
+///     → SKU × 외부시스템당 대표 매핑 1개. **`effective_to` 와 무관**하다
+///       (Barcode 의 primary predicate 를 복사하지 않는다).
+model SkuExternalMapping {
+  id               String @id @default(uuid()) @db.Uuid
+  skuId            String @map("sku_id") @db.Uuid
+  externalSystemId String @map("external_system_id") @db.Uuid
+
+  /// T05-1 Design Recovery: scalar 컬럼만 유지한다.
+  /// `Warehouse` 모델이 아직 없어 FK·relation 을 만들 수 없다 (T08-1).
+  /// ⛔ 이 컬럼을 삭제하지 말 것 — 원 설계에 명시된 3PL scope 다.
+  warehouseId String? @map("warehouse_id") @db.Uuid
+
+  /// NULL 과 빈 문자열이 **모두** 허용된다 — 둘 다 조건부 UNIQUE predicate 밖이다.
+  externalProductCode String? @map("external_product_code") @db.VarChar(150)
+  /// 외부 원문명이다. 내부 표준 상품명(`sku.sku_name`)을 절대 덮어쓰지 않는다 (PRD §38).
+  externalProductName String? @map("external_product_name") @db.VarChar(500)
+  externalBarcode     String? @map("external_barcode") @db.VarChar(100)
+
+  mappingStatus MappingStatus @default(REVIEW_REQUIRED) @map("mapping_status")
+  isPrimary     Boolean       @default(false) @map("is_primary")
+
+  effectiveFrom DateTime? @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+  note          String?
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// 마스터는 물리삭제 대상이 아니다 — 매핑이 딸려 지워지면 안 되므로 RESTRICT (CASCADE 금지).
+  sku            Sku            @relation(fields: [skuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  externalSystem ExternalSystem @relation(fields: [externalSystemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([skuId])
+  @@index([externalSystemId, mappingStatus])
+  @@map("sku_external_mapping")
 }
 
 // ═══════════════════════════════════════════════════════════════
