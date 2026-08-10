@@ -107,6 +107,10 @@
 | DELETE | `/api/skus/{id}/barcodes/{bid}` | **비활성** | S,L,A | **물리삭제 아님** | — |
 | POST | `/api/skus/{id}/barcodes/{bid}/approve-duplicate` | 중복 예외 승인 | L,A | 실제 중복 확인 / 승인자·사유 기록 | — |
 
+> ✏️ **2026-08-10 설계복구 (바코드 CRUD)**: 위 표의 POST/PATCH 요청 DTO 가 원문에서 말줄임표로 끝나 확정되지 않았고, `DataIssue` 모델·migration·서비스가 repository 에 **존재하지 않음**을 확인해 T04-3 을 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`10_설계복구_BarcodeCRUD.md`** 로 확정한다.
+>
+> 특히 POST 행의 **"`확인필요`·`확인불가`는 거부 + DataIssue"** 중 **DataIssue 생성 부분은 인터랙티브 CRUD 에 한해 supersede** 되었다 — T04-3 은 **422 `BARCODE_UNVERIFIED`** 로 거부만 하고 DataIssue 를 만들지 않는다. **Excel import·마이그레이션·외부 데이터 수집 경로의 DataIssue 요구는 그대로 유효**하다(`06_데이터_마이그레이션설계.md` §12.5 는 supersede 대상이 아니다). `-`·공란은 **204 No Content**(저장 없음), 지수표기는 422 `BARCODE_SCIENTIFIC_NOTATION`, 숫자 전용 위반은 422 `BARCODE_INVALID_FORMAT` 이며, 활성 중복은 409 `BARCODE_DUPLICATE`, SKU당 활성 대표 중복은 409 `BARCODE_PRIMARY_CONFLICT` 다(자동 교체 없음). 권한은 `sku.*` 재사용이 아니라 신규 **`barcode.read`/`create`/`update`/`deactivate`** 다. `approve-duplicate` 는 T04-4 로 계속 미착수다.
+
 ## 10.6 외부 상품 매핑
 
 | Method | URL | 목적 | 권한 | 주요 검증 | 멱등 |

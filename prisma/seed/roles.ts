@@ -41,6 +41,10 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'sku.approve', description: 'SKU 승인·반려 (동일 authority)' },
   { permissionKey: 'sku.deactivate', description: 'SKU 사용중지' },
   { permissionKey: 'sku.suggest_code', description: 'SKU 코드 추천 (저장 없음)' },
+  { permissionKey: 'barcode.read', description: 'SKU 바코드 조회' },
+  { permissionKey: 'barcode.create', description: 'SKU 바코드 추가' },
+  { permissionKey: 'barcode.update', description: 'SKU 바코드 수정' },
+  { permissionKey: 'barcode.deactivate', description: 'SKU 바코드 비활성 (물리삭제 아님)' },
 ];
 
 /**
@@ -88,6 +92,23 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'sku.suggest_code' },
   { roleCode: 'SCM_LEADER', permissionKey: 'sku.suggest_code' },
   { roleCode: 'SCM_STAFF', permissionKey: 'sku.suggest_code' },
+  // 바코드(T04-3, docs/10 §3) — 독립 capability 다. `sku.*` 를 재사용하지 않는다.
+  // 조회는 전 역할, 작성·수정·비활성은 S·L·A. FINANCE·EXECUTIVE 는 read-only.
+  // ⛔ `barcode.approve_duplicate`(T04-4, L·A) 는 아직 시드하지 않는다.
+  { roleCode: 'ADMIN', permissionKey: 'barcode.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'barcode.read' },
+  { roleCode: 'FINANCE', permissionKey: 'barcode.read' },
+  { roleCode: 'EXECUTIVE', permissionKey: 'barcode.read' },
+  { roleCode: 'ADMIN', permissionKey: 'barcode.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'barcode.create' },
+  { roleCode: 'ADMIN', permissionKey: 'barcode.update' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.update' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'barcode.update' },
+  { roleCode: 'ADMIN', permissionKey: 'barcode.deactivate' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'barcode.deactivate' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'barcode.deactivate' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

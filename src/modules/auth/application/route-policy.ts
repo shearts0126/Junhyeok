@@ -37,6 +37,14 @@ export interface RoutePermissionPolicy {
    */
   readonly suffix?: string;
   /**
+   * 경로가 이 조각을 **포함**할 때만 적용된다 (`/api/skus/{id}/barcodes` 와
+   * `/api/skus/{id}/barcodes/{bid}` 처럼 하위 컬렉션이 두 깊이에 걸칠 때용).
+   * 생략하면 보지 않는다.
+   *
+   * suffix 와 마찬가지로 **더 구체적이므로 일반 정책보다 앞에** 둔다.
+   */
+  readonly contains?: string;
+  /**
    * 이 정책이 적용되는 메서드. 생략하면 모든 메서드에 적용된다.
    *
    * 여러 정책이 같은 prefix 를 가질 수 있으므로, **더 구체적인(메서드 지정)
@@ -79,6 +87,32 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     prefix: '/api/skus/suggest-code',
     methods: ['POST'],
     permission: 'sku.suggest_code',
+  },
+
+  // 바코드 CRUD (T04-3, docs/10_설계복구_BarcodeCRUD.md §4) — **독립 capability** 다.
+  // ⚠️ 반드시 일반 `/api/skus` 정책보다 **앞에** 둔다. 뒤에 두면
+  //    `/api/skus/{id}/barcodes` 가 prefix 매칭으로 `sku.read`/`sku.create`/
+  //    `sku.update` 에 잡혀 SKU 권한만으로 바코드를 바꿀 수 있게 된다.
+  // ⚠️ suffix 로는 구분할 수 없다 — 컬렉션(`…/barcodes`)과 단건(`…/barcodes/{bid}`)
+  //    경로가 다르므로 `contains` 로 매칭한다.
+  {
+    prefix: '/api/skus',
+    contains: '/barcodes',
+    methods: ['GET', 'HEAD'],
+    permission: 'barcode.read',
+  },
+  { prefix: '/api/skus', contains: '/barcodes', methods: ['POST'], permission: 'barcode.create' },
+  {
+    prefix: '/api/skus',
+    contains: '/barcodes',
+    methods: ['PATCH', 'PUT'],
+    permission: 'barcode.update',
+  },
+  {
+    prefix: '/api/skus',
+    contains: '/barcodes',
+    methods: ['DELETE'],
+    permission: 'barcode.deactivate',
   },
 
   // SKU 승인 워크플로 (T1-4A) — 일반 POST(생성) 정책보다 앞에 둔다.
@@ -126,6 +160,7 @@ export function resolveRoutePermission(query: RoutePermissionQuery): string | un
   const match = ROUTE_PERMISSIONS.find((policy) => {
     if (!query.pathname.startsWith(policy.prefix)) return false;
     if (policy.suffix !== undefined && !query.pathname.endsWith(policy.suffix)) return false;
+    if (policy.contains !== undefined && !query.pathname.includes(policy.contains)) return false;
     if (policy.methods === undefined) return true;
     return policy.methods.some((allowed) => allowed === method);
   });

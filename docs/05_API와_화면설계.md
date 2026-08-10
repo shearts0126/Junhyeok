@@ -67,6 +67,10 @@
 | DELETE | `/api/skus/{id}/barcodes/{bid}` | 비활성 | — | `SkuBarcode` (INACTIVE) | S,L,A | **물리삭제 아님** (PRD §33.2) | — |
 | POST | `/api/skus/{id}/barcodes/{bid}/approve-duplicate` | 중복 예외 승인 | `{reason}` **필수** | `SkuBarcode` | L,A | 실제 중복 존재 확인 / 승인자·사유 기록 | — |
 
+> ✏️ **2026-08-10 설계복구 (바코드 CRUD)**: 위 표의 POST `{barcode, barcodeType, isPrimary?, ...}` 와 PATCH `{isPrimary?, status?, ...}` 는 말줄임표로 끝나 나머지 필드가 확정되지 않았고, `DataIssue` 가 repository 에 존재하지 않아 T04-3 을 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`10_설계복구_BarcodeCRUD.md`** 로 확정한다 — POST/PATCH 는 V1 최소 strict DTO, `barcode` 값은 생성 후 immutable, 대표 자동 교체 없음, DELETE 반복 호출은 idempotent 200, GET 은 pagination 없는 raw 배열(`ACTIVE`+`INACTIVE`, `createdAt DESC, id DESC`)이다.
+>
+> **"`확인필요`·`확인불가`는 거부 후 DataIssue"** 중 **DataIssue 생성 부분은 인터랙티브 CRUD 에 한해 supersede** 되었다(422 `BARCODE_UNVERIFIED` 로 거부만 한다). **import·마이그레이션 경로의 DataIssue 요구는 그대로 유효**하다.
+
 ## 10.5 외부 상품 매핑
 
 | Method | URL | 목적 | 요청 | 응답 | 권한 | 주요 검증 | 멱등 |
