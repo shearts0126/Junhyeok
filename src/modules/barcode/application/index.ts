@@ -6,7 +6,10 @@
  *
  * ⛔ 이 모듈은 DataIssue 를 만들지 않는다 — 인터랙티브 CRUD 의 잘못된 값은
  *    HTTP 오류로 끝난다. import·migration 경로의 DataIssue 요구는 별도 Task 다.
- * ⛔ 중복 예외 승인(`approve-duplicate`)·UI 는 T04-4 / T1-6B 다.
+ *
+ * 중복 예외 요청·승인(T04-4A)은 `docs/11_설계복구_Barcode중복예외승인.md` 로 확정되어
+ * 이 barrel 에 함께 들어 있다. 승인 **화면**(T04-4B)은 SKU 상세 바코드 탭
+ * (`docs/16_설계복구_SKU상세잔여탭.md`, T1-6B1)이다.
  */
 export {
   BARCODE_READ_PERMISSION,

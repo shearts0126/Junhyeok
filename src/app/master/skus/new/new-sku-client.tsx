@@ -7,7 +7,7 @@ import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { buildCreatePayload, emptySkuForm, type SkuFormValue } from '../sku-form';
-import { SKU_TABS, SkuTabPanel, type SkuTabKey } from '../sku-form-fields';
+import { SKU_CREATE_TABS, SkuTabPanel, type SkuTabKey } from '../sku-form-fields';
 import {
   ErrorBanner,
   readApiError,
@@ -25,6 +25,11 @@ import {
  *   생성 방지), 사용자가 본문을 고쳐 다시 시도하면 새 key 다. replay 200 도
  *   정상 성공으로 처리한다.
  * - 권한: `sku.create`. UI 숨김은 UX 이고 서버 2겹 가드가 최종 판정한다.
+ *
+ * ⛔ **바코드 탭이 없다** (T1-6B1, `docs/16` §7) — 바코드는 `/api/skus/{id}/barcodes`
+ *    처럼 부모 `skuId` 를 경로로 요구하는 child entity 라 저장 전에는 존재할 수
+ *    없다. disabled·placeholder 탭도 만들지 않는다. 등록에 성공하면 상세로
+ *    이동하므로 그 화면에서 바로 바코드를 등록할 수 있다.
  */
 
 function newIdempotencyKey(): string {
@@ -122,7 +127,7 @@ export function NewSkuClient() {
       )}
 
       <div className="flex gap-2 border-b" role="tablist" aria-label="SKU 입력 탭">
-        {SKU_TABS.map((entry) => (
+        {SKU_CREATE_TABS.map((entry) => (
           <button
             key={entry.key}
             type="button"

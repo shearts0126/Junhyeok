@@ -78,6 +78,11 @@ src/                     : DataIssue 생성 경로 0건 (주석·테스트명 hi
 - ⛔ `barcode.approve_duplicate` (T04-4, ADMIN·SCM_LEADER)는 **아직 만들지 않는다.**
 - ADMIN bypass 없음. Proxy(1차) + Application Service(2차) **이중 guard**.
 
+> ✏️ **후속 (T04-4A, 2026-08-10)**: 위 마지막 항목은 T04-3 시점의 범위 선언이다.
+> `barcode.request_duplicate`(S·L·A) · `barcode.approve_duplicate`(L·A)는
+> **`11_설계복구_Barcode중복예외승인.md` §3 으로 확정되어 구현·시드까지 완료**되었다.
+> 이 절의 4개 권한 계약 자체는 그대로 유효하다.
+
 ---
 
 ## 4. Route policy 우선순위
@@ -314,6 +319,10 @@ GET /api/skus/{id}/barcodes  →  SkuBarcode[]  (raw array)
 `GET /api/skus/{id}/history` 에서 바코드 이력을 합치는 방법은 **T1-6B history aggregation**
 에서 결정한다.
 
+> ✏️ **2026-08-11**: 그 "T1-6B history aggregation" 은 **T1-6B3**(변경이력 탭)로
+> 분리되었고 여전히 **미결**이다 — `16_설계복구_SKU상세잔여탭.md` §2 참조.
+> T1-6B1(바코드 탭)은 history 를 다루지 않는다.
+
 ---
 
 ## 15. T04-4 필드 보호
@@ -330,6 +339,12 @@ T04-4 전용이며, DB fixture 외에 production path 에서 `duplicateException
 `DataIssue foundation` · `import/migration` · `external mapping` · `BOM`.
 
 `SkuBarcode` schema 변경과 새 migration 도 없다 (permission seed 수정만 허용).
+
+> ✏️ **후속 진행 상황** (이 목록은 T04-3 시점 기준이며 원문을 고치지 않는다):
+> `T04-4 중복 예외 승인` 은 **T04-4A 로 구현 완료**(`11_설계복구_Barcode중복예외승인.md`),
+> `Barcode UI` 는 **T1-6B1 로 구현**(`16_설계복구_SKU상세잔여탭.md`, T04-4B 승인 UI 포함).
+> `T1-4B(V7~V9 연결)` · `T1-5B` · `DataIssue foundation` · `import/migration` · `BOM`
+> 은 여전히 범위 밖이다.
 
 ---
 

@@ -332,11 +332,27 @@ describe('★ AuditLog action naming', () => {
 // §27 범위 고정
 // ═══════════════════════════════════════════════════════════════
 
-describe('★ T04-4A 범위 고정 — UI 미착수', () => {
-  it('바코드 UI 탭·승인대기 화면이 없다 (T04-4B / T1-6B)', async () => {
+describe('★ 범위 고정 — SKU-local UI 만, 전역 승인함은 없다', () => {
+  /**
+   * ⚠️ T04-4B(중복 예외 승인 UI)는 **T1-6B1 에서 SKU 상세 바코드 탭으로 구현**되었다
+   *    (`docs/16_설계복구_SKU상세잔여탭.md` §4). 따라서 "UI 가 없다"는 T04-4A 시점의
+   *    단정은 더 이상 유효하지 않다.
+   *
+   * 지금 고정해야 하는 것은 **경계**다 — cross-SKU 승인 대기함
+   * (`/master/skus/approvals`, `05 §11.5`)은 T1-4B 소관이며 아직 없다.
+   */
+  it('전역 SKU 승인 대기함은 아직 없다 (T1-4B)', async () => {
     const { readdir } = await import('node:fs/promises');
     const master = await readdir(new URL('../../app/master/skus', import.meta.url).pathname);
     expect(master.sort()).not.toContain('approvals');
+  });
+
+  it('중복 예외 승인 UI 는 SKU 상세 바코드 탭 하나뿐이다 (T1-6B1)', async () => {
+    const { readdir } = await import('node:fs/promises');
+    const detail = await readdir(new URL('../../app/master/skus/[id]', import.meta.url).pathname);
+    expect(detail.sort()).toContain('barcode-tab.tsx');
+    // 별도 바코드 관리 화면을 만들지 않았다 — 진입점은 상세 탭 하나다.
+    const master = await readdir(new URL('../../app/master', import.meta.url).pathname);
     expect(master.filter((entry) => entry.includes('barcode'))).toEqual([]);
   });
 });
