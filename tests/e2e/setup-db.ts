@@ -4,7 +4,13 @@ import { seedCommonCodes } from '../../prisma/seed/common-codes';
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
 import { disconnectPrisma, getPrismaClient } from '../../src/shared/db';
 
-import { E2E_DUPLICATE_BARCODE, E2E_USERS } from './fixtures';
+import {
+  E2E_DUPLICATE_BARCODE,
+  E2E_MAPPING_CODE,
+  E2E_MAPPING_ENDED_CODE,
+  E2E_MAPPING_REVIEW_NAME,
+  E2E_USERS,
+} from './fixtures';
 
 /**
  * E2E DB 준비 (T0-8) — `global-setup.ts` 가 tsx 자식 프로세스로 실행한다.
@@ -228,6 +234,16 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ── T1-6B2 외부시스템 매핑 탭 픽스처 ─────────────────────
+      // MATCHED · REVIEW_REQUIRED · 종료된 매핑 3건을 갖는다.
+      {
+        skuCode: 'ZZS-E2E-015',
+        skuName: 'E2E 외부매핑 요약',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
   });
 
@@ -293,6 +309,51 @@ async function main(): Promise<void> {
         systemName: 'E2E 종료된 3PL',
         systemType: 'THREE_PL',
         active: false,
+      },
+    ],
+  });
+
+  // ── 외부 매핑 픽스처 (T1-6B2) ─────────────────────────────────
+  // `ZZS-E2E-015` 가 MATCHED(대표) · REVIEW_REQUIRED(상품명만) · 종료된 매핑을
+  // 하나씩 갖는다. SKU 상세 외부시스템 매핑 탭의 read-only 요약 검증용이다.
+  //
+  // ⚠️ 조건부 UNIQUE 를 지킨다 —
+  //    `ux_external_mapping_code`(외부시스템+외부코드, 종료 안 된 행)와
+  //    `ux_external_mapping_primary`(SKU+외부시스템, 대표 행)에 걸리지 않도록
+  //    코드를 다르게 두고 대표는 1건뿐이다.
+  const mappingSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-015' } });
+  const mappingSystem = await prisma.externalSystem.findUniqueOrThrow({
+    where: { systemCode: 'ZZX-ERP' },
+  });
+  await prisma.skuExternalMapping.createMany({
+    data: [
+      {
+        skuId: mappingSku.id,
+        externalSystemId: mappingSystem.id,
+        externalProductCode: E2E_MAPPING_CODE,
+        externalProductName: 'E2E 이카운트 상품명',
+        mappingStatus: 'MATCHED',
+        isPrimary: true,
+        effectiveFrom: new Date('2026-01-01'),
+      },
+      {
+        skuId: mappingSku.id,
+        externalSystemId: mappingSystem.id,
+        // 상품명만 있는 매핑 — 자동 원장 반영 대상이 아니다 (T05-2 판정 규칙).
+        externalProductName: E2E_MAPPING_REVIEW_NAME,
+        mappingStatus: 'REVIEW_REQUIRED',
+        isPrimary: false,
+      },
+      {
+        skuId: mappingSku.id,
+        externalSystemId: mappingSystem.id,
+        externalProductCode: E2E_MAPPING_ENDED_CODE,
+        externalProductName: 'E2E 종료된 매핑',
+        mappingStatus: 'MATCHED',
+        isPrimary: false,
+        effectiveFrom: new Date('2025-01-01'),
+        // 종료된 매핑도 GET 이 반환하며 탭이 숨기지 않는다.
+        effectiveTo: new Date('2025-12-31'),
       },
     ],
   });

@@ -40,3 +40,14 @@ export const E2E_USERS = [
  * 시작된다. ⚠️ 숫자만이어야 한다 — T04-2 정규화가 숫자 외 문자를 거부한다.
  */
 export const E2E_DUPLICATE_BARCODE = '8809999900012';
+
+/**
+ * SKU 상세 외부시스템 매핑 탭 픽스처 (T1-6B2).
+ *
+ * `ZZS-E2E-015` 가 외부시스템 `ZZX-ERP` 와 세 건의 매핑을 갖는다 —
+ * MATCHED(대표) · REVIEW_REQUIRED(상품명만) · 종료된 매핑.
+ */
+export const E2E_MAPPING_CODE = 'ZZX-MAP-015';
+export const E2E_MAPPING_REVIEW_NAME = 'E2E 상품명만 매핑';
+/** ⚠️ `E2E_MAPPING_CODE` 의 접두사가 되면 안 된다 — 행 필터가 두 행에 걸린다. */
+export const E2E_MAPPING_ENDED_CODE = 'ZZX-OLD-015';

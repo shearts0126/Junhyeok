@@ -1,9 +1,11 @@
-# 설계복구 — SKU 상세 잔여 탭 (T1-6B) · 바코드 탭 V1 (T1-6B1)
+# 설계복구 — SKU 상세 잔여 탭 (T1-6B) · 바코드 탭 (T1-6B1) · 외부매핑 탭 (T1-6B2)
 
 > **2026-08-11 SKU Detail Remaining Tabs Design Recovery Decision**
 >
-> 이 문서는 T1-6B 분할과 **T1-6B1 구현 계약의 유일한 근거**다.
+> 이 문서는 T1-6B 분할과 **T1-6B1·T1-6B2 구현 계약의 유일한 근거**다.
 > 여기에 없는 규칙을 코드에서 추론해 만들지 않는다.
+>
+> §1~§18 = T1-6B1(바코드 탭 + T04-4B) · **§19~§26 = T1-6B2(외부시스템 매핑 탭)**
 
 ---
 
@@ -32,8 +34,8 @@ v0.2 는 SKU 상세 화면(`T1-14`)을 **R1a-1** 에 두면서 선행조건에�
 
 | Task | 탭 | 판정 | 근거 |
 |---|---|---|---|
-| **T1-6B1** | **③ 바코드** (+ **T04-4B** 흡수) | **이 문서로 IMPLEMENTABLE** | T04-3·T04-4A backend 100% |
-| **T1-6B2** | ④ 외부시스템 매핑 | **DEFERRED** | 신규 API 0 으로 가능하나 `EXT-MAP-001` 과의 역할 분담·창고(T08-1) 미결 |
+| **T1-6B1** | **③ 바코드** (+ **T04-4B** 흡수) | **§1~§18 로 IMPLEMENTABLE** | T04-3·T04-4A backend 100% |
+| **T1-6B2** | **④ 외부시스템 매핑** | **§19~§26 로 IMPLEMENTABLE** | 신규 API 0. 역할 분담(read-only + 관리화면 링크)·창고 제외를 §19·§21 로 확정 |
 | **T1-6B3** | ⑧ 변경이력 | **DEFERRED** | `GET /api/skus/{id}/history` 미구현 + 범위 미결(`docs/10:314`) |
 | **T1-6B4** | ⑥ 공급조건 | **BLOCKED** | `Supplier`/`SupplierSku`/`SupplierSkuPrice` 전무 → **T06** 이후 |
 | **T1-6B5** | ⑦ BOM | **BLOCKED** | `BomHeader`/`BomLine` 전무 → **T07** 이후 |
@@ -118,6 +120,9 @@ POST   /api/skus/{id}/barcodes/{bid}/approve-duplicate  barcode.approve_duplicat
 /master/skus/new       기본정보 · 코드·분류 · 재고관리 설정                  (3탭, 기존 그대로)
 /master/skus/{id}      기본정보 · 코드·분류 · **바코드** · 재고관리 설정      (4탭)
 ```
+
+> ✏️ **T1-6B2 이후**: 상세는 ④ 외부시스템 매핑이 더해져 **5탭**이 된다 (§19).
+> 등록 화면 3탭과 "child entity 탭은 저장된 SKU 에서만" 원칙은 그대로다.
 
 - 탭 배열을 `SKU_CREATE_TABS` / `SKU_DETAIL_TABS` 로 **분리**한다.
 - ⛔ 등록 화면에 바코드 탭을 disabled·placeholder 로도 두지 않는다 (T1-6A 계약 유지).
@@ -339,3 +344,168 @@ predicate 안으로 들어가, 같은 바코드의 `ACTIVE + false` 행이 있�
 
 `T05-4A`(`EXT-MAP-001`) 계약도 변경하지 않는다. `T05-4B`(미매칭·일괄·import)는
 T15/T17 선행 미비로 DEFERRED 유지다.
+
+---
+---
+
+# T1-6B2 — 외부시스템 매핑 탭 (2026-08-11 추가 확정)
+
+> §19~§26 은 **T1-6B2 구현 계약**이다. §1~§18(T1-6B1)의 결정은 그대로 유효하다.
+
+---
+
+## 19. B2 scope — read-only summary 뿐
+
+SKU 상세 `/master/skus/{id}` 에 **④ 외부시스템 매핑** 탭을 추가한다.
+이 탭이 하는 일은 정확히 셋이다.
+
+```
+① 해당 SKU 의 외부 매핑 조회   ② 매핑상태 요약   ③ EXT-MAP-001 로 이동
+```
+
+**포함**: 목록 표시 · 상태 배지 · 종료 표시 · 로컬 페이지 이동 · 관리 화면 링크.
+
+**제외 (embedded CRUD 금지)**: 신규 매핑 dialog · 수정 dialog · 매핑 해제 ·
+외부시스템 selector · SKU selector · identifier editor · 대표 토글 ·
+`effectiveTo` mutation. **모든 변경은 `/master/external-mappings` 에서 한다.**
+
+### 탭 순서
+
+```
+① 기본정보  ② 코드·분류  ③ 바코드  ④ 외부시스템 매핑  ⑤ 재고관리 설정
+```
+
+원문 8탭(`05 §11.4`)의 논리 순서를 그대로 유지한다. `/master/skus/new` 는 계속
+**3탭**이며, 외부매핑 탭을 추가·disabled·placeholder 어떤 형태로도 두지 않는다
+(§7 의 child entity 원칙과 같다 — 부모 SKU 가 저장돼야 존재할 수 있다).
+
+---
+
+## 20. 신규 API 0개 — 쿼리 계약
+
+기존 `GET /api/external-mappings` 하나만 쓴다. T05-2/T05-4A 계약을 바꾸지 않는다.
+
+```
+GET /api/external-mappings?skuId={skuId}&page={n}&pageSize=50
+```
+
+이 탭이 보내는 파라미터는 **정확히 이 3개뿐**이다.
+
+⛔ `q` · `externalSystemId` · `mappingStatus` · `sort` · `warehouseId` 를 보내지 않는다.
+⛔ **URL searchParams 와 연동하지 않는다** — 관리 화면(`EXT-MAP-001`)의 URL-state
+   아키텍처를 SKU 상세로 가져오지 않는다. SKU 상세의 활성 탭도 기존대로 local
+   state 다.
+
+### 페이지네이션 (V1)
+
+`pageSize` 는 **50 고정**(UI 선택지 없음)이고 페이지는 **탭 내부 local state** 다.
+`totalPages > 1` 일 때만 이전/다음 버튼을 노출하며, 전체 조회는 관리 화면 링크로도
+가능하다. 한 번에 전부 가져온다고 가정하지 않는다.
+
+---
+
+## 21. 표시 — T05-4A convention 재사용
+
+| 열 | 비고 |
+|---|---|
+| 외부시스템 | `systemCode — systemName` (joined projection) |
+| 외부코드 · 외부상품명 | `null` 은 빈 문자열 (관리 화면과 같은 표현) |
+| 매핑상태 | `MATCHED` · `REVIEW_REQUIRED` · `UNMATCHED` 배지 |
+| 대표 | `대표` / 공란 |
+| 적용기간 | `formatEffectivePeriod` 그대로. 종료 행은 `종료됨` 병기 |
+
+- **창고 열이 없다.** `05 §11.4 ④` 원문의 `창고` 는 `Warehouse`(T08-1) 이후다 —
+  ⛔ placeholder · `—` 열 · fake 값 · lookup · API · schema 어느 것도 만들지 않는다.
+- **종료된 매핑을 숨기지 않는다.** GET 이 이력을 반환하므로 그대로 보여준다.
+- **SKU 열을 반복하지 않는다.** 현재 SKU 상세 안이라 자명하다.
+- 상태 배지 색·`REVIEW_REQUIRED` 안내문은 관리 화면과 **같은 상수**를 쓴다
+  (display helper 최소 공유 — 동작 변경 없음).
+- ⛔ `AMBIGUOUS` · `CONFLICT` 는 resolver(T05-3)의 transient 판정이지
+  `SkuExternalMapping.mappingStatus` 가 아니다 — 탭 상태로 넣지 않는다.
+- ⛔ 비활성 외부시스템에 새로운 제한·경고를 추가하지 않는다 (T05-4A semantics 유지).
+
+### `REVIEW_REQUIRED`
+
+의미는 T05-4A 와 동일하다 — **상품명 기반 매핑이며 자동 원장 반영 대상이 아니다.**
+탭에서는 상태로 드러내되 ⛔ edit · approve · confirm · resolver action 을 제공하지
+않는다. 해소는 관리 화면에서 한다.
+
+### 외부 상품명 고지
+
+`05 §11.4 ④` 의 "외부 상품명이 표준 상품명을 덮어쓰지 않음을 UI로 명시" 를 문구로 넣는다.
+
+> 외부 상품명은 외부시스템 식별용 정보이며 SKU 표준 상품명을 변경하지 않습니다.
+
+---
+
+## 22. 관리 화면 링크
+
+```
+/master/external-mappings?skuId={skuId}
+```
+
+T05-4A 의 URL-state 계약(`skuId` 는 관리 키다)을 그대로 이용해 **해당 SKU 로
+필터된 상태**로 진입한다.
+
+⛔ SKU 코드·상품명 등 다른 파라미터를 붙이지 않는다 — 관리 화면이 모르는 키는
+보존돼 API 400 이 되므로 아는 키 하나만 넘긴다.
+
+탭 자체가 `external_mapping.read` 일 때만 보이므로 이 링크에 별도 권한 검사를 두지
+않는다. 신규·수정·매핑 해제 버튼의 노출은 관리 화면의 기존 계약이 담당한다 —
+⛔ SKU 상세 탭에서 create/update 권한을 다시 판단해 CRUD 버튼을 만들지 않는다.
+빈 목록에서도 링크는 남지만 mutation CTA 처럼 표현하지 않는다.
+
+---
+
+## 23. 상태 표시 — loading / empty / 오류
+
+| 상황 | 표시 |
+|---|---|
+| loading | "외부 매핑을 불러오는 중…" |
+| 0건 | **"등록된 외부시스템 매핑이 없습니다."** |
+| 403 | 전용 문구. ⛔ 빈 목록으로 위장하지 않는다 |
+| 400 · 404 · 500 · 네트워크 | `readApiError` → `ErrorBanner` (기존 패턴) |
+
+---
+
+## 24. 권한 — child tab visibility
+
+`external_mapping.read` 가 있을 때만 탭을 노출한다. 판정은
+**`/api/me.permissions` 문자열 포함 여부**로만 한다(⛔ 역할 이름 하드코딩, ⛔ ADMIN bypass).
+
+★ **EXECUTIVE 가 실제 경계 사례다** — `sku.read` 는 있고 `external_mapping.read` 는
+없다(`05 §11.20`: `SKU 목록·상세 = E:R`, `외부 상품 매핑 = E:—`). 따라서 SKU 상세는
+열리지만 외부매핑 탭은 보이지 않는다. 같은 사용자에게 **바코드 탭은 보인다**
+(`barcode.read` 는 5역할 전부) — 두 child 탭의 노출이 서로 다르다.
+
+권한 없는 사용자에게 `/api/external-mappings` 를 **호출하지 않는다** — 자식
+컴포넌트는 해당 탭이 활성일 때만 마운트되고, fetch 도 그 안에서만 한다.
+권한이 사라져 현재 탭이 유효하지 않게 되면 §12 와 같이 `기본정보` 로 되돌린다.
+
+---
+
+## 25. 컴포넌트 경계 — T05-4A 를 재구성하지 않는다
+
+`ExternalMappingsClient` 를 통째로 embed 하지 않는다. 그 컴포넌트는 page URL
+searchParams 에 결합되어 있고 q/filter/page 상태와 관리 CRUD 를 함께 갖는다.
+SKU 상세에는 **별도의 lightweight read-only 컴포넌트**를 둔다.
+
+⛔ 이번 Task 를 이유로 `ExternalMappingsClient` 대규모 refactor · form component
+재구성 · URL-state helper 변경 · 관리 페이지 구조 변경을 하지 않는다.
+허용되는 것은 **display helper 최소 추출**(상태 배지 색 · `REVIEW_REQUIRED` 문구)
+뿐이며 기존 T05-4A E2E·계약을 깨지 않는다.
+
+---
+
+## 26. 남은 범위
+
+| Task | 탭 | 상태 |
+|---|---|---|
+| **T1-6B3** | ⑧ 변경이력 | **DEFERRED** — `GET /api/skus/{id}/history` 미구현 + 범위 미결(`docs/10:314`) |
+| **T1-6B4** | ⑥ 공급조건 | **BLOCKED** — T06 이후 |
+| **T1-6B5** | ⑦ BOM | **BLOCKED** — T07 이후 |
+
+이번 범위에서 만들지 않는다: `/unmatched` · 일괄 매핑 · import(T05-4B) ·
+resolver REST · warehouse(T08) · DataIssue · InventoryException · T15 · T17 ·
+History 탭/API · Supplier · BOM · `/master/skus/approvals` · V7~V9 wiring.
+schema · migration · 신규 API · 신규 permission · route policy 변경 **모두 0** 이다.

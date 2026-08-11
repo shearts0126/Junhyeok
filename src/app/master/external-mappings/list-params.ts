@@ -32,6 +32,20 @@ export const MAPPING_STATUS_LABELS: Readonly<Record<MappingListStatus, string>> 
   REVIEW_REQUIRED: '확인 필요',
 };
 
+/**
+ * 상태 배지 색. 관리 화면(T05-4A)과 SKU 상세 외부매핑 탭(T1-6B2)이 **같은 표현**을
+ * 쓰도록 여기로 끌어올렸다 (display helper 최소 공유 — 동작 변경 없음).
+ */
+export const MAPPING_STATUS_CLASS: Readonly<Record<string, string>> = {
+  MATCHED: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
+  REVIEW_REQUIRED: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  UNMATCHED: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+};
+
+/** T05-2/T05-3 계약을 그대로 보여주는 문구 — 승인 버튼도, review API 도 없다. */
+export const REVIEW_REQUIRED_NOTICE =
+  '상품명 기반 매핑입니다. 자동 원장 반영 대상이 아닙니다. 외부코드 또는 바코드를 추가하면 MATCHED 로 전환할 수 있습니다.';
+
 /** API pageSize 허용 범위(1..200) 안의 UI 선택지. */
 export const MAPPING_LIST_PAGE_SIZES = [20, 50, 100, 200] as const;
 

@@ -30,17 +30,19 @@ import {
 } from '../sku-ui';
 
 import { BarcodeTab } from './barcode-tab';
+import { ExternalMappingTab } from './external-mapping-tab';
 
 /**
- * SKU 상세·수정 (T1-6A / 바코드 탭은 T1-6B1) — `/master/skus/{id}`.
+ * SKU 상세·수정 (T1-6A / 바코드 T1-6B1 / 외부매핑 T1-6B2) — `/master/skus/{id}`.
  *
- * 탭 4종 — ① 기본정보 ② 코드·분류 **③ 바코드** ⑤ 재고관리 설정.
+ * 탭 5종 — ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정.
  * 원문 8탭(`05 §11.4`)의 논리 순서를 유지하며 **구현된 탭만** 노출한다.
  *
- * ⛔ 외부매핑(T1-6B2)·변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 없다 —
- *    빈 탭·placeholder 도 만들지 않는다. `suggest-code` 버튼도 없다.
- * ★ 바코드 탭은 `barcode.read` 가 있을 때만 노출한다 — SKU 를 볼 수 있다고
- *   하위 모듈 데이터를 자동으로 조회하지 않는다 (`docs/16` §12).
+ * ⛔ 변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 없다 — 빈 탭·placeholder 도
+ *    만들지 않는다. `suggest-code` 버튼도 없다.
+ * ★ child 탭은 각자의 read 권한이 있을 때만 노출한다 — SKU 를 볼 수 있다고
+ *   하위 모듈 데이터를 자동으로 조회하지 않는다 (`docs/16` §12·§24).
+ *   특히 EXECUTIVE 는 `sku.read` 는 있고 `external_mapping.read` 는 없다.
  *
  * ## 저장 정책
  *
@@ -142,8 +144,9 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   const [actionText, setActionText] = useState('');
 
   const canUpdate = permissions?.includes('sku.update') ?? false;
-  /** ★ 바코드는 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다. */
+  /** ★ child 모듈은 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다. */
   const canReadBarcode = permissions?.includes('barcode.read') ?? false;
+  const canReadExternalMapping = permissions?.includes('external_mapping.read') ?? false;
 
   // 상세 조회 — 400/403/404 를 빈 화면으로 위장하지 않는다.
   useEffect(() => {
@@ -308,7 +311,11 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       action.fromStatus === detail.status && (permissions?.includes(action.permission) ?? false),
   );
   const statusLabel = SKU_STATUS_LABELS[detail.status as SkuListStatus] ?? detail.status;
-  const visibleTabs = SKU_DETAIL_TABS.filter((entry) => entry.key !== 'barcode' || canReadBarcode);
+  const visibleTabs = SKU_DETAIL_TABS.filter((entry) => {
+    if (entry.key === 'barcode') return canReadBarcode;
+    if (entry.key === 'externalMapping') return canReadExternalMapping;
+    return true;
+  });
   // 권한을 잃은 상태로 남은 탭 선택을 붙들지 않는다.
   const activeTab: SkuDetailTabKey = visibleTabs.some((entry) => entry.key === tab) ? tab : 'basic';
 
@@ -420,8 +427,10 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         )}
       </section>
 
-      {/* 탭 — 바코드는 `barcode.read` 가 있을 때만 노출한다 (숨김 = 미노출이지
-          위장이 아니다. 권한이 있는데 서버가 403 이면 탭 안에서 그대로 보여준다). */}
+      {/* 탭 — child 탭은 각자의 read 권한이 있을 때만 노출한다 (숨김 = 미노출이지
+          위장이 아니다. 권한이 있는데 서버가 403 이면 탭 안에서 그대로 보여준다).
+          ⚠️ 권한 없는 사용자에게 해당 API 를 아예 호출하지 않는다 — 탭이 활성일
+          때만 자식 컴포넌트가 마운트되고, 그 컴포넌트만 fetch 한다. */}
       <div className="flex gap-2 border-b" role="tablist" aria-label="SKU 상세 탭">
         {visibleTabs.map((entry) => (
           <button
@@ -441,10 +450,12 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         ))}
       </div>
 
-      {/* ★ 바코드 탭은 SKU 폼과 다른 모듈의 mutation 을 다룬다 — SKU 저장 폼
-          안에 넣지 않는다 (제출·dirty 판정이 섞이면 안 된다). */}
+      {/* ★ child 탭은 SKU 폼과 다른 모듈을 다룬다 — SKU 저장 폼 안에 넣지 않는다
+          (제출·dirty 판정이 섞이면 안 된다). */}
       {activeTab === 'barcode' ? (
         <BarcodeTab skuId={skuId} skuCode={detail.skuCode} permissions={permissions} />
+      ) : activeTab === 'externalMapping' ? (
+        <ExternalMappingTab skuId={skuId} />
       ) : (
         <>
           {isActive && (
@@ -498,7 +509,7 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       </section>
 
       <p className="text-muted-foreground text-xs">
-        외부 매핑·공급조건·BOM·변경이력 탭은 해당 모듈 도입 후 제공됩니다.
+        공급조건·BOM·변경이력 탭은 해당 모듈 도입 후 제공됩니다.
       </p>
     </main>
   );

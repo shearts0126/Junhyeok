@@ -92,29 +92,21 @@ describe('★ 등록/상세 탭 배열 분리', () => {
     expect(SKU_CREATE_TABS.map((tab) => tab.key) as readonly string[]).not.toContain('barcode');
   });
 
-  it('2. 상세 화면은 4탭이며 바코드가 포함된다', () => {
-    expect(SKU_DETAIL_TABS).toHaveLength(4);
+  it('2. 상세 화면 탭에 바코드가 포함된다', () => {
     expect(SKU_DETAIL_TABS.some((tab) => tab.key === 'barcode')).toBe(true);
+    expect(SKU_DETAIL_TABS.find((tab) => tab.key === 'barcode')?.label).toBe('바코드');
   });
 
-  it('3. ★ 상세 탭 순서는 원문 8탭(①②③⑤)의 논리 순서를 유지한다', () => {
-    expect(SKU_DETAIL_TABS.map((tab) => tab.key)).toEqual([
-      'basic',
-      'classification',
-      'barcode',
-      'inventory',
-    ]);
-    expect(SKU_DETAIL_TABS.map((tab) => tab.label)).toEqual([
-      '기본정보',
-      '코드·분류',
-      '바코드',
-      '재고관리 설정',
-    ]);
+  it('3. ★ 바코드는 코드·분류 바로 다음이다 (원문 8탭의 ③ 자리)', () => {
+    // ⚠️ 전체 탭 수·순서는 `external-mapping-ui.test.ts` 가 고정한다 — 탭이 늘어날
+    //    때마다 두 파일이 같은 단정을 중복하지 않도록 여기서는 상대 위치만 본다.
+    const keys = SKU_DETAIL_TABS.map((tab) => tab.key) as readonly string[];
+    expect(keys.indexOf('barcode')).toBe(keys.indexOf('classification') + 1);
   });
 
-  it('4. 아직 없는 탭(외부매핑·공급조건·BOM·변경이력)은 어느 배열에도 없다', () => {
+  it('4. 아직 없는 탭(공급조건·BOM·변경이력)은 어느 배열에도 없다', () => {
     const labels = [...SKU_CREATE_TABS, ...SKU_DETAIL_TABS].map((tab) => tab.label);
-    for (const absent of ['외부시스템 매핑', '외부매핑', '공급조건', 'BOM', '변경이력']) {
+    for (const absent of ['공급조건', 'BOM', '변경이력']) {
       expect(labels, absent).not.toContain(absent);
     }
   });
