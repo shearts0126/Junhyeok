@@ -181,17 +181,20 @@ test.describe('신규 SKU 등록', () => {
 });
 
 test.describe('상세 조회·수정', () => {
-  test('★ 3개 Core 탭만 존재 — 미래 탭·코드추천·음수허용 없음', async ({ page }) => {
+  test('★ 4개 탭(바코드 포함)만 존재 — 미래 탭·코드추천·음수허용 없음', async ({ page }) => {
     await login(page, ADMIN);
     await openDetail(page, 'ZZS-E2E-002');
 
+    // ★ T1-6B1 에서 ③ 바코드 탭이 더해졌다. 순서는 원문 8탭의 논리 순서다.
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(3);
+    await expect(tabs).toHaveCount(4);
     await expect(tabs.nth(0)).toHaveText('기본정보');
     await expect(tabs.nth(1)).toHaveText('코드·분류');
-    await expect(tabs.nth(2)).toHaveText('재고관리 설정');
+    await expect(tabs.nth(2)).toHaveText('바코드');
+    await expect(tabs.nth(3)).toHaveText('재고관리 설정');
 
-    for (const forbidden of ['바코드', '외부 매핑', '외부매핑', '공급조건', 'BOM', '변경이력']) {
+    // ⛔ 외부매핑(T1-6B2)·변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 은 아직 없다.
+    for (const forbidden of ['외부 매핑', '외부매핑', '공급조건', 'BOM', '변경이력']) {
       await expect(page.getByRole('tab', { name: forbidden }), forbidden).toHaveCount(0);
     }
     for (const forbidden of ['코드 추천', '폐기', '엑셀']) {

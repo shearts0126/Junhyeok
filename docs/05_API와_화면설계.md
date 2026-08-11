@@ -44,7 +44,7 @@
 | Method | URL | 목적 | 요청 | 응답 | 권한 | 주요 검증 | 멱등 |
 |---|---|---|---|---|---|---|:-:|
 | GET | `/api/skus` | 목록 | `q, status, itemType, brandId, majorCategoryId, minorCategoryId, hasBom, mappingStatus, hasIssue, page, sort` | `Sku[]` | 전체 | `q`는 코드·상품명·바코드·외부별칭 통합검색 | — |
-| GET | `/api/skus/{id}` | 상세 | — | `SkuDetail`(바코드·매핑·공급조건·BOM 포함) | 전체 | | — |
+| GET | `/api/skus/{id}` | 상세 | — | `SkuDetail`(바코드·매핑·공급조건·BOM 포함) | 전체 | ✏️ 실제 응답은 SKU 본체 필드만 — 아래 설계복구 참조 | — |
 | POST | `/api/skus` | 생성 | `CreateSkuDto` | `Sku` (DRAFT) | S,L,A | 코드 전역 중복, 필수값, 코드체계(**WARNING**) | ✅ |
 | PATCH | `/api/skus/{id}` | 수정 | `UpdateSkuDto` | `Sku` | S,L,A | **`hasTransaction=true`면 `skuCode` 변경 차단** / ACTIVE는 제한 필드만 | — |
 | POST | `/api/skus/{id}/submit` | 승인 요청 | `{note?}` | `Sku` (PENDING) | S,L,A | 승인 요청 전 검증 9종 (PRD §15.1) | — |
@@ -56,6 +56,8 @@
 | POST | `/api/skus/{id}/suggest-code` | 코드 추천 | `{brandId, majorId, minorId}` | `{suggestedCode}` | S,L,A | **자동 저장하지 않음** (PRD §11.5) | — |
 | POST | `/api/skus/import` | 대량 업로드 | `multipart` | `202 {jobId}` | S,L,A | 파일 해시 중복 경고 | ✅ |
 | GET | `/api/skus/import/{jobId}` | 업로드 상태 | — | `ImportJob` + 진행률 | S,L,A | | — |
+
+> ✏️ **2026-08-11 설계복구 (SKU 상세 잔여 탭)**: `GET /api/skus/{id}` 의 응답을 `SkuDetail`(**바코드·매핑·공급조건·BOM 포함**)로 적었으나, T1-3 이 "아직 없는 모델의 관계를 가짜 빈 배열로 채우지 않는다"는 결정으로 **SKU 본체 필드만** 반환하도록 구현했고 그 결정이 유지된다. 따라서 상세 화면의 각 탭은 **자기 모듈의 API 를 직접 호출**한다 — 바코드 탭은 `GET /api/skus/{id}/barcodes`(T04-3)를 쓴다. 자세한 내용은 **`16_설계복구_SKU상세잔여탭.md`**. `GET /api/skus/{id}/history` 는 아직 구현되지 않았으며 **T1-6B3** 의 선행 지원 API 다(범위·권한 미결).
 
 ## 10.4 바코드
 
@@ -326,6 +328,8 @@ DEEPPOINT SCM OS
 | ⑧ 변경이력 | 감사로그 타임라인 | 변경 전/후 diff |
 
 **하단 액션 바**: 저장 / 승인 요청 / 승인 / 반려 / 사용중지 / 폐기 (상태·권한에 따라 노출)
+
+> ✏️ **2026-08-11 설계복구 (SKU 상세 잔여 탭)**: 위 8탭은 공급조건(`Supplier` 계열, T06)·BOM(T07) backend 가 없는 단계에서도 한 화면으로 기술되어 있어, 어느 탭이 언제 구현 가능한지가 미결이었다(v0.2 backlog 자체가 이 화면을 **R1a-1**, 공급조건·BOM 을 **R1a-3** 에 두고 있다). 분할·계약은 **`16_설계복구_SKU상세잔여탭.md`** 로 확정한다 — **T1-6B1**(③ 바코드, **T04-4B 흡수**) 구현, **T1-6B2**(④ 외부매핑)·**T1-6B3**(⑧ 변경이력) 연기, **T1-6B4**(⑥ 공급조건)·**T1-6B5**(⑦ BOM)는 각각 T06·T07 이후다. ③ 행의 **국가·채널·적용기간은 T04-3 V1 API 가 입력을 받지 않아 조회 전용**이며, "중복 감지 시 인라인 경고"는 사전조회 API 없이 **일반 등록 409 `BARCODE_DUPLICATE` 이후의 인라인 경고 + 명시적 `중복 예외 요청` CTA** 로 구현한다(자동 후보 생성 없음). 승인 결과의 **승인자·승인시각은 표시하지 않는다**(`approvedBy` 는 UUID 뿐, `approvedAt` 컬럼·사용자 조회 API·감사로그 조회 API 모두 없음). 등록 화면(`/master/skus/new`)에는 **바코드 탭을 두지 않는다** — 부모 `skuId` 가 있어야 존재할 수 있는 child entity 이며 placeholder 도 만들지 않는다. 구현된 탭만 노출하되 **원문 탭 순서는 유지**한다.
 
 ## 11.5 SKU 승인 대기함 `/master/skus/approvals`
 

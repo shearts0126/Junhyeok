@@ -31,3 +31,12 @@ export const E2E_USERS = [
     password: 'e2e-password-exec',
   },
 ] as const;
+
+/**
+ * 중복 예외 시나리오용 바코드 (T1-6B1).
+ *
+ * `ZZS-E2E-012` 가 이 값을 **활성**으로 쓰고 있다. `ZZS-E2E-013` 에서 같은 값을
+ * 일반 등록하면 409 `BARCODE_DUPLICATE` 가 나고, 거기서 중복 예외 요청 흐름이
+ * 시작된다. ⚠️ 숫자만이어야 한다 — T04-2 정규화가 숫자 외 문자를 거부한다.
+ */
+export const E2E_DUPLICATE_BARCODE = '8809999900012';

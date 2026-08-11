@@ -4,7 +4,7 @@ import { seedCommonCodes } from '../../prisma/seed/common-codes';
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
 import { disconnectPrisma, getPrismaClient } from '../../src/shared/db';
 
-import { E2E_USERS } from './fixtures';
+import { E2E_DUPLICATE_BARCODE, E2E_USERS } from './fixtures';
 
 /**
  * E2E DB 준비 (T0-8) — `global-setup.ts` 가 tsx 자식 프로세스로 실행한다.
@@ -58,6 +58,11 @@ async function main(): Promise<void> {
     },
   });
   await prisma.externalSystem.deleteMany({ where: { systemCode: { startsWith: 'ZZX-' } } });
+
+  // ⚠️ 바코드도 SKU 를 FK RESTRICT 로 붙들고 있다 — SKU 정리보다 앞서야 한다 (T1-6B1).
+  await prisma.skuBarcode.deleteMany({
+    where: { sku: { skuCode: { startsWith: 'ZZS-' } } },
+  });
 
   // ⚠️ SKU 픽스처를 **먼저** 지운다 — SKU 가 참조 중인 공통코드는 FK RESTRICT 로
   //    삭제되지 않기 때문이다.
@@ -186,7 +191,61 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ── T1-6B1 바코드 탭 픽스처 ──────────────────────────────
+      // 일반 바코드 CRUD 시나리오 전용 (등록·대표·비활성·재활성).
+      {
+        skuCode: 'ZZS-E2E-011',
+        skuName: 'E2E 바코드 대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 중복 예외 시나리오의 **원본** — 아래에서 ACTIVE 바코드를 하나 심는다.
+      {
+        skuCode: 'ZZS-E2E-012',
+        skuName: 'E2E 바코드 원본',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 중복 예외 시나리오의 **요청자 측** — 같은 바코드를 등록하려다 409 를 받는다.
+      {
+        skuCode: 'ZZS-E2E-013',
+        skuName: 'E2E 바코드 중복요청',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // SCM_STAFF 권한 시나리오 전용 (승인 버튼이 없다는 것을 본다).
+      {
+        skuCode: 'ZZS-E2E-014',
+        skuName: 'E2E 바코드 권한',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
+  });
+
+  // ── 바코드 픽스처 (T1-6B1) ────────────────────────────────────
+  // ZZS-E2E-012 가 `ZZB0000000012` 를 **활성**으로 쓰고 있다 →
+  // ZZS-E2E-013 이 같은 값을 등록하면 409 `BARCODE_DUPLICATE` 가 난다.
+  // ⚠️ 감사로그를 만들지 않는 순수 데이터 픽스처다 (화면 검증용).
+  const duplicateSourceSku = await prisma.sku.findUniqueOrThrow({
+    where: { skuCode: 'ZZS-E2E-012' },
+  });
+  await prisma.skuBarcode.create({
+    data: {
+      skuId: duplicateSourceSku.id,
+      barcode: E2E_DUPLICATE_BARCODE,
+      barcodeType: 'UNIT',
+      isPrimary: true,
+      status: 'ACTIVE',
+    },
   });
 
   // 부모 비활성화 차단 시나리오 픽스처: E2EP(상위) ← E2EC(하위)

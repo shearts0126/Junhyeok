@@ -7,19 +7,45 @@ import { SKU_ITEM_TYPE_LABELS, SKU_ITEM_TYPE_OPTIONS, type SkuFormValue } from '
  *
  *   ① 기본정보  ② 코드·분류  ③ 재고관리 설정
  *
- * ⛔ 바코드·외부매핑·공급조건·BOM·변경이력 탭은 없다 (T1-6B) — disabled
- *    placeholder 도 만들지 않는다.
  * ⛔ `negativeStockAllowed`(음수허용) 는 폐기 설계다 — 토글·필드·hidden input
  *    어떤 형태로도 존재하지 않는다.
+ *
+ * ## 등록/상세 탭 배열 분리 (T1-6B1)
+ *
+ * `docs/16_설계복구_SKU상세잔여탭.md` §7. 바코드는 **부모 SKU 가 저장된 뒤에만**
+ * 존재할 수 있는 child entity 다(`/api/skus/{id}/barcodes` 가 경로에 `skuId` 를
+ * 요구한다). 그래서 등록 화면과 상세 화면이 **서로 다른 탭 배열**을 쓴다.
+ *
+ * ⛔ 등록 화면에 바코드 탭을 disabled·placeholder 로도 두지 않는다.
+ * ⛔ 외부매핑(T1-6B2)·변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 아직 없다.
  */
 
-export const SKU_TABS = [
+/** 등록 화면(`/master/skus/new`) 탭 — child entity 탭이 없다. */
+export const SKU_CREATE_TABS = [
   { key: 'basic', label: '기본정보' },
   { key: 'classification', label: '코드·분류' },
   { key: 'inventory', label: '재고관리 설정' },
 ] as const;
 
-export type SkuTabKey = (typeof SKU_TABS)[number]['key'];
+/**
+ * 상세 화면(`/master/skus/{id}`) 탭.
+ *
+ * ★ 순서는 원문 8탭(`05 §11.4`)의 논리 순서를 그대로 따른다 —
+ *   ① 기본정보 ② 코드·분류 **③ 바코드** ⑤ 재고관리 설정.
+ *   구현된 탭만 남기되 **원문 순서를 재배열하지 않는다.**
+ */
+export const SKU_DETAIL_TABS = [
+  { key: 'basic', label: '기본정보' },
+  { key: 'classification', label: '코드·분류' },
+  { key: 'barcode', label: '바코드' },
+  { key: 'inventory', label: '재고관리 설정' },
+] as const;
+
+/** 폼 입력 탭 키 — `SkuTabPanel` 이 그리는 탭만 포함한다(바코드 제외). */
+export type SkuTabKey = (typeof SKU_CREATE_TABS)[number]['key'];
+
+/** 상세 탭 키 — 폼 탭 + `barcode`. */
+export type SkuDetailTabKey = (typeof SKU_DETAIL_TABS)[number]['key'];
 
 export interface CodeOption {
   id: string;

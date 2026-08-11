@@ -13,7 +13,12 @@ import {
   type SkuFormValue,
   type SkuViewLike,
 } from '../sku-form';
-import { SKU_TABS, SkuTabPanel, type SkuTabKey } from '../sku-form-fields';
+import {
+  SKU_DETAIL_TABS,
+  SkuTabPanel,
+  type SkuDetailTabKey,
+  type SkuTabKey,
+} from '../sku-form-fields';
 import {
   ErrorBanner,
   ValidationReportPanel,
@@ -24,12 +29,18 @@ import {
   type ValidationReport,
 } from '../sku-ui';
 
+import { BarcodeTab } from './barcode-tab';
+
 /**
- * SKU 상세·수정 (T1-6A) — `/master/skus/{id}`.
+ * SKU 상세·수정 (T1-6A / 바코드 탭은 T1-6B1) — `/master/skus/{id}`.
  *
- * 탭 3종(기본정보·코드·분류·재고관리 설정)만 존재한다.
- * ⛔ 바코드·외부매핑·공급조건·BOM·변경이력 탭 없음 (T1-6B) — 빈 탭·placeholder
- *    도 만들지 않는다. `suggest-code` 도 없다.
+ * 탭 4종 — ① 기본정보 ② 코드·분류 **③ 바코드** ⑤ 재고관리 설정.
+ * 원문 8탭(`05 §11.4`)의 논리 순서를 유지하며 **구현된 탭만** 노출한다.
+ *
+ * ⛔ 외부매핑(T1-6B2)·변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 없다 —
+ *    빈 탭·placeholder 도 만들지 않는다. `suggest-code` 버튼도 없다.
+ * ★ 바코드 탭은 `barcode.read` 가 있을 때만 노출한다 — SKU 를 볼 수 있다고
+ *   하위 모듈 데이터를 자동으로 조회하지 않는다 (`docs/16` §12).
  *
  * ## 저장 정책
  *
@@ -115,7 +126,7 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   const permissions = usePermissions();
   const options = useCommonCodeOptions();
 
-  const [tab, setTab] = useState<SkuTabKey>('basic');
+  const [tab, setTab] = useState<SkuDetailTabKey>('basic');
   const [detail, setDetail] = useState<SkuDetailView | null>(null);
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [original, setOriginal] = useState<SkuFormValue | null>(null);
@@ -131,6 +142,8 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   const [actionText, setActionText] = useState('');
 
   const canUpdate = permissions?.includes('sku.update') ?? false;
+  /** ★ 바코드는 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다. */
+  const canReadBarcode = permissions?.includes('barcode.read') ?? false;
 
   // 상세 조회 — 400/403/404 를 빈 화면으로 위장하지 않는다.
   useEffect(() => {
@@ -295,6 +308,9 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       action.fromStatus === detail.status && (permissions?.includes(action.permission) ?? false),
   );
   const statusLabel = SKU_STATUS_LABELS[detail.status as SkuListStatus] ?? detail.status;
+  const visibleTabs = SKU_DETAIL_TABS.filter((entry) => entry.key !== 'barcode' || canReadBarcode);
+  // 권한을 잃은 상태로 남은 탭 선택을 붙들지 않는다.
+  const activeTab: SkuDetailTabKey = visibleTabs.some((entry) => entry.key === tab) ? tab : 'basic';
 
   return (
     <main className="mx-auto w-full max-w-5xl space-y-6 px-6 py-10">
@@ -404,17 +420,20 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         )}
       </section>
 
-      {/* 탭 */}
+      {/* 탭 — 바코드는 `barcode.read` 가 있을 때만 노출한다 (숨김 = 미노출이지
+          위장이 아니다. 권한이 있는데 서버가 403 이면 탭 안에서 그대로 보여준다). */}
       <div className="flex gap-2 border-b" role="tablist" aria-label="SKU 상세 탭">
-        {SKU_TABS.map((entry) => (
+        {visibleTabs.map((entry) => (
           <button
             key={entry.key}
             type="button"
             role="tab"
-            aria-selected={tab === entry.key}
+            aria-selected={activeTab === entry.key}
             onClick={() => setTab(entry.key)}
             className={`px-4 py-2 text-sm ${
-              tab === entry.key ? 'border-ring border-b-2 font-medium' : 'text-muted-foreground'
+              activeTab === entry.key
+                ? 'border-ring border-b-2 font-medium'
+                : 'text-muted-foreground'
             }`}
           >
             {entry.label}
@@ -422,43 +441,51 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         ))}
       </div>
 
-      {isActive && (
-        <div
-          role="note"
-          data-testid="active-edit-restricted"
-          className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
-        >
-          ACTIVE SKU 수정 허용 필드 정책이 아직 확정되지 않아 현재 일반 수정은 제한됩니다.
-        </div>
+      {/* ★ 바코드 탭은 SKU 폼과 다른 모듈의 mutation 을 다룬다 — SKU 저장 폼
+          안에 넣지 않는다 (제출·dirty 판정이 섞이면 안 된다). */}
+      {activeTab === 'barcode' ? (
+        <BarcodeTab skuId={skuId} skuCode={detail.skuCode} permissions={permissions} />
+      ) : (
+        <>
+          {isActive && (
+            <div
+              role="note"
+              data-testid="active-edit-restricted"
+              className="rounded-md border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+            >
+              ACTIVE SKU 수정 허용 필드 정책이 아직 확정되지 않아 현재 일반 수정은 제한됩니다.
+            </div>
+          )}
+
+          <form
+            className="space-y-6"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitUpdate();
+            }}
+          >
+            <SkuTabPanel
+              tab={activeTab as SkuTabKey}
+              form={form}
+              onChange={patchForm}
+              disabled={!editable || saving}
+              skuCodeLocked={detail.hasTransaction}
+              brandOptions={options.brand}
+              majorOptions={options.major}
+              minorOptions={options.minor}
+            />
+
+            {canUpdate && !isActive && (
+              <div className="flex items-center gap-2">
+                <Button type="submit" disabled={saving || !dirty} data-testid="detail-save">
+                  {saving ? '저장 중…' : '저장'}
+                </Button>
+                {!dirty && <span className="text-muted-foreground text-xs">변경사항 없음</span>}
+              </div>
+            )}
+          </form>
+        </>
       )}
-
-      <form
-        className="space-y-6"
-        onSubmit={(event) => {
-          event.preventDefault();
-          void submitUpdate();
-        }}
-      >
-        <SkuTabPanel
-          tab={tab}
-          form={form}
-          onChange={patchForm}
-          disabled={!editable || saving}
-          skuCodeLocked={detail.hasTransaction}
-          brandOptions={options.brand}
-          majorOptions={options.major}
-          minorOptions={options.minor}
-        />
-
-        {canUpdate && !isActive && (
-          <div className="flex items-center gap-2">
-            <Button type="submit" disabled={saving || !dirty} data-testid="detail-save">
-              {saving ? '저장 중…' : '저장'}
-            </Button>
-            {!dirty && <span className="text-muted-foreground text-xs">변경사항 없음</span>}
-          </div>
-        )}
-      </form>
 
       {/* 감사 메타데이터 — 서버가 주는 형태 그대로 (사용자 이름 추정 없음) */}
       <section className="grid gap-3 rounded-md border p-4 md:grid-cols-3" aria-label="변경 정보">
@@ -471,7 +498,7 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       </section>
 
       <p className="text-muted-foreground text-xs">
-        바코드·외부 매핑·공급조건·BOM·변경이력 탭은 해당 모듈 도입 후 제공됩니다.
+        외부 매핑·공급조건·BOM·변경이력 탭은 해당 모듈 도입 후 제공됩니다.
       </p>
     </main>
   );

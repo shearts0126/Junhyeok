@@ -99,7 +99,7 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'SCM_STAFF', permissionKey: 'sku.suggest_code' },
   // 바코드(T04-3, docs/10 §3) — 독립 capability 다. `sku.*` 를 재사용하지 않는다.
   // 조회는 전 역할, 작성·수정·비활성은 S·L·A. FINANCE·EXECUTIVE 는 read-only.
-  // ⛔ `barcode.approve_duplicate`(T04-4, L·A) 는 아직 시드하지 않는다.
+  // (중복 예외 권한 2종은 T04-4A 에서 아래에 추가되었다 — docs/11 §3.)
   { roleCode: 'ADMIN', permissionKey: 'barcode.read' },
   { roleCode: 'SCM_LEADER', permissionKey: 'barcode.read' },
   { roleCode: 'SCM_STAFF', permissionKey: 'barcode.read' },
