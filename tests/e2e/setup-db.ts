@@ -47,6 +47,18 @@ async function main(): Promise<void> {
     });
   }
 
+  // ⚠️ 외부 매핑을 **가장 먼저** 지운다 — 매핑이 SKU·외부시스템을 FK RESTRICT 로
+  //    붙들고 있어서, 남아 있으면 아래 SKU 정리가 실패한다 (T05-4A).
+  await prisma.skuExternalMapping.deleteMany({
+    where: {
+      OR: [
+        { sku: { skuCode: { startsWith: 'ZZS-' } } },
+        { externalSystem: { systemCode: { startsWith: 'ZZX-' } } },
+      ],
+    },
+  });
+  await prisma.externalSystem.deleteMany({ where: { systemCode: { startsWith: 'ZZX-' } } });
+
   // ⚠️ SKU 픽스처를 **먼저** 지운다 — SKU 가 참조 중인 공통코드는 FK RESTRICT 로
   //    삭제되지 않기 때문이다.
   await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
@@ -209,6 +221,21 @@ async function main(): Promise<void> {
       sortOrder: 1,
       parentCodeId: parentCode.id,
     },
+  });
+
+  // ── 외부 상품 매핑 화면 픽스처 (T05-4A) — 접두사 ZZX- ──────────
+  // (정리는 위에서 이미 했다 — FK RESTRICT 때문에 SKU 정리보다 앞서야 한다)
+  await prisma.externalSystem.createMany({
+    data: [
+      { systemCode: 'ZZX-ERP', systemName: 'E2E 이카운트', systemType: 'ERP', active: true },
+      // 비활성 외부시스템도 lookup 에서 숨기지 않는다 (선택 자체를 막지 않는다).
+      {
+        systemCode: 'ZZX-OFF',
+        systemName: 'E2E 종료된 3PL',
+        systemType: 'THREE_PL',
+        active: false,
+      },
+    ],
   });
 
   await disconnectPrisma();

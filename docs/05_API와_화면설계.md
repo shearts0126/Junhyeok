@@ -347,6 +347,10 @@ DEEPPOINT SCM OS
 | 권한 | 조회 전체 / 작성 S,L,A |
 | 비고 | **상품명 기반 매핑은 배지로 표시**하고, 자동 원장 반영 불가임을 명시 |
 
+> ✏️ **2026-08-11 설계복구 (외부 상품 매핑 관리 UI)**: 위 6행 외에 화면 설계가 없고(화면 ID·정렬·행 액션·상세 폼 미정의), 완료조건 "미매칭 해소 동작"이 가리키는 `/unmatched`·`/import`·일괄 매핑이 모두 미정의 + 선행 모델 부재라 T05-4 를 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`15_설계복구_ExternalMapping관리UI.md`** 로 확정하며 **T05-4A(기본 관리 UI, 구현 완료) / T05-4B(미매칭·일괄·업로드, T15·T17 선행 필요로 DEFERRED)** 로 분리한다.
+>
+> T05-4A 확정 사항 — 화면 ID **`EXT-MAP-001`**, 경로 `/master/external-mappings`(신규·수정은 같은 화면의 dialog 이며 `/new`·`/{id}` 라우트를 만들지 않는다). 위 **버튼 행의 `엑셀 업로드`·`미매칭만 보기`·`일괄 매핑(SKU 선택)` 은 T05-4B 로 이월**되고, `신규 매핑`·`매핑 해제`만 구현한다(해제는 DELETE 가 아니라 PATCH `effectiveTo`). **검색조건의 `창고`** 는 `warehouseId` FK 가 없는 T08-1 전까지, **목록 열의 `최종수정`** 은 `SkuExternalMapping` 에 `updatedAt` 컬럼이 없어 각각 제외한다(임의 계산 금지). 정렬 UI 도 두지 않는다 — backend 가 `createdAt DESC, id DESC` 고정이다. **권한 행의 "조회 전체"** 는 §11.20 화면별 권한표(`외부 상품 매핑 … E = —`)를 채택한 `docs/13` §11 결정에 따라 **경영진 제외**(`external_mapping.read` = S,L,A,F)로 읽는다. 신규 매핑의 외부시스템 선택을 위해 lookup 전용 **`GET /api/external-systems`** 하나만 추가했다(CRUD 아님, 권한은 `external_mapping.read` 재사용). 상태변화 행(`REVIEW_REQUIRED → MATCHED`)은 승인 버튼이 아니라 **외부코드·바코드를 edit 로 추가하면 서버가 파생**하는 방식으로만 구현한다.
+
 ## 11.7 BOM 목록 `/master/boms` (`BOM-LIST-001`)
 
 | 구분 | 내용 |

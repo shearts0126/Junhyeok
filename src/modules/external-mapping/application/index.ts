@@ -91,6 +91,17 @@ export {
   type MappingListDependencies,
 } from './list-mappings';
 
+/**
+ * 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용. CRUD 는 없다.
+ */
+export {
+  listExternalSystems,
+  parseListExternalSystemsQuery,
+  type ExternalSystemView,
+  type ExternalSystemListResult,
+  type ExternalSystemListDependencies,
+} from './list-external-systems';
+
 export {
   EXTERNAL_MAPPING_ENTITY_TYPE,
   EXTERNAL_MAPPING_CREATE_ROUTE_SCOPE,
