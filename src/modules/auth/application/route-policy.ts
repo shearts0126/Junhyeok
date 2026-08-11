@@ -165,6 +165,14 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'external_mapping.update',
   },
 
+  // 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용, read-only.
+  // ⛔ 신규 permission 을 만들지 않는다 — 매핑 조회 권한을 그대로 쓴다.
+  {
+    prefix: '/api/external-systems',
+    methods: ['GET', 'HEAD'],
+    permission: 'external_mapping.read',
+  },
+
   // 관리 화면도 1차에서 조회 권한을 요구한다 (2차는 화면이 부르는 API가 검사).
   { prefix: '/admin/codes', methods: ['GET', 'HEAD'], permission: 'common_code.read' },
   // ⚠️ 신규 등록 화면은 조회 권한만으로 열리면 안 된다 — 더 구체적인 경로
@@ -172,6 +180,14 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
   //    SKU id 는 UUID 라 `/master/skus/{id}` 가 이 prefix 에 걸리지 않는다.
   { prefix: '/master/skus/new', methods: ['GET', 'HEAD'], permission: 'sku.create' },
   { prefix: '/master/skus', methods: ['GET', 'HEAD'], permission: 'sku.read' },
+  // 외부 상품 매핑 관리 화면 `EXT-MAP-001` (T05-4A). 신규/수정은 같은 화면의
+  // dialog 라 별도 `/new`·`/{id}` 경로가 없다 — 진입은 read 권한이면 충분하고
+  // mutation 은 각 API 의 create/update 권한이 막는다.
+  {
+    prefix: '/master/external-mappings',
+    methods: ['GET', 'HEAD'],
+    permission: 'external_mapping.read',
+  },
 ];
 
 export function isPublicPath(pathname: string): boolean {
