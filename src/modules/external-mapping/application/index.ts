@@ -36,8 +36,10 @@ export {
 export {
   normalizeExternalText,
   normalizeExternalBarcode,
+  classifyExternalBarcode,
   normalizeIdentifiers,
   type NormalizedIdentifiers,
+  type ExternalBarcodeClassification,
 } from './normalize';
 
 export {
@@ -99,3 +101,25 @@ export {
 } from './create-mapping';
 
 export { updateExternalMapping } from './update-mapping';
+
+/**
+ * SKU 해석 서비스 (T05-3) — **internal application service** 다.
+ * REST 라우트·권한·HTTP 계약을 만들지 않는다 (docs/14 §4).
+ */
+export {
+  resolveOne,
+  resolveMany,
+  type ResolveExternalMappingInput,
+  type ResolveExternalMappingResult,
+  type ResolverDependencies,
+  type ExternalMappingResolutionStatus,
+  type ExternalMappingMatchMethod,
+  type ExternalMappingResolutionReason,
+} from './resolve-mapping';
+
+export {
+  createPrismaResolverPort,
+  type ExternalMappingResolverPort,
+  type ExternalMappingLookupRow,
+  type ResolverPrismaClient,
+} from './resolver-port';

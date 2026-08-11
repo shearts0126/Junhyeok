@@ -49,45 +49,86 @@ export function normalizeExternalBarcode(
   value: string | null | undefined,
 ): string | null | undefined {
   if (value === undefined) return undefined;
-  if (value === null) return null;
+
+  const classified = classifyExternalBarcode(value);
+  switch (classified.kind) {
+    case 'ABSENT':
+      return null;
+    case 'VALUE':
+      return classified.barcode;
+    case 'INVALID':
+      throw classified.toError();
+  }
+}
+
+/**
+ * ★ 위 canonicalization 의 **비throw 형태** (T05-3 에서 추가).
+ *
+ * 정규화 규칙 자체는 하나다 — 이 함수가 유일한 판정이고
+ * `normalizeExternalBarcode` 는 여기에 "INVALID 면 던진다"만 얹은 얇은 wrapper 다.
+ * T05-2 의 동작(422·400)은 그대로다.
+ *
+ * 외부 데이터 수집 경로(T05-3 resolver)는 잘못된 바코드 하나 때문에 행 전체
+ * 해석을 중단하면 안 되므로, 오류를 던지지 않고 "조회 불가"로 분류만 한다.
+ */
+export type ExternalBarcodeClassification =
+  /** 값이 없다 — `null`·EMPTY 표시값(`''`·`-`·`—`·공백). 오류가 아니다. */
+  | { readonly kind: 'ABSENT' }
+  | { readonly kind: 'VALUE'; readonly barcode: string }
+  /** 정규화로 유효한 바코드를 만들 수 없다. `toError()` 는 T05-2 가 던지던 그 오류다. */
+  | { readonly kind: 'INVALID'; readonly toError: () => Error };
+
+export function classifyExternalBarcode(value: string | null): ExternalBarcodeClassification {
+  if (value === null) return { kind: 'ABSENT' };
 
   const result = normalizeBarcode(value);
 
   switch (result.kind) {
     case 'EMPTY':
-      return null;
+      return { kind: 'ABSENT' };
 
     case 'ERROR':
       if (result.code === 'BARCODE_SCIENTIFIC_NOTATION') {
-        throw rejected(ERROR_CODES.BARCODE_SCIENTIFIC_NOTATION, value);
+        return {
+          kind: 'INVALID',
+          toError: () => rejected(ERROR_CODES.BARCODE_SCIENTIFIC_NOTATION, value),
+        };
       }
       // `BARCODE_READ_AS_NUMBER` — DTO 가 string 을 강제하므로 도달 불가.
-      throw new SystemError({
-        message: '문자열 입력에서 숫자 타입 분류가 나왔습니다 (DTO 계약 위반).',
-        context: { code: result.code },
-      });
+      return {
+        kind: 'INVALID',
+        toError: () =>
+          new SystemError({
+            message: '문자열 입력에서 숫자 타입 분류가 나왔습니다 (DTO 계약 위반).',
+            context: { code: result.code },
+          }),
+      };
 
-    case 'ISSUE':
-      throw rejected(
+    case 'ISSUE': {
+      const code =
         result.code === 'BARCODE_UNVERIFIED'
           ? ERROR_CODES.BARCODE_UNVERIFIED
-          : ERROR_CODES.BARCODE_INVALID_FORMAT,
-        result.raw,
-      );
+          : ERROR_CODES.BARCODE_INVALID_FORMAT;
+      return { kind: 'INVALID', toError: () => rejected(code, result.raw) };
+    }
 
     case 'OK':
       if (result.barcode.length > EXTERNAL_BARCODE_MAX_LENGTH) {
-        throw new ValidationError(
-          [
-            {
-              path: 'externalBarcode',
-              message: `${EXTERNAL_BARCODE_MAX_LENGTH}자 이하여야 합니다.`,
-            },
-          ],
-          { message: '외부 매핑 요청이 올바르지 않습니다.' },
-        );
+        return {
+          kind: 'INVALID',
+          toError: () =>
+            new ValidationError(
+              [
+                {
+                  path: 'externalBarcode',
+                  message: `${EXTERNAL_BARCODE_MAX_LENGTH}자 이하여야 합니다.`,
+                },
+              ],
+              { message: '외부 매핑 요청이 올바르지 않습니다.' },
+            ),
+        };
       }
-      return result.barcode;
+      return { kind: 'VALUE', barcode: result.barcode };
   }
 }
 
