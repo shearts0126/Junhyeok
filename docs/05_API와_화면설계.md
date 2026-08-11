@@ -505,6 +505,8 @@ flowchart LR
 | **금지** | ⛔ **"차이 자동 반영" 버튼을 만들지 않는다.** 조정은 반드시 조정 승인 절차를 거친다 (재고 PRD §19.5) |
 | 권한 | 처리 S,L,A / 조회 +F |
 
+> ✏️ **2026-08-10 설계복구 (SKU 해석 서비스, T05-3)**: 위 흐름도 `SKU 매핑 ①코드 ②바코드 ③**승인된 상품명** ④미매칭` 의 3단계는 **별도의 External Mapping 승인 workflow 를 의미하지 않는다** — repository 에 매핑 승인 컬럼·API·감사 action 이 전무하므로 발명하지 않는다. T05-3 V1 에서 그것은 **현재 유효한 name-only 매핑의 단일 SKU 후보**를 뜻하며, 결과는 `resolutionStatus = REVIEW_REQUIRED` · `autoApplicable = false` · `requiresReview = true` 다(코드·바코드 매칭만 `autoApplicable = true`). 즉 `matchedSkuId` 를 후보로 돌려주는 것은 허용하되 **상품명만으로 자동 원장 반영하지 않는다**(TC-INV-026, 위 "차이 자동 반영 금지"와 같은 방향). 상세 계약은 **`14_설계복구_ExternalMappingResolver.md`** 를 따른다.
+
 ## 11.17 엑셀 업로드 `/data/imports`
 
 ```mermaid
