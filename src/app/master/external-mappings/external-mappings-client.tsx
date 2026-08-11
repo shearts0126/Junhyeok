@@ -10,7 +10,9 @@ import { ErrorBanner, readApiError, usePermissions, type UiError } from '../skus
 import {
   MAPPING_LIST_PAGE_SIZES,
   MAPPING_LIST_STATUSES,
+  MAPPING_STATUS_CLASS,
   MAPPING_STATUS_LABELS,
+  REVIEW_REQUIRED_NOTICE,
   buildMappingListParams,
   formatEffectivePeriod,
   isEndedMapping,
@@ -97,23 +99,13 @@ interface SkuOption {
   status: string;
 }
 
-const STATUS_CLASS: Readonly<Record<string, string>> = {
-  MATCHED: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200',
-  REVIEW_REQUIRED: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
-  UNMATCHED: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
-};
-
-/** T05-2/T05-3 계약을 그대로 보여주는 문구 — 승인 버튼도, review API 도 없다. */
-const REVIEW_REQUIRED_NOTICE =
-  '상품명 기반 매핑입니다. 자동 원장 반영 대상이 아닙니다. 외부코드 또는 바코드를 추가하면 MATCHED 로 전환할 수 있습니다.';
-
 function StatusBadge({ status }: { status: string }) {
   const label = MAPPING_STATUS_LABELS[status as MappingListStatus] ?? status;
   return (
     <span
       data-testid="mapping-status"
       data-status={status}
-      className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${STATUS_CLASS[status] ?? ''}`}
+      className={`inline-flex rounded px-2 py-0.5 text-xs font-medium ${MAPPING_STATUS_CLASS[status] ?? ''}`}
       title={status === 'REVIEW_REQUIRED' ? REVIEW_REQUIRED_NOTICE : undefined}
     >
       {label}
