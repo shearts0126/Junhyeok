@@ -125,6 +125,8 @@
 | POST | `/api/external-mappings/resolve` | SKU 해석 (내부) | — | ①코드 ②바코드 ③승인된 상품명 ④미매칭 | — |
 
 > ✏️ **2026-08-10 설계복구 (외부 상품 매핑 CRUD)**: PATCH DTO 에 identifier 필드가 없어 `REVIEW_REQUIRED → MATCHED` 경로가 성립하지 않는 등 8개 항목이 미결이라 T05-2 를 PRE-FLIGHT BLOCKED 로 보고했다. 계약은 **`13_설계복구_외부상품매핑CRUD.md`** 로 확정한다 — GET·POST·PATCH 3개만 구현하고, `mappingStatus` 는 server-derived, `UNMATCHED` 는 interactive 생성 금지, `warehouseId` 는 T08-1 까지 입력 불가, 매핑 해제는 PATCH `effectiveTo`, 권한은 신규 `external_mapping.*`(read 는 경영진 제외)다. `resolve`(T05-3)·`import`·`unmatched` 는 T05-2 범위 밖이다.
+>
+> ✏️ **2026-08-10 설계복구 (SKU 해석 서비스, T05-3)** — 위 `POST /api/external-mappings/resolve` 행은 **T05-3 V1 에서 supersede** 된다. resolver 는 **internal application service** 로만 구현하며 라우트·권한·HTTP 계약을 만들지 않는다(원문의 목적 "SKU 해석 **(내부)**", 권한 `—` 와도 일치). T17-2 등 application layer 가 서비스를 직접 호출한다. 또한 우선순위 3단계의 **"승인된 상품명"** 은 별도 approval workflow 를 뜻하지 않는다 — repository 에 승인 컬럼·API·감사 action 이 전무하므로 발명하지 않고, **상품명 일치 매핑을 후보로만** 쓰되 `autoApplicable=false`·`requiresReview=true`·`resolutionStatus=REVIEW_REQUIRED` 로 반환한다(TC-INV-026). 규칙 전문은 **`14_설계복구_ExternalMappingResolver.md`**. explicit REST exposure 가 필요하면 미래 Task 에서 별도 설계한다.
 
 ## 10.7 거래처 · 공급조건
 
