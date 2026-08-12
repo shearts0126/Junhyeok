@@ -750,12 +750,16 @@ Route(/api/skus/[id]/history)
 |---|---|
 | `CREATE` | 등록 |
 | `UPDATE` | 수정 |
-| `SUBMIT` | 승인요청 |
+| `SUBMIT` | 승인 요청 |
 | `APPROVE` | 승인 |
 | `REJECT` | 반려 |
-| `DEACTIVATE` | 사용중지 |
-| `ACTIVATE` | 사용재개 |
-| `REQUEST_DUPLICATE` | 중복예외 요청 |
+| `DEACTIVATE` | 비활성화 |
+| `REQUEST_DUPLICATE` | 중복 예외 요청 |
+| `APPROVE_DUPLICATE` | 중복 예외 승인 |
+
+⚠️ 이 8종은 **현재 producer 가 실제로 쓰는 action** 이다. `ACTIVATE` 같은 값은
+아직 어떤 writer 도 쓰지 않으므로 라벨을 미리 만들지 않는다 — 생기면 아래
+fallback 으로 원문이 그대로 보인다.
 
 ★ **알 수 없는 action 은 원문 문자열을 그대로 표시한다.** 빈칸·`기타` 로 뭉개지
 않는다 — 미래에 새 action 이 생겨도 이력이 사라지지 않아야 한다.
