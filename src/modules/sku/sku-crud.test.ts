@@ -986,7 +986,7 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     expect(Object.keys(detail).sort()).toEqual(['GET', 'PATCH', 'dynamic']);
   });
 
-  it('노출 라우트 디렉터리 고정 — T1-4A 워크플로 4종까지, archive·history 등 없음', async () => {
+  it('노출 라우트 디렉터리 고정 — T1-4A 워크플로 4종까지, archive 등 없음', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const skusDir = fileURLToPath(new URL('../../app/api/skus', import.meta.url));
@@ -996,11 +996,13 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     const detailEntries = readdirSync(`${skusDir}/[id]`).sort();
     // T1-4A: submit/approve/reject/deactivate 만.
     // ✏️ T04-3 에서 `barcodes`(바코드 CRUD)가 추가됐다 — docs/10 §4.
-    // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다. history 등도 없음.
+    // ✏️ T1-6B3 에서 `history`(변경이력 read-only)가 추가됐다 — docs/16 §31.
+    // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다.
     expect(detailEntries).toEqual([
       'approve',
       'barcodes',
       'deactivate',
+      'history',
       'reject',
       'route.ts',
       'submit',

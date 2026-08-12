@@ -1,11 +1,12 @@
-# 설계복구 — SKU 상세 잔여 탭 (T1-6B) · 바코드 탭 (T1-6B1) · 외부매핑 탭 (T1-6B2)
+# 설계복구 — SKU 상세 잔여 탭 (T1-6B) · 바코드 탭 (T1-6B1) · 외부매핑 탭 (T1-6B2) · 변경이력 탭 (T1-6B3)
 
 > **2026-08-11 SKU Detail Remaining Tabs Design Recovery Decision**
 >
-> 이 문서는 T1-6B 분할과 **T1-6B1·T1-6B2 구현 계약의 유일한 근거**다.
+> 이 문서는 T1-6B 분할과 **T1-6B1·T1-6B2·T1-6B3 구현 계약의 유일한 근거**다.
 > 여기에 없는 규칙을 코드에서 추론해 만들지 않는다.
 >
-> §1~§18 = T1-6B1(바코드 탭 + T04-4B) · **§19~§26 = T1-6B2(외부시스템 매핑 탭)**
+> §1~§18 = T1-6B1(바코드 탭 + T04-4B) · §19~§26 = T1-6B2(외부시스템 매핑 탭) ·
+> **§27~§40 = T1-6B3(변경이력 탭 + 지원 read API)**
 
 ---
 
@@ -509,3 +510,334 @@ SKU 상세에는 **별도의 lightweight read-only 컴포넌트**를 둔다.
 resolver REST · warehouse(T08) · DataIssue · InventoryException · T15 · T17 ·
 History 탭/API · Supplier · BOM · `/master/skus/approvals` · V7~V9 wiring.
 schema · migration · 신규 API · 신규 permission · route policy 변경 **모두 0** 이다.
+
+---
+
+# T1-6B3 — ⑧ 변경이력 탭 + `GET /api/skus/{id}/history`
+
+> **2026-08-11 SKU 변경이력 Design Recovery Decision (D-1 ~ D-17)**
+>
+> §26 의 `T1-6B3 = DEFERRED` 행은 **이 절(§27~§40)로 해제된다** — 원문은 당시
+> 판단의 역사 기록으로 그대로 둔다.
+
+## 27. PRE-FLIGHT 결과 — 왜 BLOCKED 였나
+
+T1-6B3 PRE-FLIGHT 는 `BLOCKED — DESIGN RECOVERY REQUIRED` 였다. 원문 근거는
+`05 §10.3` 의 **한 줄**과 `05 §11.4` ⑧ 행의 **두 칸**뿐이다.
+
+| 원문 | 내용 | 미결 |
+|---|---|---|
+| `05 §10.3` | `GET /api/skus/{id}/history` · 요청 `page` · 응답 `AuditLog[]` · 권한 **"전체"** | 응답이 배열인지 envelope 인지 · `pageSize` · 정렬 · **"전체" = 어떤 permission** · 어느 entity 까지 |
+| `05 §11.4` ⑧ | `감사로그 타임라인` / `변경 전/후 diff` | 어떤 entity 의 타임라인인지 · diff 렌더링 수준 · 필터 유무 · 변경자 표기 |
+| `05_v0.2 §11.4` | `감사로그 타임라인 + diff` | 위와 동일 |
+
+즉 **API 도 화면도 구현체가 없고**(route 0개, 서비스 0개, 탭 0개) 계약을 코드에서
+추론할 수밖에 없는 상태였다. 그래서 구현 전에 D-1~D-17 로 계약을 고정한다.
+
+⚠️ `AuditLog` 자체는 T02 에서 이미 완성되어 있다 — 13 컬럼 · UPDATE/DELETE/TRUNCATE
+불변 트리거 3종 · `(entity_type, entity_id, occurred_at DESC)` 인덱스 · `actorId`
+FK RESTRICT. **이번 Task 는 그 위에 read path 만 얹는다.**
+
+---
+
+## 28. 이번 범위 — 정확히 둘
+
+1. `GET /api/skus/{id}/history` (신규 read-only API)
+2. SKU 상세 **⑧ 변경이력 탭**
+
+⛔ 그 밖의 어떤 것도 만들지 않는다. 특히:
+
+- global 감사로그 검색 화면·API (`/admin/audit-logs`, `GET /api/audit-logs`)
+- 다른 엔티티의 history endpoint (`/api/external-mappings/{id}/history` 등)
+- 사용자 조회 API · actor 이름 resolver
+- 감사로그 export(엑셀/CSV) · 보존정책 · 아카이빙
+- `AuditLog` write path · 트리거 · 스키마 변경
+
+---
+
+## 29. Entity boundary (D-1 · D-3) — `Sku` + 그 SKU 의 `SkuBarcode`
+
+응답에 포함하는 감사로그는 **정확히 두 `entityType`** 이다.
+
+| `entityType` | 포함 | 근거 |
+|---|---|---|
+| `Sku` | ✅ | `05 §10.3` 이 **SKU 의** history 라고 적었다 |
+| `SkuBarcode` | ✅ | `05 §11.4` ③ 바코드가 SKU 상세의 child tab 이며 부모 없이는 존재할 수 없다 |
+| `SkuExternalMapping` | ⛔ | ④ 외부매핑은 §19~§26 대로 **자기 관리화면(`EXT-MAP-001`)이 주인**이다. SKU history 에 넣으라는 근거가 원문에 없다 |
+| Supplier 계열 · BOM | ⛔ | T06 · T07 이후. 모델 자체가 없다 |
+| 그 밖(CommonCode·SystemSetting·User…) | ⛔ | SKU 상세의 범위가 아니다 |
+
+### 29.1 barcode 이력을 찾는 방법 (D-2)
+
+`AuditLog` 에는 `parentSkuId` 스냅샷이 없다. 추가하지 않는다 —
+`10 §14`(감사로그 컬럼 확정)를 유지한다.
+
+대신 **그 SKU 의 barcode id 를 1회 선조회**한 뒤 감사로그를 단일 쿼리로 읽는다.
+
+```
+SELECT id FROM sku_barcode WHERE sku_id = :skuId          -- 고정 1회
+SELECT … FROM audit_log
+ WHERE (entity_type='Sku' AND entity_id IN (:skuId))
+    OR (entity_type='SkuBarcode' AND entity_id IN (:barcodeIds))
+ ORDER BY occurred_at DESC, id DESC
+ LIMIT 50 OFFSET (page-1)*50
+```
+
+- ⛔ **N+1 금지** — barcode 마다 감사로그를 따로 읽지 않는다.
+- ⛔ **application merge 금지** — 두 결과를 앱에서 합쳐 정렬·자르지 않는다.
+  페이지네이션은 **DB 레벨 단일 쿼리**여야 total 이 정확하다.
+- ★ `SkuBarcode` 는 **물리삭제가 없고**(`status='INACTIVE'` 로만 내려간다)
+  `deletedAt` 컬럼도 없다. 그래서 현재 id 목록만으로 과거 이력까지 전부 찾을 수 있다.
+- ⚠️ **수용된 한계**: 만약 미래에 barcode 물리삭제가 생기면 그 이력은 이 방식으로
+  찾을 수 없다. 그때는 `parentSkuId` 재검토가 아니라 **물리삭제 자체가 금지**다
+  (`00 원칙` — 물리삭제 없음).
+- ⚠️ barcode id 가 0개면 `SkuBarcode` 절을 아예 만들지 않는다.
+  `entity_id IN ()` · `OR: []` 로 **전체 행이 선택되는 사고**를 막는다.
+
+---
+
+## 30. 권한 (D-4) — `sku.read` 재사용
+
+`05 §10.3` 의 권한 칸 `전체` 는 **역할 표기**이지 permission 이름이 아니다.
+SKU 상세를 볼 수 있으면 그 SKU 의 변경이력도 볼 수 있다 — 그래서
+**`sku.read` 를 그대로 쓴다**.
+
+- ⛔ 신규 permission(`audit.read` · `sku.history.read`) 을 만들지 않는다.
+- ⛔ seed · `RolePermission` 데이터 변경 0.
+- ⛔ 신규 route policy 0 — proxy 1차 가드의 기존 `/api/skus` GET → `sku.read`
+  정책이 `/api/skus/{id}/history` 를 그대로 잡는다.
+- ★ 그래도 서비스에서 **`assertPermission(actor, 'sku.read')` 2차 가드**를 재실행한다.
+  proxy 통과를 신뢰하지 않는다.
+- ⛔ **ADMIN bypass 없음** — `RolePermission` 데이터로만 판정한다.
+- ⇒ 결과적으로 **⑧ 탭은 조건부 노출이 아니다**. SKU 상세에 들어온 사용자는
+  ③ 바코드·④ 외부매핑과 달리 전원 이 탭을 본다.
+
+---
+
+## 31. API contract (D-5 · D-6)
+
+```
+GET /api/skus/{id}/history?page=1
+```
+
+**요청**
+
+| 파라미터 | 허용 | 규칙 |
+|---|---|---|
+| `page` | ✅ | 1-base 정수. 생략 시 1. `0`·음수·비정수·비숫자 → **400** |
+| `pageSize` | ⛔ | 서버가 **50 고정**. 보내면 **400** |
+| 그 밖의 모든 키(`action`·`from`·`to`·`actorId`·`entityType`·`q`…) | ⛔ | **400** |
+
+⛔ 미지원 파라미터를 **조용히 무시하지 않는다** — 필터가 걸린 줄 알고
+잘못된 결론을 내리는 것이 빈 400 보다 위험하다.
+
+**응답 200**
+
+```jsonc
+{
+  "items": [
+    {
+      "id": "…",              // AuditLog PK
+      "entityType": "Sku",    // "Sku" | "SkuBarcode"
+      "entityId": "…",
+      "action": "UPDATE",
+      "beforeValue": {…} ,    // 저장된 JSON 그대로. CREATE 는 JSON null
+      "afterValue": {…},
+      "actorId": "…",         // UUID 원문
+      "occurredAt": "2026-08-11T…Z",  // ISO-8601 UTC
+      "reason": null           // string | null
+    }
+  ],
+  "page": 1,
+  "pageSize": 50,
+  "total": 3,
+  "totalPages": 1,
+  "requestId": "…"
+}
+```
+
+- item 은 **정확히 위 9개 필드**다. 더도 덜도 아니다.
+- ⛔ `approvedBy` 를 넣지 않는다 (D-9). §11 의 중복예외 승인과 마찬가지로
+  UUID 뿐이고 사용자 조회 API 가 없어 화면에 쓸 수 없다.
+- ⛔ `AuditLog` 의 `requestId`·`sessionId`·`ipAddress` 를 **item 에 넣지 않는다**
+  (D-13). 그건 global 감사 조회의 범위다. envelope 최상위의 `requestId` 는
+  **응답 자체의 추적 ID** 로 전 API 공통 convention 이며 이것과 다르다.
+- ⛔ 배열(`AuditLog[]`)을 그대로 반환하지 않는다 — `05 §10.3` 이 `page` 를 함께
+  적었으므로 페이지 정보 없는 배열은 자기모순이다. 기존 목록 API 와 **동일한
+  envelope** 을 쓴다.
+
+**에러**
+
+| 상황 | 코드 |
+|---|---|
+| 쿼리 위반 · `{id}` 가 UUID 아님 | **400** |
+| 미인증 | **401** |
+| `sku.read` 없음 | **403** |
+| `{id}` SKU 없음 / soft-delete 됨 | **404** |
+| 그 밖 | **500** |
+
+⛔ 403 을 빈 목록(200)으로 위장하지 않는다. ⛔ 404 를 빈 목록으로 위장하지 않는다.
+
+---
+
+## 32. 정렬·페이지네이션 (D-7)
+
+- 정렬 **`occurredAt DESC, id DESC`**. `occurredAt` 동시각 tie 를 `id` 로 깨서
+  페이지 경계에서 행이 사라지거나 중복되지 않게 한다.
+- ⛔ cursor pagination 을 만들지 않는다 — `05 §10.3` 이 `page` 다.
+- `pageSize` 는 **서버 상수 50**.
+- 이력이 0건이면 `200` · `items: []` · `total: 0` · **`totalPages: 0`**.
+  ★ `Math.max(1, …)` 로 1 페이지가 있는 척하지 않는다.
+- 존재하는 total 을 넘는 `page` 는 **200 + 빈 items** 다(400 아님) — 기존 목록
+  API convention 과 같다.
+
+---
+
+## 33. 아키텍처 (D-15)
+
+```
+Route(/api/skus/[id]/history)
+  → SKU Application Service (listSkuHistory: 권한·SKU 존재·barcode id 수집)
+    → SKU repository (부모 SKU / barcode id)
+    → Audit History Read Repository (findAuditHistoryPage)
+      → Prisma
+```
+
+- ⛔ **Route 에서 Prisma 직접 접근 금지.**
+- Audit read repository 는 `Pick<PrismaClient, 'auditLog'>` 만 받는다 —
+  SKU 지식을 갖지 않고 `(entityType, entityIds)` 쌍만 받는 **범용 read** 다.
+- ⛔ `AuditLog` **write path·`auditLogger`·불변 트리거를 건드리지 않는다.**
+- schema · migration · permission · seed · route policy 변경 **모두 0**.
+
+---
+
+## 34. 변경자 표기 (D-8)
+
+`actorId` **UUID 원문**을 `변경자` 라벨과 함께 표시한다.
+
+- ⛔ 사용자 조회 API 를 만들지 않는다. ⛔ 이름을 추정하지 않는다.
+- ⛔ `User` join 을 넣지 않는다 — 이번 범위 밖이며, 넣는 순간 감사로그 read 가
+  사용자 모듈에 결합된다.
+- ★ 이는 §11(중복예외 `approvedBy`)에서 이미 확정한 것과 **같은 convention** 이다.
+
+---
+
+## 35. diff UX (D-10 · D-11 · D-12)
+
+행은 **summary 한 줄 + native `<details>` 펼침**이다.
+
+**summary**: `occurredAt` · entity 배지 · action 라벨 · `변경자 {UUID}` ·
+(있을 때만) `사유/메모 {reason}`
+
+**펼침**: `변경 전` / `변경 후` 두 패널에 저장된 JSON 을 **그대로 pretty-print**
+(2-space indent, `<pre>`).
+
+- ⛔ field label 매핑 테이블을 만들지 않는다.
+- ⛔ action 별 전용 렌더러(“상태가 X→Y 로 바뀜” 같은 문장 생성)를 만들지 않는다.
+- ⛔ accordion framework · 3rd-party diff viewer 를 도입하지 않는다.
+- ★ `beforeValue` 가 없는 CREATE 는 `null` 로 표시된다. 실제 저장값이
+  **JSON `null`**(SQL NULL 아님)이므로 `—`·빈칸이 아니라 `null` 이 정확하다.
+- nested object 를 평탄화하지 않는다.
+
+### 35.1 라벨 (D-11)
+
+| entityType | 라벨 |
+|---|---|
+| `Sku` | `SKU` |
+| `SkuBarcode` | `바코드` |
+
+| action | 라벨 |
+|---|---|
+| `CREATE` | 등록 |
+| `UPDATE` | 수정 |
+| `SUBMIT` | 승인요청 |
+| `APPROVE` | 승인 |
+| `REJECT` | 반려 |
+| `DEACTIVATE` | 사용중지 |
+| `ACTIVATE` | 사용재개 |
+| `REQUEST_DUPLICATE` | 중복예외 요청 |
+
+★ **알 수 없는 action 은 원문 문자열을 그대로 표시한다.** 빈칸·`기타` 로 뭉개지
+않는다 — 미래에 새 action 이 생겨도 이력이 사라지지 않아야 한다.
+
+### 35.2 사유 (D-12)
+
+라벨은 **`사유/메모`** 다. `reason` 이 `null`/빈 문자열이면 **줄 자체를 만들지
+않는다** — ⛔ `—` placeholder 없음.
+
+### 35.3 없는 것 (D-13)
+
+⛔ action 필터 · 기간 필터 · 변경자 검색 · entity 필터 · 페이지 크기 선택 ·
+엑셀 다운로드 · `requestId`/`sessionId`/`ipAddress` 표시.
+API 가 `page` 만 받으므로 이런 UI 는 만들 수단 자체가 없다.
+
+---
+
+## 36. 탭 구성 (D-14)
+
+**상세 6탭** — ① 기본정보 ② 코드·분류 ③ 바코드 ④ 외부시스템 매핑
+⑤ 재고관리 설정 **⑧ 변경이력**.
+
+- `05 §11.4` 의 **원문 순서를 유지**한다(⑥ 공급조건·⑦ BOM 은 T06·T07 이후이므로
+  아직 없고, 구현된 탭만 순서대로 노출한다).
+- ⑧ 은 항상 **마지막**이다.
+- ⛔ 등록 화면(`/master/skus/new`)은 **3탭 그대로**다. 아직 생성되지 않은 SKU 에는
+  변경이력이 존재할 수 없다 — placeholder·disabled 탭도 만들지 않는다.
+- 페이지 이동은 **탭 내부 local state** 다. ⛔ URL `searchParams` 에 쓰지 않는다
+  (③·④ 탭과 동일한 convention).
+- 3건뿐이라 `totalPages <= 1` 이면 pagination 컨트롤 자체를 렌더하지 않는다.
+
+---
+
+## 37. 상태 표시
+
+| 상태 | 표시 |
+|---|---|
+| 로딩 | `변경이력을 불러오는 중…` |
+| 0건 | `변경이력이 없습니다.` |
+| 403 | `변경이력 조회 권한이 없습니다. (403)` — ⛔ 빈 목록으로 위장 금지 |
+| 400/404/500 | 공통 `ErrorBanner` (`code`·`message`·`requestId`) |
+
+---
+
+## 38. 인수조건 (T1-6B3)
+
+1. `GET /api/skus/{id}/history` 가 `sku.read` 로 200 을 준다.
+2. 응답 item 이 **정확히 9개 필드**다 — `approvedBy`·`sessionId`·`ipAddress`·
+   AuditLog `requestId` 가 없다.
+3. `Sku` CREATE/UPDATE/SUBMIT·`SkuBarcode` CREATE/UPDATE/DEACTIVATE/
+   REQUEST_DUPLICATE 이력이 모두 나온다.
+4. **`SkuExternalMapping` 이력은 나오지 않는다.**
+5. 다른 SKU 의 이력이 섞이지 않는다.
+6. 정렬이 `occurredAt DESC, id DESC` 이고 동시각 tie 가 안정적이다.
+7. 51건 이상이면 2페이지로 나뉘고 `total`·`totalPages` 가 맞는다.
+8. 0건 → `items: []` · `total: 0` · **`totalPages: 0`**.
+9. `pageSize=10`·`action=CREATE` 등 미지원 쿼리 → **400**.
+10. 없는 SKU → **404**, 권한 없음 → **403**.
+11. 상세 탭이 6개이고 마지막이 `변경이력`, 등록은 3탭 그대로다.
+12. 상세 펼침에 변경 전/후 JSON 이 그대로 보이고 CREATE 의 before 는 `null` 이다.
+13. schema · migration · permission · seed · route policy diff **0**.
+14. AuditLog write path 변경 0 — 이 endpoint 는 **read-only** 다.
+
+---
+
+## 39. 범위 밖 재확인
+
+⛔ global `/admin/audit-logs` · `GET /api/audit-logs` · 기간/actor/action 검색 ·
+엑셀 export · 보존정책 · 다른 엔티티 history endpoint · 사용자 이름 resolver ·
+`AuditLog` 컬럼 추가(`parentSkuId` 포함) · 감사로그 수정/삭제 경로 ·
+DataIssue · InventoryException · T15 · T17.
+
+---
+
+## 40. 남은 범위 (§26 갱신)
+
+| Task | 탭 | 상태 |
+|---|---|---|
+| **T1-6B1** | ③ 바코드 (+T04-4B) | **DONE** |
+| **T1-6B2** | ④ 외부시스템 매핑 | **DONE** |
+| **T1-6B3** | ⑧ 변경이력 | **이번 Task** |
+| **T1-6B4** | ⑥ 공급조건 | **BLOCKED** — T06 이후 |
+| **T1-6B5** | ⑦ BOM | **BLOCKED** — T07 이후 |
+
+T1-6B3 이 끝나면 **T1-6B 중 T06/T07 에 의존하지 않는 부분은 전부 완료**다.

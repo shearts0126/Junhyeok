@@ -51,3 +51,11 @@ export const E2E_MAPPING_CODE = 'ZZX-MAP-015';
 export const E2E_MAPPING_REVIEW_NAME = 'E2E 상품명만 매핑';
 /** ⚠️ `E2E_MAPPING_CODE` 의 접두사가 되면 안 된다 — 행 필터가 두 행에 걸린다. */
 export const E2E_MAPPING_ENDED_CODE = 'ZZX-OLD-015';
+
+/**
+ * SKU 상세 변경이력 탭 픽스처 (T1-6B3).
+ *
+ * `ZZS-E2E-016` 이 SKU CREATE/UPDATE + 바코드 CREATE 감사로그를 갖고,
+ * 같은 SKU 의 `SkuExternalMapping` CREATE 감사로그는 **탭에 나오지 않아야** 한다.
+ */
+export const E2E_HISTORY_BARCODE = '8809999900016';

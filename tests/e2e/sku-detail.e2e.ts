@@ -181,24 +181,25 @@ test.describe('신규 SKU 등록', () => {
 });
 
 test.describe('상세 조회·수정', () => {
-  test('★ 5개 탭(바코드·외부매핑 포함)만 존재 — 미래 탭·코드추천·음수허용 없음', async ({
+  test('★ 6개 탭(바코드·외부매핑·변경이력 포함)만 존재 — 미래 탭·코드추천·음수허용 없음', async ({
     page,
   }) => {
     await login(page, ADMIN);
     await openDetail(page, 'ZZS-E2E-002');
 
-    // ★ T1-6B1 에서 ③ 바코드, T1-6B2 에서 ④ 외부시스템 매핑이 더해졌다.
+    // ★ T1-6B1 ③ 바코드, T1-6B2 ④ 외부시스템 매핑, T1-6B3 ⑧ 변경이력이 더해졌다.
     //   순서는 원문 8탭의 논리 순서다.
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(5);
+    await expect(tabs).toHaveCount(6);
     await expect(tabs.nth(0)).toHaveText('기본정보');
     await expect(tabs.nth(1)).toHaveText('코드·분류');
     await expect(tabs.nth(2)).toHaveText('바코드');
     await expect(tabs.nth(3)).toHaveText('외부시스템 매핑');
     await expect(tabs.nth(4)).toHaveText('재고관리 설정');
+    await expect(tabs.nth(5)).toHaveText('변경이력');
 
-    // ⛔ 변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 은 아직 없다.
-    for (const forbidden of ['공급조건', 'BOM', '변경이력']) {
+    // ⛔ 공급조건(T06)·BOM(T07) 은 아직 없다.
+    for (const forbidden of ['공급조건', 'BOM']) {
       await expect(page.getByRole('tab', { name: forbidden }), forbidden).toHaveCount(0);
     }
     for (const forbidden of ['코드 추천', '폐기', '엑셀']) {

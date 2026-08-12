@@ -18,7 +18,7 @@ import { SKU_ITEM_TYPE_LABELS, SKU_ITEM_TYPE_OPTIONS, type SkuFormValue } from '
  *
  * ⛔ 등록 화면에 child entity 탭(바코드·외부매핑)을 disabled·placeholder 로도
  *    두지 않는다.
- * ⛔ 변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 아직 없다.
+ * ⛔ 공급조건(T06)·BOM(T07) 탭은 아직 없다.
  */
 
 /** 등록 화면(`/master/skus/new`) 탭 — child entity 탭이 없다. */
@@ -32,8 +32,9 @@ export const SKU_CREATE_TABS = [
  * 상세 화면(`/master/skus/{id}`) 탭.
  *
  * ★ 순서는 원문 8탭(`05 §11.4`)의 논리 순서를 그대로 따른다 —
- *   ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정.
- *   구현된 탭만 남기되 **원문 순서를 재배열하지 않는다.**
+ *   ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정
+ *   **⑧ 변경이력**. 구현된 탭만 남기되 **원문 순서를 재배열하지 않는다** —
+ *   아직 없는 ⑥ 공급조건(T06)·⑦ BOM(T07)이 나중에 제자리에 들어온다.
  */
 export const SKU_DETAIL_TABS = [
   { key: 'basic', label: '기본정보' },
@@ -41,6 +42,7 @@ export const SKU_DETAIL_TABS = [
   { key: 'barcode', label: '바코드' },
   { key: 'externalMapping', label: '외부시스템 매핑' },
   { key: 'inventory', label: '재고관리 설정' },
+  { key: 'history', label: '변경이력' },
 ] as const;
 
 /** 폼 입력 탭 키 — `SkuTabPanel` 이 그리는 탭만 포함한다(바코드 제외). */

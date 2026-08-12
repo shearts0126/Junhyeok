@@ -104,9 +104,9 @@ describe('★ 등록/상세 탭 배열 분리', () => {
     expect(keys.indexOf('barcode')).toBe(keys.indexOf('classification') + 1);
   });
 
-  it('4. 아직 없는 탭(공급조건·BOM·변경이력)은 어느 배열에도 없다', () => {
+  it('4. 아직 없는 탭(공급조건·BOM)은 어느 배열에도 없다', () => {
     const labels = [...SKU_CREATE_TABS, ...SKU_DETAIL_TABS].map((tab) => tab.label);
-    for (const absent of ['공급조건', 'BOM', '변경이력']) {
+    for (const absent of ['공급조건', 'BOM']) {
       expect(labels, absent).not.toContain(absent);
     }
   });
