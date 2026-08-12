@@ -50,6 +50,9 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'external_mapping.read', description: '외부 상품 매핑 조회' },
   { permissionKey: 'external_mapping.create', description: '외부 상품 매핑 생성' },
   { permissionKey: 'external_mapping.update', description: '외부 상품 매핑 수정' },
+  { permissionKey: 'supplier.read', description: '거래처·공급조건 조회' },
+  { permissionKey: 'supplier.create', description: '거래처·공급조건 생성' },
+  { permissionKey: 'supplier.update', description: '거래처·공급조건 수정' },
 ];
 
 /**
@@ -135,6 +138,20 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'external_mapping.update' },
   { roleCode: 'SCM_LEADER', permissionKey: 'external_mapping.update' },
   { roleCode: 'SCM_STAFF', permissionKey: 'external_mapping.update' },
+  // 거래처·공급조건 (T06-2, docs/17 §44·§45): 조회 A·L·S·F / 작성·수정 A·L·S.
+  // ★ read 에도 **EXECUTIVE 가 없다** — API 표 "전체"와 화면별 권한표
+  //   (`거래처·공급조건 … E = —`)의 충돌에서 화면별 권한표를 채택했다 (D-21,
+  //   external_mapping 과 동일한 판단).
+  { roleCode: 'ADMIN', permissionKey: 'supplier.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'supplier.read' },
+  { roleCode: 'FINANCE', permissionKey: 'supplier.read' },
+  { roleCode: 'ADMIN', permissionKey: 'supplier.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'supplier.create' },
+  { roleCode: 'ADMIN', permissionKey: 'supplier.update' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier.update' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'supplier.update' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */
