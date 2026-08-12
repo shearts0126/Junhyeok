@@ -267,6 +267,15 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // 51건 — 페이지 크기 50 을 한 건 넘겨 이전/다음 컨트롤을 켠다.
+      {
+        skuCode: 'ZZS-E2E-017',
+        skuName: 'E2E 변경이력 페이지네이션',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
   });
 
@@ -447,6 +456,25 @@ async function main(): Promise<void> {
         occurredAt: new Date('2026-08-04T00:00:00.000Z'),
       },
     ],
+  });
+
+  // ── 페이지네이션 픽스처 (T1-6B3) ──────────────────────────────
+  // `ZZS-E2E-017` 에 **51건** 을 심는다 — 페이지 크기 50 을 한 건 넘겨야
+  // 이전/다음 컨트롤이 켜진다 (`docs/16` §36).
+  // occurredAt 을 1분 간격으로 내려 최신순이 결정적이게 한다.
+  const pagingSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-017' } });
+  await prisma.auditLog.createMany({
+    data: Array.from({ length: 51 }, (_, index) => ({
+      entityType: 'Sku',
+      entityId: pagingSku.id,
+      action: 'UPDATE',
+      beforeValue: { seq: index },
+      afterValue: { seq: index + 1 },
+      actorId: adminUser.id,
+      // 2026-08-03T23:59:00Z 부터 1분씩 거슬러 올라간다 — 위 정리 쿼리의
+      // `>= 08-01 AND < 08-05` 범위 안에 있어야 다음 실행에서 지워진다.
+      occurredAt: new Date(Date.UTC(2026, 7, 3, 23, 59 - index, 0)),
+    })),
   });
 
   await disconnectPrisma();

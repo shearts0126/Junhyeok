@@ -806,11 +806,13 @@ API 가 `page` 만 받으므로 이런 UI 는 만들 수단 자체가 없다.
 2. 응답 item 이 **정확히 9개 필드**다 — `approvedBy`·`sessionId`·`ipAddress`·
    AuditLog `requestId` 가 없다.
 3. `Sku` CREATE/UPDATE/SUBMIT·`SkuBarcode` CREATE/UPDATE/DEACTIVATE/
-   REQUEST_DUPLICATE 이력이 모두 나온다.
+   REQUEST_DUPLICATE/APPROVE_DUPLICATE 이력이 모두 나온다.
+   `INACTIVE` 로 내려간 바코드의 **과거 이력도 그대로 남는다**.
 4. **`SkuExternalMapping` 이력은 나오지 않는다.**
 5. 다른 SKU 의 이력이 섞이지 않는다.
 6. 정렬이 `occurredAt DESC, id DESC` 이고 동시각 tie 가 안정적이다.
-7. 51건 이상이면 2페이지로 나뉘고 `total`·`totalPages` 가 맞는다.
+7. 51건 이상이면 2페이지로 나뉘고 `total`·`totalPages` 가 맞으며, 탭의
+   이전/다음 컨트롤이 URL 을 바꾸지 않고 페이지를 옮긴다.
 8. 0건 → `items: []` · `total: 0` · **`totalPages: 0`**.
 9. `pageSize=10`·`action=CREATE` 등 미지원 쿼리 → **400**.
 10. 없는 SKU → **404**, 권한 없음 → **403**.

@@ -7,10 +7,13 @@ import {
   BARCODE_CREATE_PERMISSION,
   BARCODE_DEACTIVATE_PERMISSION,
   BARCODE_READ_PERMISSION,
+  BARCODE_APPROVE_DUPLICATE_PERMISSION,
   BARCODE_REQUEST_DUPLICATE_PERMISSION,
   BARCODE_UPDATE_PERMISSION,
+  approveDuplicateBarcode,
   createSkuBarcode,
   deactivateSkuBarcode,
+  parseApproveDuplicateInput,
   parseCreateBarcodeInput,
   parseRequestDuplicateCandidateInput,
   requestDuplicateCandidate,
@@ -76,6 +79,7 @@ const WRITER: ActorContext = createActorContext({
     BARCODE_UPDATE_PERMISSION,
     BARCODE_DEACTIVATE_PERMISSION,
     BARCODE_REQUEST_DUPLICATE_PERMISSION,
+    BARCODE_APPROVE_DUPLICATE_PERMISSION,
     EXTERNAL_MAPPING_CREATE_PERMISSION,
   ],
   requestId: 'req-hist-writer',
@@ -269,6 +273,42 @@ describe('★ entity 범위 — Sku + 그 SKU 의 SkuBarcode 뿐', () => {
 
     const result = await listSkuHistory(READER, targetSkuId, { page: 1 });
     expect(result.items.map((item) => item.action)).toContain('REQUEST_DUPLICATE');
+  });
+
+  it('11b. ★ APPROVE_DUPLICATE 도 포함되며 approvedBy 는 여전히 노출되지 않는다', async () => {
+    const otherSkuId = await newSku('appr-other');
+    const targetSkuId = await newSku('appr-target');
+    const shared = barcodeValue('78');
+    await createSkuBarcode(
+      WRITER,
+      otherSkuId,
+      parseCreateBarcodeInput({ barcode: shared, barcodeType: 'UNIT' }),
+    );
+    const candidate = await requestDuplicateCandidate(
+      WRITER,
+      targetSkuId,
+      parseRequestDuplicateCandidateInput({ barcode: shared, barcodeType: 'UNIT' }),
+    );
+    await approveDuplicateBarcode(
+      WRITER,
+      targetSkuId,
+      candidate.barcode.id,
+      parseApproveDuplicateInput({ reason: '이력 테스트 승인 사유' }),
+    );
+
+    const result = await listSkuHistory(READER, targetSkuId, { page: 1 });
+    const approved = result.items.find((item) => item.action === 'APPROVE_DUPLICATE');
+    expect(approved, 'APPROVE_DUPLICATE 이력이 있어야 한다').toBeDefined();
+    expect(approved!.entityType).toBe('SkuBarcode');
+    expect(approved!.entityId).toBe(candidate.barcode.id);
+    // 사유는 보이지만 ★ 승인자 UUID 는 projection 에 없다 (`docs/16` §31).
+    expect(approved!.reason).toBe('이력 테스트 승인 사유');
+    expect(Object.keys(approved!)).not.toContain('approvedBy');
+    // 저장 자체는 되어 있다 — 응답에서만 뺀 것이다.
+    const stored = await getPrismaClient().auditLog.findUniqueOrThrow({
+      where: { id: approved!.id },
+    });
+    expect(stored.approvedBy).toBe(ACTOR_ID);
   });
 
   it('12. ★ 다른 SKU 의 감사로그와 그 SKU 바코드 이력은 섞이지 않는다', async () => {

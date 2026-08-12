@@ -158,6 +158,27 @@ test.describe('★ 변경이력 타임라인 (ADMIN)', () => {
     await expect(page.getByTestId('history-tab-empty')).toHaveText('변경이력이 없습니다.');
     await expect(page.getByTestId('history-row')).toHaveCount(0);
   });
+
+  test('★ 51건이면 이전/다음으로 페이지를 옮긴다 (URL 은 그대로)', async ({ page }) => {
+    await login(page, ADMIN);
+    await openHistoryTab(page, 'ZZS-E2E-017');
+
+    // 페이지 크기는 서버 고정 50 이다.
+    await expect(page.getByTestId('history-row')).toHaveCount(50);
+    await expect(page.getByTestId('history-page-info')).toHaveText('1 / 2 페이지 · 총 51 건');
+    await expect(page.getByTestId('history-prev')).toBeDisabled();
+
+    await page.getByTestId('history-next').click();
+    await expect(page.getByTestId('history-row')).toHaveCount(1);
+    await expect(page.getByTestId('history-page-info')).toHaveText('2 / 2 페이지 · 총 51 건');
+    await expect(page.getByTestId('history-next')).toBeDisabled();
+    // ★ 페이지 상태는 탭 내부다 — URL 에 남기지 않는다.
+    await expect(page).toHaveURL(/\/master\/skus\/[0-9a-f-]{36}$/);
+
+    await page.getByTestId('history-prev').click();
+    await expect(page.getByTestId('history-row')).toHaveCount(50);
+    await expect(page.getByTestId('history-page-info')).toHaveText('1 / 2 페이지 · 총 51 건');
+  });
 });
 
 test.describe('권한 — sku.read', () => {
