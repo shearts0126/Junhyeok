@@ -165,6 +165,23 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'external_mapping.update',
   },
 
+  // 거래처·공급조건 (T06-2, docs/17_설계복구_거래처공급조건.md §39~) —
+  // Supplier 와 SupplierSku 는 **하나의 capability** 다(D-22) — `supplier.*` 3종만
+  // 쓰고 `supplier_sku.*` 를 만들지 않는다. 따라서 nested
+  // `/api/suppliers/{id}/skus` 도 아래 GET/POST 정책이 그대로 잡는다(별도
+  // contains 분기 불필요). `/api/supplier-skus` 는 `/api/suppliers` 의 prefix
+  // 매칭에 걸리지 않는 독립 경로다(끝 문자가 다르다).
+  // ⚠️ DELETE 라우트는 존재하지 않지만(405), 1차 가드는 update 로 묶어
+  //    read 권한만 가진 사용자의 변경성 요청이 핸들러에 닿지 않게 한다.
+  { prefix: '/api/suppliers', methods: ['GET', 'HEAD'], permission: 'supplier.read' },
+  { prefix: '/api/suppliers', methods: ['POST'], permission: 'supplier.create' },
+  { prefix: '/api/suppliers', methods: ['PATCH', 'PUT', 'DELETE'], permission: 'supplier.update' },
+  {
+    prefix: '/api/supplier-skus',
+    methods: ['PATCH', 'PUT', 'DELETE'],
+    permission: 'supplier.update',
+  },
+
   // 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용, read-only.
   // ⛔ 신규 permission 을 만들지 않는다 — 매핑 조회 권한을 그대로 쓴다.
   {
