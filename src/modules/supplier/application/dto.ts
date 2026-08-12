@@ -35,7 +35,7 @@ export type SupplyTypeValue = (typeof SUPPLY_TYPES)[number];
 // ═══════════════════════════════════════════════════════════════
 
 /** `YYYY-MM-DD` — DB `@db.Date` 와 동일한 date-only semantics. */
-const dateString = z
+export const dateString = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'YYYY-MM-DD 형식이어야 합니다.')
   .refine((value) => !Number.isNaN(new Date(`${value}T00:00:00.000Z`).getTime()), {
@@ -66,7 +66,10 @@ const leadTimeDaysSchema = z.number().int().min(0, '리드타임은 0 이상이�
 
 const requiredCode = (max: number) => z.string().trim().min(1).max(max);
 
-function toValidationError(issues: readonly z.core.$ZodIssue[], message: string): ValidationError {
+export function toValidationError(
+  issues: readonly z.core.$ZodIssue[],
+  message: string,
+): ValidationError {
   return new ValidationError(
     issues.map((issue) => ({
       path: issue.path.length > 0 ? issue.path.join('.') : 'body',

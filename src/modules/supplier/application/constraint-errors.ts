@@ -128,6 +128,50 @@ export function translateSupplierWriteError(error: unknown, supplierCode: string
   throw error;
 }
 
+export function supplierPriceEffectiveFromDuplicate(): ConflictError {
+  return new ConflictError(ERROR_CODES.SUPPLIER_PRICE_EFFECTIVE_FROM_DUPLICATE, {
+    message: '같은 공급조건에 동일한 적용 시작일의 가격이 이미 있습니다.',
+    publicHint:
+      '미승인 가격이 시작일을 선점했을 수 있습니다 — 가격이력에서 해당 시작일 행을 확인하세요.',
+    retryable: false,
+  });
+}
+
+export function supplierPriceChainConflict(context: {
+  readonly supplierSkuId: string;
+  readonly asOf: string;
+  readonly candidateIds: readonly string[];
+}): ConflictError {
+  return new ConflictError(ERROR_CODES.SUPPLIER_PRICE_CHAIN_CONFLICT, {
+    message: '같은 기준일에 유효한 승인 가격이 2건 이상입니다 — 가격 chain 이 손상되었습니다.',
+    publicHint: '관리자에게 가격 이력 정합성 확인을 요청하세요.',
+    retryable: false,
+    context,
+  });
+}
+
+/**
+ * SupplierSkuPrice 쓰기 오류 번역 (T06-3, §46) — **price 전용 mapper** 다.
+ *
+ * price 테이블의 UNIQUE 는 `(supplier_sku_id, effective_from)` 하나뿐이고
+ * EXCLUDE·CHECK 가 없다 — P2039 가 도달하면 계약 버그이므로 숨기지 않고
+ * 그대로 던진다 (T06-2 의 SQLSTATE distinction 원칙 유지).
+ */
+export function translateSupplierPriceWriteError(error: unknown): never {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    const meta = asRecord(error.meta) ?? {};
+    const fields = uniqueConstraintFields(meta) ?? [];
+    if (fields.some((field) => field === 'effective_from' || field === 'effectiveFrom')) {
+      throw supplierPriceEffectiveFromDuplicate();
+    }
+    // 구조화 정보가 없으면 constraint 이름으로 최후 판정한다.
+    if (rawMessage(meta).includes('supplier_sku_price_supplier_sku_id_effective_from_key')) {
+      throw supplierPriceEffectiveFromDuplicate();
+    }
+  }
+  throw error;
+}
+
 /**
  * SupplierSku 쓰기 오류 번역 — 세 invariant 를 **서로 다른 오류**로 가른다.
  * 단순 supplierId+skuId 중복 판정은 존재하지 않는다 — 기간이 겹치지 않으면

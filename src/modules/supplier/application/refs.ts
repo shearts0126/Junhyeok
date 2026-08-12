@@ -11,7 +11,10 @@ import { DomainError, ERROR_CODES } from '@/shared/errors';
  *    않는다 — authoritative 근거가 없다 (docs/13 §5 와 동일한 판단).
  */
 
-export type SupplierReadClient = Pick<PrismaClient, 'supplier' | 'supplierSku' | 'sku'>;
+export type SupplierReadClient = Pick<
+  PrismaClient,
+  'supplier' | 'supplierSku' | 'sku' | 'supplierSkuPrice'
+>;
 export type SupplierDbClient = SupplierReadClient | TransactionClient;
 
 export function supplierNotFound(id: string): DomainError {
@@ -25,6 +28,13 @@ export function supplierSkuNotFound(id: string): DomainError {
   return new DomainError(ERROR_CODES.NOT_FOUND, {
     message: `공급조건 '${id}' 이(가) 없습니다.`,
     context: { supplierSkuId: id },
+  });
+}
+
+export function supplierSkuPriceNotFound(id: string): DomainError {
+  return new DomainError(ERROR_CODES.NOT_FOUND, {
+    message: `가격 '${id}' 이(가) 없습니다.`,
+    context: { supplierSkuPriceId: id },
   });
 }
 
