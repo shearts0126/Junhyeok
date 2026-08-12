@@ -296,6 +296,8 @@ erDiagram
 
 > ✏️ **2026-08-10 설계복구 (외부 상품 매핑 스키마, T05-1)**: 위 `sku_external_mapping` 행의 **조건부 UNIQUE 2종**이 authoritative 다(모델 선언 주석에는 1종만 있다). 두 predicate 는 원문 그대로 구현했고 index 이름은 문서에 없어 **`ux_external_mapping_code` · `ux_external_mapping_primary`** 로 확정했다. 특히 primary 쪽에 `AND effective_to IS NULL` 을 **추가하지 않으며**, code 쪽에 `external_product_code IS NOT NULL` 도 **추가하지 않는다**(`NULL <> ''` 는 NULL 이라 partial index 대상에서 이미 제외된다). 한편 `SkuExternalMapping.warehouseId` 는 `Warehouse`(T08-1) 가, `ExternalSystem.snapshots` 는 `ExternalInventorySnapshot`(T17-1) 이 아직 없어 T05-1 을 PRE-FLIGHT BLOCKED 로 보고했다 — `warehouseId` 는 **scalar 컬럼만** 만들고 FK/relation 은 T08-1 에서, `snapshots` 는 T17-1 에서 양방향으로 추가한다. 감사 컬럼은 §공통 규약의 4종이 아니라 **각 모델의 명시 선언**을 따른다(`SkuExternalMapping` = `createdAt` 만, `ExternalSystem` = 없음). 전문은 **`12_설계복구_외부상품매핑스키마.md`**.
 
+> ✏️ **2026-08-12 설계복구 (거래처·공급조건 스키마, T06-1)**: 위 `supplier_sku` 행의 **조건부 UNIQUE** 는 원문 그대로 채택하며 index 이름은 문서에 없어 **`ux_supplier_sku_primary_current`** 로 확정했다 — key 는 `sku_id` **단독**이라 공급업체가 달라도 현행 대표는 SKU 당 1개이고, `effective_to IS NULL` predicate 덕분에 **종료된 과거 대표는 새 대표를 막지 않는다**(같은 표의 `sku_barcode` 는 `status='ACTIVE'`, `sku_external_mapping` 은 predicate 자체가 없어 셋이 서로 다르다 — 복사 금지). ⛔ 원문에 없는 `effective_from <= CURRENT_DATE` 를 추가하지 않으므로 **미래 시작 대표도 이 UNIQUE 대상**이며, 그 한계(예약 대표 불가)를 수용한다. 한편 `supplier_sku` / `supplier_sku_price` 의 위 `UNIQUE(... effective_from)` 은 **동일 시작일 중복만** 막고 부분중첩·완전포함·open-ended 중첩은 통과시켜 backlog T06-1 완료조건 `적용기간 중첩 차단`(`07:93`, v0.2 `중첩 INSERT 실패`)에 미달한다. 따라서 **`supplier_sku` 에 한해** `EXCLUDE USING gist (supplier_id WITH =, sku_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&)` 를 raw SQL 로 추가하고(constraint `supplier_sku_effective_period_excl`, **`btree_gist` 프로젝트 최초 도입**), 기존 UNIQUE 는 **삭제하지 않고 함께 유지**한다. ⛔ `supplier_sku_price` 에는 EXCLUDE 를 걸지 않는다 — 가격의 계약은 `05 §10.6` 의 "**적용일 중복** 차단 + 이전 가격 `effectiveTo` **자동 마감**" 이며 자동 마감은 T06-3 application 의 몫이다. 적용기간은 두 테이블 모두 **half-open `[effective_from, effective_to)`** 이므로 경계가 맞닿는 기간(`~02-01` 과 `02-01~`)은 겹치지 않고, `effective_to = effective_from` 인 길이 0 구간은 CHECK 로 금지한다. 전문은 **`17_설계복구_거래처공급조건.md`**.
+
 ## 6.3 ERD — Layer 3 (재고 코어) ★
 
 ```mermaid
@@ -1009,6 +1011,30 @@ model SkuExternalMapping {
 
 // ─────────────────────────────────────────────────────────────
 // Layer 1 — 거래처 · 공급조건
+//
+// ✏️ 2026-08-12 설계복구 (T06-1) — `17_설계복구_거래처공급조건.md` 가 우선한다.
+//    아래 세 모델의 원문은 역사 기록으로 보존하되, 구현 계약은 다음과 같다:
+//    ① `warehouses Warehouse[]`(Supplier) inverse 와 `default_warehouse_id` ·
+//       `destination_warehouse_id` · `attachment_id` 의 **FK 는 만들지 않는다**.
+//       `Warehouse` 는 T08-1, `Attachment` 는 미배정 future 이므로 세 필드는
+//       **scalar-only staged field** 다(T05-1 `warehouse_id` 와 동일 패턴).
+//    ② `supplierType` · `status` 는 String 그대로다 — 주석의 값들은 **예시**이며
+//       enum·CommonCode·allow-list CHECK 를 만들지 않는다. blank 만 금지한다.
+//    ③ `SupplierSku` 의 `unit_conversion_qty` 는 위 ERD 블록에만 있고 이 Prisma
+//       블록에 없다 — **넣지 않는다**(더 구체적인 선언 우선).
+//    ④ 적용기간은 **half-open `[effective_from, effective_to)`** 다. 같은 날
+//       종료+시작이 허용되며 `effective_to = effective_from` 은 금지한다.
+//    ⑤ 아래 `@@unique` 2종은 동일 시작일만 막아 backlog 완료조건 "적용기간 중첩
+//       차단" 에 미달한다 → `supplier_sku` 에 **`EXCLUDE USING gist`**
+//       (`btree_gist`, 프로젝트 최초 도입)를 raw SQL 로 추가한다. UNIQUE 는
+//       **삭제하지 않고 함께 유지**한다.
+//    ⑥ `supplier_sku_price` 에는 **EXCLUDE 를 걸지 않는다** — 가격의 계약은
+//       "적용일 중복 차단 + 이전 가격 자동 마감"(05 §10.6)이며 자동 마감은 T06-3 다.
+//    ⑦ `SupplierSkuPrice.created_by` · `approved_by` 는 **User FK ON DELETE
+//       RESTRICT** 다(Sku 의 SET NULL 과 다르다) — `approved_by` 의 NULL 여부가
+//       승인 상태 자체라 SET NULL 되면 승인이 뒤집힌다. `approval_status` ·
+//       `approved_at` 컬럼은 만들지 않는다.
+//    ⑧ Supplier·SupplierSku 에 actor 컬럼·`deleted_at` 을 두지 않는다(원 선언 유지).
 // ─────────────────────────────────────────────────────────────
 model Supplier {
   id                   String  @id @default(uuid()) @db.Uuid
