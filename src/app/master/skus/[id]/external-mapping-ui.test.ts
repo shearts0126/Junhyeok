@@ -66,36 +66,24 @@ describe('★ 상세 탭 구성 — 외부시스템 매핑 추가', () => {
     expect(createKeys).not.toContain('barcode');
   });
 
-  it('2. 상세 화면은 5탭이다', () => {
-    expect(SKU_DETAIL_TABS).toHaveLength(5);
-  });
-
-  it('3. ★ 상세 탭 순서가 원문 8탭(①②③④⑤)의 논리 순서다', () => {
-    expect(SKU_DETAIL_TABS.map((tab) => tab.key)).toEqual([
-      'basic',
-      'classification',
-      'barcode',
-      'externalMapping',
-      'inventory',
-    ]);
-    expect(SKU_DETAIL_TABS.map((tab) => tab.label)).toEqual([
-      '기본정보',
-      '코드·분류',
-      '바코드',
+  it('2. 상세 화면 탭에 외부시스템 매핑이 포함된다', () => {
+    expect(SKU_DETAIL_TABS.some((tab) => tab.key === 'externalMapping')).toBe(true);
+    expect(SKU_DETAIL_TABS.find((tab) => tab.key === 'externalMapping')?.label).toBe(
       '외부시스템 매핑',
-      '재고관리 설정',
-    ]);
+    );
   });
 
-  it('4. ★ 외부시스템 매핑은 바코드 다음, 재고관리 설정 앞이다', () => {
+  it('3. ★ 외부시스템 매핑은 바코드 다음, 재고관리 설정 앞이다', () => {
+    // ⚠️ 전체 탭 수·순서는 `history-ui.test.ts` 가 고정한다 — 탭이 늘어날 때마다
+    //    여러 파일이 같은 단정을 중복하지 않도록 여기서는 상대 위치만 본다.
     const keys = SKU_DETAIL_TABS.map((tab) => tab.key) as readonly string[];
     expect(keys.indexOf('externalMapping')).toBe(keys.indexOf('barcode') + 1);
     expect(keys.indexOf('externalMapping')).toBe(keys.indexOf('inventory') - 1);
   });
 
-  it('5. 아직 없는 탭(공급조건·BOM·변경이력)은 어느 배열에도 없다', () => {
+  it('4. 아직 없는 탭(공급조건·BOM)은 어느 배열에도 없다', () => {
     const labels = [...SKU_CREATE_TABS, ...SKU_DETAIL_TABS].map((tab) => tab.label);
-    for (const absent of ['공급조건', 'BOM', '변경이력']) {
+    for (const absent of ['공급조건', 'BOM']) {
       expect(labels, absent).not.toContain(absent);
     }
   });

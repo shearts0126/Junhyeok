@@ -31,15 +31,17 @@ import {
 
 import { BarcodeTab } from './barcode-tab';
 import { ExternalMappingTab } from './external-mapping-tab';
+import { HistoryTab } from './history-tab';
 
 /**
- * SKU 상세·수정 (T1-6A / 바코드 T1-6B1 / 외부매핑 T1-6B2) — `/master/skus/{id}`.
+ * SKU 상세·수정 (T1-6A / 바코드 T1-6B1 / 외부매핑 T1-6B2 / 변경이력 T1-6B3)
+ * — `/master/skus/{id}`.
  *
- * 탭 5종 — ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정.
- * 원문 8탭(`05 §11.4`)의 논리 순서를 유지하며 **구현된 탭만** 노출한다.
+ * 탭 6종 — ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정
+ * **⑧ 변경이력**. 원문 8탭(`05 §11.4`)의 논리 순서를 유지하며 **구현된 탭만** 노출한다.
  *
- * ⛔ 변경이력(T1-6B3)·공급조건(T06)·BOM(T07) 탭은 없다 — 빈 탭·placeholder 도
- *    만들지 않는다. `suggest-code` 버튼도 없다.
+ * ⛔ 공급조건(T06)·BOM(T07) 탭은 없다 — 빈 탭·placeholder 도 만들지 않는다.
+ *    `suggest-code` 버튼도 없다.
  * ★ child 탭은 각자의 read 권한이 있을 때만 노출한다 — SKU 를 볼 수 있다고
  *   하위 모듈 데이터를 자동으로 조회하지 않는다 (`docs/16` §12·§24).
  *   특히 EXECUTIVE 는 `sku.read` 는 있고 `external_mapping.read` 는 없다.
@@ -456,6 +458,10 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         <BarcodeTab skuId={skuId} skuCode={detail.skuCode} permissions={permissions} />
       ) : activeTab === 'externalMapping' ? (
         <ExternalMappingTab skuId={skuId} />
+      ) : activeTab === 'history' ? (
+        // ★ 변경이력은 `sku.read` 만 요구한다 — 상세 화면 진입 조건과 같으므로
+        //   별도 cross-module permission 필터가 없다 (`docs/16` §30).
+        <HistoryTab skuId={skuId} />
       ) : (
         <>
           {isActive && (
@@ -509,7 +515,7 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       </section>
 
       <p className="text-muted-foreground text-xs">
-        공급조건·BOM·변경이력 탭은 해당 모듈 도입 후 제공됩니다.
+        공급조건·BOM 탭은 해당 모듈 도입 후 제공됩니다.
       </p>
     </main>
   );

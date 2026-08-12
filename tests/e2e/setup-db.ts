@@ -2,10 +2,12 @@ import 'dotenv/config';
 
 import { seedCommonCodes } from '../../prisma/seed/common-codes';
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
+import { Prisma } from '../../src/generated/prisma/client';
 import { disconnectPrisma, getPrismaClient } from '../../src/shared/db';
 
 import {
   E2E_DUPLICATE_BARCODE,
+  E2E_HISTORY_BARCODE,
   E2E_MAPPING_CODE,
   E2E_MAPPING_ENDED_CODE,
   E2E_MAPPING_REVIEW_NAME,
@@ -76,6 +78,16 @@ async function main(): Promise<void> {
 
   // 이전 실행 잔여물 정리 — E2E 가 만든 코드는 전부 ZZE_ 접두사를 쓴다.
   await prisma.commonCode.deleteMany({ where: { code: { startsWith: 'ZZE_' } } });
+
+  // ⚠️ 변경이력 픽스처(T1-6B3)가 심은 감사로그를 지운다 — AuditLog 는 불변이라
+  //    트리거를 잠시 끈다. 픽스처가 매 실행 재생성되므로 누적을 막아야 한다.
+  //    (지우는 대상은 이 setup 이 심은 행뿐이다 — occurredAt 이 고정 날짜다.)
+  await prisma.$executeRawUnsafe('ALTER TABLE audit_log DISABLE TRIGGER USER');
+  await prisma.$executeRawUnsafe(
+    `DELETE FROM audit_log WHERE occurred_at >= '2026-08-01' AND occurred_at < '2026-08-05'
+       AND entity_type IN ('Sku', 'SkuBarcode', 'SkuExternalMapping')`,
+  );
+  await prisma.$executeRawUnsafe('ALTER TABLE audit_log ENABLE TRIGGER USER');
 
   // 자가승인 차단(403) 시나리오가 결정적이도록 설정을 기본값으로 되돌린다.
   await prisma.systemSetting.updateMany({
@@ -244,6 +256,26 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ── T1-6B3 변경이력 탭 픽스처 ────────────────────────────
+      // 아래에서 감사로그(SKU CREATE/UPDATE + 바코드 CREATE)와
+      // "표시되면 안 되는" 외부매핑 감사로그를 함께 심는다.
+      {
+        skuCode: 'ZZS-E2E-016',
+        skuName: 'E2E 변경이력 대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // 51건 — 페이지 크기 50 을 한 건 넘겨 이전/다음 컨트롤을 켠다.
+      {
+        skuCode: 'ZZS-E2E-017',
+        skuName: 'E2E 변경이력 페이지네이션',
+        itemType: 'FINISHED_GOOD',
+        status: 'DRAFT',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
   });
 
@@ -356,6 +388,93 @@ async function main(): Promise<void> {
         effectiveTo: new Date('2025-12-31'),
       },
     ],
+  });
+
+  // ── 변경이력 픽스처 (T1-6B3) ──────────────────────────────────
+  // 감사로그를 **직접 심는다** — 화면 검증용 결정적 데이터가 필요하고,
+  // 실제 producer 를 돌리면 상태가 다른 E2E 와 얽힌다.
+  //
+  // ★ `SkuExternalMapping` 감사로그도 함께 심어, **SKU 변경이력 탭에는 나오지
+  //   않는다**는 경계를 E2E 가 고정할 수 있게 한다 (docs/16 §29).
+  const historySku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-016' } });
+  const historyBarcode = await prisma.skuBarcode.create({
+    data: {
+      skuId: historySku.id,
+      barcode: E2E_HISTORY_BARCODE,
+      barcodeType: 'UNIT',
+      isPrimary: false,
+      status: 'ACTIVE',
+    },
+  });
+  const historyMapping = await prisma.skuExternalMapping.create({
+    data: {
+      skuId: historySku.id,
+      externalSystemId: mappingSystem.id,
+      externalProductCode: `ZZX-HIST-016`,
+      mappingStatus: 'MATCHED',
+    },
+  });
+
+  await prisma.auditLog.createMany({
+    data: [
+      {
+        entityType: 'Sku',
+        entityId: historySku.id,
+        action: 'CREATE',
+        beforeValue: Prisma.JsonNull,
+        afterValue: { skuCode: 'ZZS-E2E-016', skuName: 'E2E 변경이력 대상' },
+        actorId: adminUser.id,
+        occurredAt: new Date('2026-08-01T00:00:00.000Z'),
+      },
+      {
+        entityType: 'Sku',
+        entityId: historySku.id,
+        action: 'UPDATE',
+        beforeValue: { skuName: 'E2E 변경이력 이전' },
+        afterValue: { skuName: 'E2E 변경이력 대상', brand: { code: 'FB', active: true } },
+        actorId: adminUser.id,
+        occurredAt: new Date('2026-08-02T00:00:00.000Z'),
+        reason: 'E2E 변경 사유',
+      },
+      {
+        entityType: 'SkuBarcode',
+        entityId: historyBarcode.id,
+        action: 'CREATE',
+        beforeValue: Prisma.JsonNull,
+        afterValue: { barcode: E2E_HISTORY_BARCODE, skuId: historySku.id },
+        actorId: adminUser.id,
+        occurredAt: new Date('2026-08-03T00:00:00.000Z'),
+      },
+      // ⛔ 이 행은 SKU 변경이력 탭에 **나오면 안 된다**.
+      {
+        entityType: 'SkuExternalMapping',
+        entityId: historyMapping.id,
+        action: 'CREATE',
+        beforeValue: Prisma.JsonNull,
+        afterValue: { externalProductCode: 'ZZX-HIST-016' },
+        actorId: adminUser.id,
+        occurredAt: new Date('2026-08-04T00:00:00.000Z'),
+      },
+    ],
+  });
+
+  // ── 페이지네이션 픽스처 (T1-6B3) ──────────────────────────────
+  // `ZZS-E2E-017` 에 **51건** 을 심는다 — 페이지 크기 50 을 한 건 넘겨야
+  // 이전/다음 컨트롤이 켜진다 (`docs/16` §36).
+  // occurredAt 을 1분 간격으로 내려 최신순이 결정적이게 한다.
+  const pagingSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-017' } });
+  await prisma.auditLog.createMany({
+    data: Array.from({ length: 51 }, (_, index) => ({
+      entityType: 'Sku',
+      entityId: pagingSku.id,
+      action: 'UPDATE',
+      beforeValue: { seq: index },
+      afterValue: { seq: index + 1 },
+      actorId: adminUser.id,
+      // 2026-08-03T23:59:00Z 부터 1분씩 거슬러 올라간다 — 위 정리 쿼리의
+      // `>= 08-01 AND < 08-05` 범위 안에 있어야 다음 실행에서 지워진다.
+      occurredAt: new Date(Date.UTC(2026, 7, 3, 23, 59 - index, 0)),
+    })),
   });
 
   await disconnectPrisma();

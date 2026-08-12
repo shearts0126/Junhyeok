@@ -45,7 +45,7 @@ async function openMappingTab(page: Page, skuCode: string): Promise<void> {
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe('탭 구성 — 상세 5탭 / 등록 3탭', () => {
+test.describe('탭 구성 — 상세 6탭 / 등록 3탭', () => {
   test('★ 상세는 외부시스템 매핑 포함 5탭, 등록에는 없다', async ({ page }) => {
     await login(page, ADMIN);
 
@@ -58,15 +58,16 @@ test.describe('탭 구성 — 상세 5탭 / 등록 3탭', () => {
 
     await openDetail(page, 'ZZS-E2E-015');
     const detailTabs = page.getByRole('tab');
-    await expect(detailTabs).toHaveCount(5);
+    await expect(detailTabs).toHaveCount(6);
     await expect(detailTabs.nth(0)).toHaveText('기본정보');
     await expect(detailTabs.nth(1)).toHaveText('코드·분류');
     await expect(detailTabs.nth(2)).toHaveText('바코드');
     await expect(detailTabs.nth(3)).toHaveText('외부시스템 매핑');
     await expect(detailTabs.nth(4)).toHaveText('재고관리 설정');
+    await expect(detailTabs.nth(5)).toHaveText('변경이력');
 
-    // ⛔ 아직 없는 탭 — T1-6B3 / T06 / T07
-    for (const absent of ['공급조건', 'BOM', '변경이력']) {
+    // ⛔ 아직 없는 탭 — T06 / T07
+    for (const absent of ['공급조건', 'BOM']) {
       await expect(page.getByRole('tab', { name: absent }), absent).toHaveCount(0);
     }
   });
@@ -171,7 +172,7 @@ test.describe('권한 — external_mapping.read', () => {
     await expect(page.getByRole('tab', { name: '바코드' })).toBeVisible();
     // ★ external_mapping.read 가 없어 탭 자체가 노출되지 않는다.
     await expect(page.getByRole('tab', { name: '외부시스템 매핑' })).toHaveCount(0);
-    await expect(page.getByRole('tab')).toHaveCount(4);
+    await expect(page.getByRole('tab')).toHaveCount(5);
   });
 
   test('FINANCE 는 탭을 열어 요약을 볼 수 있다 (변경 UI 는 원래 없다)', async ({ page }) => {

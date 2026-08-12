@@ -1,8 +1,11 @@
 /**
  * SKU Application (T1-3 CRUD + T1-4A 승인 워크플로).
  *
+ * 변경이력 조회(`GET /api/skus/{id}/history`)는 T1-6B3 으로 추가되었다 —
+ * 계약은 `docs/16_설계복구_SKU상세잔여탭.md` §27~§40 이다.
+ *
  * ⛔ 아직 없는 것 (T1-4B 이후의 몫): **archive** (BOM usage provider 필요),
- *    이력 조회, 코드 자동제안, Excel import, 바코드, DELETE.
+ *    코드 자동제안, Excel import, DELETE.
  */
 export {
   SKU_APPROVE_PERMISSION,
@@ -50,6 +53,15 @@ export {
 export { skuNotFound, updateSku } from './update-sku';
 export { getSku, type SkuReadClient, type SkuReadDependencies } from './get-sku';
 export { listSkus, type SkuListResult } from './list-skus';
+export {
+  SKU_HISTORY_ENTITY_TYPES,
+  SKU_HISTORY_PAGE_SIZE,
+  listSkuHistory,
+  parseSkuHistoryQuery,
+  type SkuHistoryDependencies,
+  type SkuHistoryQuery,
+  type SkuHistoryResult,
+} from './list-sku-history';
 export {
   SKU_APPROVAL_CHECKS,
   SKU_APPROVAL_CHECK_SEVERITY,

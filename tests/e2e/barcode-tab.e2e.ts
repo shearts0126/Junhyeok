@@ -41,7 +41,7 @@ async function openBarcodeTab(page: Page, skuCode: string): Promise<void> {
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe('탭 구성 — 상세 5탭 / 등록 3탭', () => {
+test.describe('탭 구성 — 상세 6탭 / 등록 3탭', () => {
   test('★ 상세 탭에 바코드가 있고, 등록에는 없다', async ({ page }) => {
     // ⚠️ 이 파일이 알파벳 순으로 가장 먼저 실행되므로, 이 테스트 하나가
     //    `/master/skus/new` · `/master/skus` · `/master/skus/[id]` 세 라우트의
@@ -61,11 +61,11 @@ test.describe('탭 구성 — 상세 5탭 / 등록 3탭', () => {
 
     await openBarcodeTab(page, 'ZZS-E2E-011');
     const detailTabs = page.getByRole('tab');
-    await expect(detailTabs).toHaveCount(5);
+    await expect(detailTabs).toHaveCount(6);
     await expect(detailTabs.nth(2)).toHaveText('바코드');
 
-    // ⛔ 아직 없는 탭 — T1-6B3 / T06 / T07
-    for (const absent of ['공급조건', 'BOM', '변경이력']) {
+    // ⛔ 아직 없는 탭 — T06 / T07
+    for (const absent of ['공급조건', 'BOM']) {
       await expect(page.getByRole('tab', { name: absent }), absent).toHaveCount(0);
     }
   });
