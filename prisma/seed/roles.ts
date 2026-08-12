@@ -53,6 +53,9 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'supplier.read', description: '거래처·공급조건 조회' },
   { permissionKey: 'supplier.create', description: '거래처·공급조건 생성' },
   { permissionKey: 'supplier.update', description: '거래처·공급조건 수정' },
+  { permissionKey: 'supplier_price.read', description: '공급 가격이력 조회' },
+  { permissionKey: 'supplier_price.create', description: '공급 가격 등록 (미승인 제안행)' },
+  { permissionKey: 'supplier_price.approve', description: '공급 가격 승인 (발효)' },
 ];
 
 /**
@@ -152,6 +155,21 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'supplier.update' },
   { roleCode: 'SCM_LEADER', permissionKey: 'supplier.update' },
   { roleCode: 'SCM_STAFF', permissionKey: 'supplier.update' },
+  // 가격이력 (T06-3, docs/17 §58~ D-27·D-28): read/create 는 A·L·S·F,
+  // approve 는 **A·L·F** — SCM_STAFF 는 등록만 가능하고 승인은 불가하다.
+  // ★ FINANCE 가 create 에 있다 — supplier.create(A·L·S)와 역할집합이 달라
+  //   `supplier.*` 를 재사용하지 않는 근거다. EXECUTIVE 는 전부 denied.
+  { roleCode: 'ADMIN', permissionKey: 'supplier_price.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier_price.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'supplier_price.read' },
+  { roleCode: 'FINANCE', permissionKey: 'supplier_price.read' },
+  { roleCode: 'ADMIN', permissionKey: 'supplier_price.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier_price.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'supplier_price.create' },
+  { roleCode: 'FINANCE', permissionKey: 'supplier_price.create' },
+  { roleCode: 'ADMIN', permissionKey: 'supplier_price.approve' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'supplier_price.approve' },
+  { roleCode: 'FINANCE', permissionKey: 'supplier_price.approve' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

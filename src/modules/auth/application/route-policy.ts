@@ -165,6 +165,34 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'external_mapping.update',
   },
 
+  // 가격이력 (T06-3, docs/17_설계복구_거래처공급조건.md §58~) — **독립 capability** 다
+  // (D-28) — `supplier.*` 를 재사용하지 않는다. FINANCE 는 supplier.create 없이도
+  // 가격 등록·승인이 가능해야 하고, SCM_STAFF 는 approve 가 없다.
+  // ⚠️ 반드시 아래 일반 `/api/suppliers`·`/api/supplier-skus` 정책보다 **앞에**
+  //    둔다 — 뒤에 두면 `/api/supplier-skus/{id}/prices` 변경성 요청이
+  //    `supplier.update` 로 잘못 잡히고, GET/POST 는 아예 정책 없이
+  //    인증-only 로 떨어진다 (T06-3 PRE-FLIGHT 실측 gap).
+  // ⚠️ `/api/supplier-sku-prices` 는 `/api/supplier-skus` prefix 에 걸리지 않는
+  //    독립 경로다 (`-p` vs `s` — 끝 문자가 다르다).
+  {
+    prefix: '/api/supplier-skus',
+    contains: '/prices',
+    methods: ['GET', 'HEAD'],
+    permission: 'supplier_price.read',
+  },
+  {
+    prefix: '/api/supplier-skus',
+    contains: '/prices',
+    methods: ['POST'],
+    permission: 'supplier_price.create',
+  },
+  {
+    prefix: '/api/supplier-sku-prices',
+    suffix: '/approve',
+    methods: ['POST'],
+    permission: 'supplier_price.approve',
+  },
+
   // 거래처·공급조건 (T06-2, docs/17_설계복구_거래처공급조건.md §39~) —
   // Supplier 와 SupplierSku 는 **하나의 capability** 다(D-22) — `supplier.*` 3종만
   // 쓰고 `supplier_sku.*` 를 만들지 않는다. 따라서 nested

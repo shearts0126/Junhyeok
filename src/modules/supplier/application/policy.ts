@@ -21,3 +21,20 @@
 export const SUPPLIER_READ_PERMISSION = 'supplier.read';
 export const SUPPLIER_CREATE_PERMISSION = 'supplier.create';
 export const SUPPLIER_UPDATE_PERMISSION = 'supplier.update';
+
+/**
+ * 가격이력 권한 3종 (T06-3, D-27·D-28) — **`supplier.*` 를 재사용하지 않는다.**
+ *
+ * 가격은 원가 정보라 공급조건과 역할집합이 다르다:
+ *
+ *   - `supplier_price.read`    — ADMIN, SCM_LEADER, SCM_STAFF, FINANCE
+ *   - `supplier_price.create`  — ADMIN, SCM_LEADER, SCM_STAFF, FINANCE
+ *   - `supplier_price.approve` — ADMIN, SCM_LEADER, FINANCE (**SCM_STAFF 제외**)
+ *
+ * ★ FINANCE 는 supplier.create 가 없지만 가격 등록·승인은 가능하다.
+ * ★ EXECUTIVE 는 read 포함 전부 denied (D-21 과 동일한 화면별 권한표 판단).
+ * ⛔ ADMIN bypass 없음 — RolePermission 데이터로만 판정한다.
+ */
+export const SUPPLIER_PRICE_READ_PERMISSION = 'supplier_price.read';
+export const SUPPLIER_PRICE_CREATE_PERMISSION = 'supplier_price.create';
+export const SUPPLIER_PRICE_APPROVE_PERMISSION = 'supplier_price.approve';
