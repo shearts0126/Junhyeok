@@ -33,8 +33,9 @@ export const SKU_CREATE_TABS = [
  *
  * ★ 순서는 원문 8탭(`05 §11.4`)의 논리 순서를 그대로 따른다 —
  *   ① 기본정보 ② 코드·분류 **③ 바코드 ④ 외부시스템 매핑** ⑤ 재고관리 설정
- *   **⑧ 변경이력**. 구현된 탭만 남기되 **원문 순서를 재배열하지 않는다** —
- *   아직 없는 ⑥ 공급조건(T06)·⑦ BOM(T07)이 나중에 제자리에 들어온다.
+ *   **⑥ 공급조건 ⑧ 변경이력**. 구현된 탭만 남기되 **원문 순서를 재배열하지
+ *   않는다** — 아직 없는 ⑦ BOM(T07)이 나중에 공급조건과 변경이력 사이에
+ *   들어간다. ⛔ BOM placeholder 를 만들지 않는다.
  */
 export const SKU_DETAIL_TABS = [
   { key: 'basic', label: '기본정보' },
@@ -42,6 +43,7 @@ export const SKU_DETAIL_TABS = [
   { key: 'barcode', label: '바코드' },
   { key: 'externalMapping', label: '외부시스템 매핑' },
   { key: 'inventory', label: '재고관리 설정' },
+  { key: 'supplier', label: '공급조건' },
   { key: 'history', label: '변경이력' },
 ] as const;
 

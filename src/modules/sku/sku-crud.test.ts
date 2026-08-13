@@ -997,6 +997,7 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     // T1-4A: submit/approve/reject/deactivate 만.
     // ✏️ T04-3 에서 `barcodes`(바코드 CRUD)가 추가됐다 — docs/10 §4.
     // ✏️ T1-6B3 에서 `history`(변경이력 read-only)가 추가됐다 — docs/16 §31.
+    // ✏️ T1-6B4 에서 `supplier-skus`(⑥ 공급조건 요약 read-only)가 추가됐다 — docs/16 §41~.
     // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다.
     expect(detailEntries).toEqual([
       'approve',
@@ -1006,6 +1007,7 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
       'reject',
       'route.ts',
       'submit',
+      'supplier-skus',
     ]);
   });
 });

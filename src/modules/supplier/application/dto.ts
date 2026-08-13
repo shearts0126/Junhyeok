@@ -449,6 +449,17 @@ export function parseSupplierId(value: string): string {
   return result.data;
 }
 
+/** SKU 경로 식별자 (T1-6B4 supporting API). 형식 오류는 400 이다. */
+export function parseSkuRefId(value: string): string {
+  const result = z.uuid().safeParse(value);
+  if (!result.success) {
+    throw new ValidationError([{ path: 'id', message: 'UUID 형식이어야 합니다.' }], {
+      message: 'SKU id 가 올바르지 않습니다.',
+    });
+  }
+  return result.data;
+}
+
 export function parseSupplierSkuId(value: string): string {
   const result = z.uuid().safeParse(value);
   if (!result.success) {

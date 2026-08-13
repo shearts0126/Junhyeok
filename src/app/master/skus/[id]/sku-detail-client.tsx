@@ -32,6 +32,7 @@ import {
 import { BarcodeTab } from './barcode-tab';
 import { ExternalMappingTab } from './external-mapping-tab';
 import { HistoryTab } from './history-tab';
+import { SupplierTab } from './supplier-tab';
 
 /**
  * SKU 상세·수정 (T1-6A / 바코드 T1-6B1 / 외부매핑 T1-6B2 / 변경이력 T1-6B3)
@@ -149,6 +150,15 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   /** ★ child 모듈은 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다. */
   const canReadBarcode = permissions?.includes('barcode.read') ?? false;
   const canReadExternalMapping = permissions?.includes('external_mapping.read') ?? false;
+  /**
+   * ⑥ 공급조건 탭은 **두 capability 를 모두** 요구한다 (T1-6B4 D-4) — 응답에
+   * 공급조건과 **가격**이 함께 들어가기 때문이다. 현재 role matrix 에서 둘 다
+   * A·L·S·F 라는 사실은 우연이며 계약상 별개다.
+   * ★ EXECUTIVE 는 `sku.read` 가 있어 상세는 열리지만 이 탭은 보이지 않는다.
+   */
+  const canReadSupplierTab =
+    (permissions?.includes('supplier.read') ?? false) &&
+    (permissions?.includes('supplier_price.read') ?? false);
 
   // 상세 조회 — 400/403/404 를 빈 화면으로 위장하지 않는다.
   useEffect(() => {
@@ -316,6 +326,7 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   const visibleTabs = SKU_DETAIL_TABS.filter((entry) => {
     if (entry.key === 'barcode') return canReadBarcode;
     if (entry.key === 'externalMapping') return canReadExternalMapping;
+    if (entry.key === 'supplier') return canReadSupplierTab;
     return true;
   });
   // 권한을 잃은 상태로 남은 탭 선택을 붙들지 않는다.
@@ -458,6 +469,9 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
         <BarcodeTab skuId={skuId} skuCode={detail.skuCode} permissions={permissions} />
       ) : activeTab === 'externalMapping' ? (
         <ExternalMappingTab skuId={skuId} />
+      ) : activeTab === 'supplier' ? (
+        // ★ read-only summary — mutation 은 전부 `/master/suppliers` 가 담당한다.
+        <SupplierTab skuId={skuId} />
       ) : activeTab === 'history' ? (
         // ★ 변경이력은 `sku.read` 만 요구한다 — 상세 화면 진입 조건과 같으므로
         //   별도 cross-module permission 필터가 없다 (`docs/16` §30).

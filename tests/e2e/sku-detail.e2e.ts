@@ -190,18 +190,17 @@ test.describe('상세 조회·수정', () => {
     // ★ T1-6B1 ③ 바코드, T1-6B2 ④ 외부시스템 매핑, T1-6B3 ⑧ 변경이력이 더해졌다.
     //   순서는 원문 8탭의 논리 순서다.
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(6);
+    await expect(tabs).toHaveCount(7);
     await expect(tabs.nth(0)).toHaveText('기본정보');
     await expect(tabs.nth(1)).toHaveText('코드·분류');
     await expect(tabs.nth(2)).toHaveText('바코드');
     await expect(tabs.nth(3)).toHaveText('외부시스템 매핑');
     await expect(tabs.nth(4)).toHaveText('재고관리 설정');
-    await expect(tabs.nth(5)).toHaveText('변경이력');
+    await expect(tabs.nth(5)).toHaveText('공급조건');
+    await expect(tabs.nth(6)).toHaveText('변경이력');
 
-    // ⛔ 공급조건(T06)·BOM(T07) 은 아직 없다.
-    for (const forbidden of ['공급조건', 'BOM']) {
-      await expect(page.getByRole('tab', { name: forbidden }), forbidden).toHaveCount(0);
-    }
+    // ⛔ BOM(T07) 은 아직 없다.
+    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(0);
     for (const forbidden of ['코드 추천', '폐기', '엑셀']) {
       await expect(page.getByRole('button', { name: forbidden }), forbidden).toHaveCount(0);
     }

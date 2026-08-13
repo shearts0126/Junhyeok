@@ -104,11 +104,14 @@ describe('★ 등록/상세 탭 배열 분리', () => {
     expect(keys.indexOf('barcode')).toBe(keys.indexOf('classification') + 1);
   });
 
-  it('4. 아직 없는 탭(공급조건·BOM)은 어느 배열에도 없다', () => {
-    const labels = [...SKU_CREATE_TABS, ...SKU_DETAIL_TABS].map((tab) => tab.label);
-    for (const absent of ['공급조건', 'BOM']) {
-      expect(labels, absent).not.toContain(absent);
-    }
+  it('4. ★ 공급조건은 상세에만 있고(T1-6B4), BOM 은 아직 어느 배열에도 없다', () => {
+    const createLabels = SKU_CREATE_TABS.map((tab) => tab.label);
+    const detailLabels = SKU_DETAIL_TABS.map((tab) => tab.label);
+    // ⑥ 공급조건은 상세 전용 child 탭이다 — 등록 화면에는 없다.
+    expect(detailLabels).toContain('공급조건');
+    expect(createLabels).not.toContain('공급조건');
+    // ⑦ BOM 은 T07 이후다 — placeholder 도 없다.
+    expect([...createLabels, ...detailLabels]).not.toContain('BOM');
   });
 
   it('5. 상세 탭은 등록 탭의 상위집합이다 (라벨 중복 정의 없음)', () => {

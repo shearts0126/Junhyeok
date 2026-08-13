@@ -286,6 +286,16 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ⑥ 공급조건 탭 전용 (T1-6B4). ⚠️ 다른 spec 이 건드리지 않는 SKU 다 —
+      //    mutation 이 닿으면 현재/과거/미래 판정이 흔들린다.
+      {
+        skuCode: 'ZZS-E2E-018',
+        skuName: 'E2E 공급조건 탭',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
   });
 
@@ -541,6 +551,94 @@ async function main(): Promise<void> {
         vatIncluded: false,
         effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
         // ★ 미승인 + 0원 — "미승인" 표시와 0원 표시를 함께 검증한다.
+        createdBy: adminUser.id,
+      },
+    ],
+  });
+
+  // ── SKU 상세 ⑥ 공급조건 탭 픽스처 (T1-6B4) ──────────────────
+  // `ZZS-E2E-018` 이 세 거래처와 관계를 갖는다:
+  //   ZZV-TAB-CUR  현재 유효 · 리드타임 미입력(거래처 기본값 7 fallback) ·
+  //                MOQ 100 · 대표 · **0원 승인 가격** + 미승인 가격
+  //   ZZV-TAB-PAST 이미 종료 → 탭에 보이면 안 된다
+  //   ZZV-TAB-FUT  미래 시작 → 탭에 보이면 안 된다
+  const tabSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-018' } });
+
+  const tabCurrentSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-TAB-CUR',
+      supplierName: 'E2E 탭 현재 거래처',
+      supplierType: 'MANUFACTURER',
+      // ★ 공급조건 leadTimeDays 가 null 이라 이 값이 적용 리드타임이 된다.
+      defaultLeadTimeDays: 7,
+    },
+  });
+  const tabPastSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-TAB-PAST',
+      supplierName: 'E2E 탭 과거 거래처',
+      supplierType: 'VENDOR',
+    },
+  });
+  const tabFutureSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-TAB-FUT',
+      supplierName: 'E2E 탭 미래 거래처',
+      supplierType: 'VENDOR',
+    },
+  });
+
+  const tabCurrentTerm = await prisma.supplierSku.create({
+    data: {
+      supplierId: tabCurrentSupplier.id,
+      skuId: tabSku.id,
+      supplyType: 'TURNKEY',
+      supplierSkuCode: 'ZZV-TAB-SKU-1',
+      moq: '100',
+      leadTimeDays: null,
+      isPrimary: true,
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+    },
+  });
+  await prisma.supplierSku.create({
+    data: {
+      supplierId: tabPastSupplier.id,
+      skuId: tabSku.id,
+      supplyType: 'SELF_SUPPLIED',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: new Date('2021-01-01T00:00:00.000Z'),
+    },
+  });
+  await prisma.supplierSku.create({
+    data: {
+      supplierId: tabFutureSupplier.id,
+      skuId: tabSku.id,
+      supplyType: 'SELF_SUPPLIED',
+      effectiveFrom: new Date('2099-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+    },
+  });
+  await prisma.supplierSkuPrice.createMany({
+    data: [
+      {
+        supplierSkuId: tabCurrentTerm.id,
+        // ★ 0원 승인 가격 — 탭이 `0 KRW` 로 보여야 한다("가격 없음"과 구분).
+        unitPrice: '0',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+        createdBy: adminUser.id,
+        approvedBy: leaderUser.id,
+      },
+      {
+        supplierSkuId: tabCurrentTerm.id,
+        // ⛔ 미승인 — 탭 단가에 반영되면 안 된다.
+        unitPrice: '99999',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2098-01-01T00:00:00.000Z'),
         createdBy: adminUser.id,
       },
     ],
