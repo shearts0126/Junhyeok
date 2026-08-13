@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { resolveRoutePermission } from '@/modules/auth/application/route-policy';
 import { SUPPLIER_PAGE_SIZE as API_SUPPLIER_PAGE_SIZE } from '@/modules/supplier/application/dto';
+import {
+  SUPPLY_TYPE_LABELS,
+  SUPPLY_TYPE_VALUES,
+  supplyTypeLabel,
+} from '@/modules/supplier/presentation/supply-type';
 
 import {
   buildSupplierDetailParams,
@@ -22,9 +27,6 @@ import {
   buildTermVersionPayload,
   canSubmitVersion,
   EMPTY_TERM_CREATE_FORM,
-  SUPPLY_TYPE_LABELS,
-  SUPPLY_TYPE_VALUES,
-  supplyTypeLabel,
   toVersionForm,
   type SupplierSkuViewLike,
 } from './[id]/terms-form';

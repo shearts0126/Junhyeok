@@ -39,8 +39,8 @@ async function openHistoryTab(page: Page, skuCode: string): Promise<void> {
 
 test.describe.configure({ mode: 'serial' });
 
-test.describe('탭 구성 — 상세 6탭 / 등록 3탭', () => {
-  test('★ 상세는 변경이력 포함 6탭, 등록에는 없다', async ({ page }) => {
+test.describe('탭 구성 — 상세 7탭 / 등록 3탭', () => {
+  test('★ 상세는 변경이력 포함 7탭이고 변경이력이 마지막이다, 등록에는 없다', async ({ page }) => {
     await login(page, ADMIN);
 
     await page.goto('/master/skus/new');
@@ -50,18 +50,18 @@ test.describe('탭 구성 — 상세 6탭 / 등록 3탭', () => {
 
     await openDetail(page, 'ZZS-E2E-016');
     const tabs = page.getByRole('tab');
-    await expect(tabs).toHaveCount(6);
+    // ★ T1-6B4 에서 ⑥ 공급조건이 더해졌고, 변경이력은 **여전히 마지막**이다.
+    await expect(tabs).toHaveCount(7);
     await expect(tabs.nth(0)).toHaveText('기본정보');
     await expect(tabs.nth(1)).toHaveText('코드·분류');
     await expect(tabs.nth(2)).toHaveText('바코드');
     await expect(tabs.nth(3)).toHaveText('외부시스템 매핑');
     await expect(tabs.nth(4)).toHaveText('재고관리 설정');
-    await expect(tabs.nth(5)).toHaveText('변경이력');
+    await expect(tabs.nth(5)).toHaveText('공급조건');
+    await expect(tabs.nth(6)).toHaveText('변경이력');
 
-    // ⛔ 아직 없는 탭 — T06 / T07
-    for (const absent of ['공급조건', 'BOM']) {
-      await expect(page.getByRole('tab', { name: absent }), absent).toHaveCount(0);
-    }
+    // ⛔ 아직 없는 탭 — T07
+    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(0);
   });
 });
 

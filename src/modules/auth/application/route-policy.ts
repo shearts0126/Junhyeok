@@ -132,6 +132,20 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'barcode.deactivate',
   },
 
+  // SKU 상세 ⑥ 공급조건 요약 supporting API (T1-6B4, docs/16 §41~) —
+  // **독립 capability** 다. ⚠️ 반드시 일반 `/api/skus` GET 정책보다 **앞에**
+  // 둔다 — 뒤에 두면 `sku.read` 만으로 공급조건·가격 요약을 볼 수 있게 된다.
+  // ★ 이 endpoint 는 가격까지 반환하므로 실제로는 `supplier.read` **AND**
+  //   `supplier_price.read` 를 요구한다. proxy 는 경로당 permission 1개라
+  //   여기서 `supplier.read` 를 잡고, 두 번째 capability 는 application
+  //   2차 가드가 본다 (D-3·D-19).
+  {
+    prefix: '/api/skus',
+    contains: '/supplier-skus',
+    methods: ['GET', 'HEAD'],
+    permission: 'supplier.read',
+  },
+
   // SKU 승인 워크플로 (T1-4A) — 일반 POST(생성) 정책보다 앞에 둔다.
   // reject 는 sku.approve — 승인/반려는 동일 authority (별도 sku.reject 없음).
   // ⛔ archive 는 T1-4B — 정책도 라우트도 아직 없다.

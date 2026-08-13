@@ -1,3 +1,4 @@
+import { BUSINESS_TIME_ZONE, businessDateOf, dateOnlyOf } from '@/shared/business-date';
 import { DomainError, ERROR_CODES } from '@/shared/errors';
 
 /**
@@ -22,23 +23,16 @@ import { DomainError, ERROR_CODES } from '@/shared/errors';
  *    유지. 이것은 application 계층의 입력 규칙이다.
  */
 
-/** 업무일자 = `(now AT TIME ZONE 'Asia/Seoul')::date` (03 §공통 규약). */
-export const BUSINESS_TIME_ZONE = 'Asia/Seoul';
-
-/** `YYYY-MM-DD` — `en-CA` 로케일이 ISO 형식을 준다. */
-export function businessDateOf(instant: Date, timeZone: string = BUSINESS_TIME_ZONE): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(instant);
-}
+/**
+ * 업무일자 계산은 `@/shared/business-date` 로 옮겼다 (T1-6B4 최소 추출) —
+ * supplier 요약이 같은 날짜 규칙을 써야 하는데 도메인 간 import 를 만들지 않기
+ * 위해서다. **계산은 한 글자도 바뀌지 않았고** 기존 import 경로도 그대로
+ * 동작하도록 여기서 re-export 한다.
+ */
+export { BUSINESS_TIME_ZONE, businessDateOf };
 
 /** `@db.Date` 컬럼값을 `YYYY-MM-DD` 로 (UTC 자정 저장). */
-export function toDateOnly(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
+export const toDateOnly = dateOnlyOf;
 
 function invalid(message: string, details: Record<string, unknown>): DomainError {
   return new DomainError(ERROR_CODES.EXTERNAL_MAPPING_EFFECTIVE_DATE_INVALID, {

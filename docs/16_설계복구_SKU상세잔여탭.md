@@ -847,3 +847,435 @@ DataIssue · InventoryException · T15 · T17.
 | **T1-6B5** | ⑦ BOM | **BLOCKED** — T07 이후 |
 
 T1-6B3 이 끝나면 **T1-6B 중 T06/T07 에 의존하지 않는 부분은 전부 완료**다.
+
+---
+
+# T1-6B4 — ⑥ 공급조건 탭
+
+(2026-08-13 T1-6B4 Supplier Tab Design Recovery Decision — D-1 ~ D-30 확정.
+base `origin/main = 5ba63c714524e8097bc5ac5de0a851d9cce94804`,
+branch `claude/t1-6b4-supplier-tab`.)
+
+## 41. T1-6B4 PRE-FLIGHT 결과 — 왜 BLOCKED 였나
+
+§40 이 "T06 이후"로 미뤄 둔 차단 사유는 T06-1~T06-4 완료로 해소됐지만,
+**대체 화면 명세가 남아 있지 않았다.** ⑥ 탭의 authoritative 원문은 `05:336`
+**한 줄**뿐이다:
+
+> `공급업체별 SKU 목록, MOQ, 리드타임, 사급/턴키, 우선공급업체, 최근 단가`
+> — **리드타임 미입력은 `—`로 표시(0 아님)**
+
+BLOCKED 조건 7개가 전부 미확정이었고, 그중 셋이 구조를 좌우했다:
+
+1. **SKU → SupplierSku 역조회 경로가 하나도 없다.** `/api/suppliers/{id}/skus`
+   는 supplier-centric 이고, `/api/suppliers` 는 `skuId` 를 모르며(미지원
+   파라미터 400), **`/api/supplier-skus` collection route 자체가 없다.**
+   T1-6B2 가 `GET /api/external-mappings?skuId=` 로 "신규 API 0"을 달성한 것은
+   그 필터가 T05-2 목록 계약에 **이미 있었기** 때문이며, supplier 에는 대응물이
+   없어 같은 방식이 성립하지 않는다.
+2. **`리드타임` 이 단수인데 API 는 stored/derived 두 값을 준다.**
+3. **`최근 단가` 의 기준일·계산 위치·permission 경계가 비어 있다.**
+
+## 42. D-1·D-2 — supporting API · module owner
+
+supporting API 를 **정확히 1개** 추가한다:
+
+```text
+GET /api/skus/{id}/supplier-skus
+```
+
+⛔ 만들지 않는다: `GET /api/skus/{id}/suppliers`(반환 단위가 Supplier 가 아니라
+어긋난다) · `GET /api/supplier-skus?skuId=`(없는 collection route 신설 +
+standalone 관리 API 외형) · `/api/skus/{id}/supplier-prices`.
+
+**T1-6B4 전용 read-only supporting API** 다 — standalone SupplierSku management
+collection API 로 확장하지 않는다.
+
+**D-2 module owner**: URL 은 SKU nested child route
+(`src/app/api/skus/[id]/supplier-skus/route.ts`)지만 business query 는
+SupplierSku 도메인이므로 application owner 는 **Supplier module** 이다:
+
+```text
+Route → Supplier Application Service(listSkuSupplierSummaries) → Prisma
+```
+
+⛔ route 에서 Prisma 직접 접근 없음. ⛔ SKU module 에 SupplierSku/Price business
+query 를 중복 구현하지 않는다. T06-3 effective-price semantics 의 authoritative
+owner 도 계속 Supplier module 이다.
+
+## 43. §5 — SKU existence
+
+path SKU 존재만 확인한다 — `deletedAt IS NULL`(SKU 상세와 같은 규칙).
+없으면 **404**, malformed UUID 는 **400**.
+⛔ `ACTIVE only`·`purchasable`·`sellable`·`manufacturable` 같은 eligibility 를
+발명하지 않는다.
+
+## 44. D-3·D-19 — permission contract ★
+
+응답에 SupplierSku 정보와 **가격**이 함께 들어가므로 **두 capability 를 모두**
+요구한다:
+
+```text
+supplier.read  AND  supplier_price.read
+```
+
+현재 role matrix 에서 둘 다 A·L·S·F 인 것은 **우연**이며 계약상 별개다 —
+하나로 합치지 않는다.
+
+- **proxy(1차)**: route-policy 는 경로당 permission 1개라
+  `/api/skus` + `contains:'/supplier-skus'` + GET/HEAD → **`supplier.read`** 로
+  잡는다. ⚠️ 이 정책을 일반 `/api/skus` GET(`sku.read`) 정책보다 **앞에** 둔다 —
+  뒤에 두면 `sku.read` 만으로 공급조건·가격을 볼 수 있게 된다.
+- **application(2차)**: service 가 `assertPermission` 을 **두 번** 호출한다.
+  ⛔ ADMIN bypass 없음.
+
+## 45. D-4 — 탭 visibility · D-25 fallback
+
+탭은 `supplier.read` **AND** `supplier_price.read` 가 모두 있을 때만 보인다.
+판정은 `/api/me.permissions` 문자열 포함 여부로만 한다 (⛔ 역할 이름 하드코딩).
+
+| 역할 | 탭 |
+|---|---|
+| ADMIN · SCM_LEADER · SCM_STAFF · FINANCE | 표시 |
+| **EXECUTIVE** | **숨김** |
+
+★ EXECUTIVE 는 `sku.read` 가 있어 SKU 상세 자체는 열리지만 supplier capability
+가 없어 이 탭이 보이지 않는다 — ④ 외부매핑 탭과 **같은 경계**이며, 같은
+사용자에게 ③ 바코드 탭은 보인다.
+
+**D-25**: 두 permission 중 하나라도 사라지면 `activeTab` 이 `basic` 으로
+fallback 한다(기존 §12·T1-6B2 메커니즘 재사용). ⛔ 403 panel 을 남긴 채 탭을
+유지하지 않는다.
+
+## 46. D-5 — SupplierSku period scope ★
+
+이 탭은 **history 화면이 아니다.** 반환 대상은 **업무일자 기준 현재 유효한
+SupplierSku 만** 이다:
+
+```text
+effectiveFrom <= asOf AND (effectiveTo IS NULL OR asOf < effectiveTo)
+```
+
+half-open `[effectiveFrom, effectiveTo)` — 과거 종료 행 제외 · 미래 시작 행
+제외(open-ended 라도 시작이 미래면 제외) · 오늘이 종료일이면 **이미 미적용**.
+
+근거: T06-4 standalone 화면이 과거/현재/미래 전체 history 의 authoritative
+owner 이고(docs/17 §95), 원문 열에 **적용기간이 없다**.
+
+## 47. D-6·D-27 — 업무일자
+
+⛔ 사용자가 `asOf` 를 입력하는 UI 를 만들지 않는다. ⛔ supporting API query 에
+`asOf` 를 추가하지 않는다(보내면 400).
+
+supporting API 가 **요청당 한 번** `Asia/Seoul` 업무일자를 계산하고, 같은
+요청의 **SupplierSku current 판정과 recentPrice 판정이 정확히 같은 값**을 쓴다.
+⛔ row 마다 `new Date()` 를 다시 부르지 않는다 — 자정 경계에서 행마다 날짜가
+갈리면 안 된다. 응답 envelope 이 그 `asOf` 를 그대로 담는다.
+
+**§11 helper**: external-mapping 모듈의 date helper 를 supplier 모듈이 직접
+import 하는 cross-domain 의존을 만들지 않는다. 순수 계산을
+**`src/shared/business-date.ts`** 로 최소 추출하고 external-mapping 은 거기서
+re-export 한다 — **계산은 한 글자도 바뀌지 않았고** 기존 semantics·테스트는
+그대로다(regression PASS). ⛔ 새 date framework 를 만들지 않는다.
+
+## 48. D-14 — recent price exact meaning
+
+`최근 단가` 는 이름과 무관하게 **현재 업무일자(asOf)에 유효한 승인 가격**이다:
+
+```text
+approvedBy IS NOT NULL
+AND effectiveFrom <= asOf
+AND (effectiveTo IS NULL OR asOf < effectiveTo)
+```
+
+⛔ 가장 최근 `createdAt` 아님 · 가장 최근 `effectiveFrom` 만 가진 행 아님 ·
+pending 아님 · 기간 무관 최근 승인행 아님. T06-3 contract 를 그대로 재사용한다.
+
+## 49. D-15·D-26 — 계산 위치 · batch resolver ★
+
+⛔ client 가 SupplierSku 별로 `/prices?asOf=` 를 N 번 부르지 않는다.
+⛔ 별도 batch REST endpoint 도 만들지 않는다.
+**`GET /api/skus/{id}/supplier-skus` 가 `recentPrice` 까지 함께 반환**한다 —
+탭 load 당 API 호출 1개가 원칙이다.
+
+**D-26**: 단건 resolver 를 N 번 호출하지 않는다. Supplier module 에 batch
+resolver 를 둔다:
+
+```text
+resolveEffectiveSupplierPrices(db, { supplierSkuIds, asOf })
+  → Map<supplierSkuId, Price | null>   // 입력 id 전부가 key 로 존재
+```
+
+해당 페이지의 supplierSkuId 를 `IN (...)` 으로 묶어 **DB 조회 1회**로 가져오고,
+application 이 id 별로 group 해서 판정한다:
+
+```text
+0건 → null · 1건 → 그 price · 2건 이상 → SUPPLIER_PRICE_CHAIN_CONFLICT
+```
+
+⛔ SQL 에서 id 별 top-1 을 잘라내지 않는다 — 잘라 버리면 2건 이상(손상)을
+발견할 수 없다. ⛔ silent latest-row selection 금지.
+
+**§15 single source of truth**: 단건 `resolveEffectiveSupplierPrice` 를 batch 의
+**1-id wrapper** 로 바꿔 validity semantics 를 한 군데로 모았다. T06-3 의
+public 동작(반환값·오류·predicate)은 **한 글자도 바뀌지 않았고** T06-3 DB/unit
+regression 이 이를 고정한다.
+
+## 50. D-18·D-17 — chain conflict · no-price/zero-price
+
+**D-18**: 한 SupplierSku 라도 asOf 유효 승인 candidate 가 2건 이상이면
+**요청 전체를 409 `SUPPLIER_PRICE_CHAIN_CONFLICT`** 로 실패시킨다.
+⛔ 부분 row 성공 + warning 으로 숨기지 않는다. ⛔ `price=null` 로 downgrade 하지
+않는다. UI 는 기존 `ErrorBanner` 로 표시한다. ⛔ 새 오류 코드를 만들지 않는다.
+
+**D-17**: `recentPrice` 가 없으면 `null` → UI `—`. 실제 `unitPrice` 가 `"0"` 이면
+UI `0 KRW`. **가격 없음과 0원을 절대 혼동하지 않는다.** ⛔ `||` fallback 금지.
+
+## 51. D-7 — exact summary projection
+
+**새 전용 축소 View** 다. ⛔ 기존 `SupplierSkuView` 전체를 그대로 반환하지 않는다.
+
+```text
+{ id, supplierId,
+  supplier: { id, supplierCode, supplierName },
+  supplierSkuCode, supplierSkuName,
+  moq, effectiveLeadTimeDays,
+  supplyType, isPrimary,
+  recentPrice: { unitPrice, currency } | null }
+```
+
+타입: `moq: string | null` · `effectiveLeadTimeDays: number | null` ·
+`supplierSkuCode/Name: string | null` · `recentPrice.unitPrice: string`.
+
+⛔ 노출하지 않는다: `orderMultiple` · stored `leadTimeDays` · `purchaseUom` ·
+SupplierSku `currency` · `effectiveFrom`/`effectiveTo` · `createdAt` ·
+`destinationWarehouseId` · Supplier `status`/`supplierType` · Price `id`/
+`vatIncluded`/`sourceDocument`/`createdBy`/`approvedBy`/`createdAt`.
+
+## 52. D-19 envelope · D-21 pagination · D-20 ordering
+
+query 는 정확히 **`page` 하나**(unknown query 400, default 1, 양의 정수).
+서버 고정 `pageSize` **50**. response:
+
+```text
+{ items, page, pageSize: 50, total, totalPages, asOf, requestId }
+```
+
+0건이면 `items=[]` · `total=0` · `totalPages=0`.
+
+**D-21**: 페이지 이동은 **탭 내부 local state** 다 — SKU 상세 URL/searchParams 에
+supplier page 를 추가하지 않는다(T1-6B2/B3 선례). ⛔ page-size selector 없음.
+
+**D-20 정렬 고정**: `supplier.supplierCode ASC, supplierId ASC, id ASC`.
+⛔ `isPrimary DESC` 자동 정렬 금지 · ⛔ `effectiveFrom` 정렬 금지 — source 없는
+우선공급업체 상단 배치를 발명하지 않는다.
+
+## 53. D-13 — Supplier status filtering
+
+`Supplier.status` 로 필터하지 않는다. SupplierSku 가 현재 유효하면 status 값과
+무관하게 반환한다. ⛔ ACTIVE-only filtering 금지. status 는 View 에도 없다.
+
+## 54. D-8 — exact 8 columns
+
+```text
+① 공급업체  ② 공급업체 SKU  ③ MOQ  ④ 리드타임
+⑤ 공급유형  ⑥ 우선공급업체  ⑦ 최근 단가  ⑧ 관리
+```
+
+⛔ T06-4 관리화면의 14열 table 을 복사하지 않는다 — 그것은 관리 화면 열이다.
+
+- **공급업체**(§24): `supplierName` 첫 줄 + `supplierCode` 보조 텍스트.
+  ⛔ `supplierType`/`status` 표시 없음.
+- **공급업체 SKU**(§25): `supplierSkuCode`·`supplierSkuName` 중 있는 것만,
+  둘 다 없으면 `—`. ⛔ SKU 자체 `skuCode`/`skuName` 을 반복하지 않는다(상단에
+  이미 있다).
+
+## 55. D-9 — 리드타임은 **적용값**이다 ★
+
+단일 `리드타임` 열은 **`effectiveLeadTimeDays`** 를 표시한다. 즉 SupplierSku
+stored `leadTimeDays` 가 null 이면 `Supplier.defaultLeadTimeDays` fallback 결과가
+보인다.
+
+근거: 이 탭은 **입력값 관리 화면이 아니라 실제 적용되는 현재 공급조건 요약**
+이다. stored/derived 를 둘 다 확인하려면 T06-4 관리화면으로 이동한다.
+
+**D-9 표시**: `null → —` · **`0 → 0`** · 양수 → 숫자 (§00 G-03).
+⛔ `||` 금지 — `0` 이 falsy 라 즉시납이 미입력으로 둔갑한다.
+⛔ stored `leadTimeDays` 를 이 요약에 별도 표시하지 않는다.
+
+## 56. D-10·D-11·D-12·D-16 — MOQ · SupplyType · isPrimary · recentPrice
+
+- **D-10 MOQ**: `null → —`, 문자열은 **그대로**. ⛔ `Number()`/`parseFloat()` ·
+  trailing zero 정규화 · 새 포맷 금지 — backend Decimal serializer 결과 그대로다.
+- **D-11 SupplyType**: `SELF_SUPPLIED → 사급` / `TURNKEY → 턴키`. T06-4 가 확정한
+  매핑과 **같은 값**이며 **unit 테스트가 두 매핑의 일치를 고정**한다. T06-4 의
+  helper 는 관리화면 전용 위치에 있어 직접 cross-screen import 하지 않는다
+  (T1-6B2 가 display helper 를 다룬 원칙과 동일). ⛔ T06-4 화면 동작 변경 없음.
+- **D-12 isPrimary**: `true → 예` / `false → —` (T06-4 와 같은 표현).
+  ⛔ checkbox/radio 등 mutation affordance 금지. ⛔ 대표 상단 sort 금지.
+- **D-16 recentPrice**: API 는 `{unitPrice, currency} | null`, UI 는
+  `null → —` / `{unitPrice} {currency}`(예: `1000 KRW`, **`0 KRW`**).
+  ⛔ 숫자 coercion · VAT 계산/표시 · `sourceDocument`/승인자 표시 금지.
+
+## 57. D-22·§32 — 관리 링크
+
+각 행 `관리` 열에 **`거래처 관리에서 보기`** 링크를 둔다. exact target:
+
+```text
+/master/suppliers/{supplierId}?tab=terms
+```
+
+⛔ `?tab=prices` 로 보내지 않는다 · ⛔ `supplierSkuId` 를 붙이지 않는다 —
+이 탭의 관리 대상은 공급조건 요약이고 그 authoritative target 은 T06-4
+공급조건 탭이다.
+
+탭 자체가 두 permission 조건으로 보이므로 링크에 **별도 권한 분기를 두지
+않는다**(T1-6B2 §22 와 같은 원칙) — 링크는 read-only navigation 이다.
+
+## 58. §37 — mutation control 0
+
+⛔ 이 탭에 없어야 하는 것: `공급조건 추가` · `수정` · `기간 종료/단축` ·
+`새 버전 생성` · `가격 등록` · `가격 승인` · `삭제`.
+허용되는 action 은 **`거래처 관리에서 보기`** 뿐이다.
+
+**D-28**: supporting GET 은 read-only 다 — **AuditLog 0** · `Idempotency-Key`
+없음 · 데이터 mutation 0. write transaction 도 쓰지 않는다.
+
+## 59. D-23 — loading / empty / error
+
+기존 child-tab convention 재사용:
+
+| 상황 | 표시 |
+|---|---|
+| loading | `공급조건을 불러오는 중…` |
+| 0건 | **`등록된 공급조건이 없습니다.`** (T06-4 와 같은 문구) |
+| 403 | 전용 문구. ⛔ 빈 목록으로 위장하지 않는다 |
+| 400·404·409·500·네트워크 | `readApiError` → `ErrorBanner` |
+
+⛔ 새 toast/state framework 금지. ⛔ 빈 상태에서 mutation/create 버튼 금지.
+
+## 60. D-24 — tab insertion/order
+
+`inventory` 와 `history` **사이**에 삽입한다. T1-6B4 이후 실제 탭:
+
+```text
+① 기본정보 ② 코드·분류 ③ 바코드 ④ 외부시스템 매핑 ⑤ 재고관리 설정
+⑥ 공급조건 ⑧ 변경이력
+```
+
+즉 **7탭**이며 변경이력은 **여전히 마지막**이다. ⛔ BOM placeholder 없음 —
+향후 T1-6B5/T07 이 ⑦ BOM 을 공급조건과 변경이력 사이에 넣는다.
+탭 key 는 `supplier`, label 은 정확히 **`공급조건`**.
+
+**§36 create route**: `/master/skus/new` 의 `SKU_CREATE_TABS` 는 **3탭 그대로**
+다. ⛔ 공급조건 탭을 추가하지 않으며 child data fetch 도 발생하지 않는다
+(배열이 분리돼 있어 구조적으로 보장된다).
+
+## 61. §40·§46 — T06-4 regression boundary
+
+T1-6B4 때문에 T06-4 standalone 화면의 route·3탭 구조·mutation·permission·
+behavior 를 **변경하지 않았다**. 실제 T06-4 코드 변경 **0** 이다 —
+`supplyTypeLabel` 도 값을 복제하고 unit 이 일치를 고정하는 방식이라
+관리화면 파일을 건드리지 않았다.
+
+기존 SKU 상세 B1/B2/B3 · Barcode · External Mapping · History · T06-2 · T06-3 ·
+T06-4 테스트를 모두 유지한다. **탭 개수 snapshot(6 → 7)과 "⑥ 공급조건은 아직
+없다" 류의 부재 단언은 이번 Task 가 바꾸는 대상 그 자체**이므로 새 사실로
+갱신했다(E2E 4건 · unit 5건) — 그 밖의 계약은 손대지 않았다.
+
+## 62. D-29·D-30 — tests · boundary
+
+기존 stack 그대로 — **Vitest · DB integration · Playwright**. ⛔ React Testing
+Library 등 신규 framework 도입 금지.
+
+**허용(이번 Task)**: supporting GET 1개 · supplier module read application 확장 ·
+batch effective price resolver · SKU 상세 read-only 탭 · 순수 display helper 최소
+추출(business-date) · tests/docs/route policy.
+
+⛔ **금지(전부 지켰다)**: T06-4 mutation 변경 · SupplierSku/Price mutation 추가 ·
+T07 BOM · BOM placeholder · T08 Warehouse · Attachment · schema/migration ·
+신규 permission/seed.
+
+**§47**: Prisma schema 변경 **0** · migration 변경 **0** · 신규 permission **0** ·
+seed 변경 **0**. 기존 `supplier.read`·`supplier_price.read` 만 쓴다.
+
+## 63. 남은 범위 (§40 갱신)
+
+| Task | 탭 | 상태 |
+|---|---|---|
+| **T1-6B1** | ③ 바코드 (+T04-4B) | **DONE** |
+| **T1-6B2** | ④ 외부시스템 매핑 | **DONE** |
+| **T1-6B3** | ⑧ 변경이력 | **DONE** |
+| **T1-6B4** | ⑥ 공급조건 | **이번 Task** |
+| **T1-6B5** | ⑦ BOM | **BLOCKED** — T07 이후 |
+
+T1-6B4 가 끝나면 **T07 에 의존하지 않는 SKU 상세 탭은 전부 완료**다.
+
+## 64. Remediation R1 — SupplyType 라벨 source of truth 단일화
+
+**지적**: §D-11 은 `SELF_SUPPLIED → 사급` / `TURNKEY → 턴키` 를 확정하면서
+**새 mapping 중복 정의를 금지**하고, T06-4 helper 가 screen-private 이면
+pure display helper 를 shared 위치로 최소 추출하라고 했다. 최초 구현은 값을
+복제하고 "두 매핑의 값이 같다"는 unit 테스트로 대신했는데, **값 일치는 source
+of truth 가 아니다** — 한쪽만 바뀌면 두 화면이 조용히 갈린다.
+
+**조치**: 표시 전용 계약만 `src/modules/supplier/presentation/supply-type.ts`
+로 옮겼다. import 가 하나도 없는 순수 모듈이라 서버·클라이언트 양쪽에서 안전
+하고, Prisma 런타임을 끌고 오는 `application` barrel 과 경로가 겹치지 않는다.
+
+| 항목 | 내용 |
+|---|---|
+| 이동 대상 | `SUPPLY_TYPE_VALUES` · `SupplyTypeValue` · `SUPPLY_TYPE_LABELS` · `supplyTypeLabel` |
+| T06-4 사용처 | `terms-form.ts` · `terms-tab.tsx` · `prices-tab.tsx` (import 만 변경) |
+| T1-6B4 사용처 | `supplier-tab.tsx` (`supplyTypeLabel` 그대로 사용) |
+| 삭제 | `supplier-view.ts` 의 `SUPPLY_TYPE_TAB_LABELS` · `supplyTypeTabLabel` |
+
+- 라벨 값·순서·미지원 값 fallback(원문 그대로) 동작은 **한 글자도 바뀌지
+  않았다**. API payload 는 여전히 enum 원문이며 supplier domain semantics·
+  응답 스키마는 손대지 않았다.
+- unit 테스트가 ① 공유 helper 값 ② backend `SUPPLY_TYPES` 와의 값·순서 일치
+  ③ **두 화면 모듈이 라벨 매핑을 재정의하지 않음**(export 부재 단언)을 고정한다.
+
+## 65. Remediation R2 — child-tab E2E acceptance 보강
+
+§D-16·D-17·D-18·D-23 이 잠근 semantic 중 E2E 로 확인되지 않던 것을 채웠다.
+픽스처는 기존 `tests/e2e/setup-db.ts` 안에서 늘렸고 **새 test framework 를
+만들지 않았다**.
+
+| # | semantic | 검증 layer |
+|---|---|---|
+| 1 | 승인된 **유효** 가격이 최근 단가로 표시 | E2E (+ DB) |
+| 2 | **미승인** 가격은 반영되지 않음 | E2E (+ DB) |
+| 3 | 유효 승인가 없음 → `—` | E2E (+ unit) |
+| 4 | 실제 0원 → `0 KRW` | E2E (+ unit) |
+| 5 | chain 손상 → 409 → ErrorBanner | E2E (+ DB) |
+| 6 | 권한 상실 → `basic` fallback | **unit** (사유는 §66) |
+
+추가 픽스처:
+
+- `ZZV-TAB-NOPRICE` — `ZZS-E2E-018` 의 **현재 유효** 공급조건인데 가진 가격이
+  **지금 발효 구간의 미승인 55555 하나뿐**이다. 승인 필터가 빠지면 곧바로
+  `55555 KRW` 가 보이므로, 기대값 `—` 가 pending 제외와 no-price 를 **동시에**
+  잠근다. MOQ·리드타임도 null 이라 `—` 표기까지 함께 고정된다.
+- `ZZV-TAB-CUR` 에 **이미 마감된 승인가 `1234.5678`** 을 추가했다. "승인됐다"는
+  이유만으로 잡히면 안 되고, 최근 단가는 **asOf 시점에 유효한** 승인가여야 한다.
+- `ZZS-E2E-019` + `ZZV-TAB-CONFLICT` — 승인 가격 두 건이 동시에 유효한 **손상**
+  상태다. `SupplierSkuPrice` 에는 이를 막는 EXCLUDE 가 없으므로(docs/17 §21)
+  직접 심어야만 재현된다. chain conflict 는 **whole-request 409** 라 정상
+  시나리오와 **반드시 다른 SKU** 여야 한다 — 같은 SKU 에 두면 그 SKU 의 탭
+  테스트가 전부 409 가 된다.
+
+## 66. Remediation R2-6 — 권한 상실 fallback 을 Playwright 에서 분리한 이유
+
+`usePermissions()` 는 mount 시 `/api/me` 를 **한 번** 부르고 다시 부르지 않으며,
+선택된 탭은 component state 라 remount 하면 `basic` 으로 초기화된다. 즉 "탭을
+고른 뒤 권한이 사라지는" 전이는 브라우저 세션 안에서 만들 수 없다 — 만들려면
+권한 refetch 를 새로 구현하거나 실행 중에 role matrix 를 흔들어야 하는데, 전자는
+이번 범위 밖이고 후자는 workers=1 로 DB 를 공유하는 다른 spec 을 오염시킨다.
+
+그래서 규칙만 순수 함수로 분리했다 — `src/app/master/skus/[id]/detail-tabs.ts`
+의 `visibleSkuDetailTabs` · `resolveActiveSkuDetailTab`. `SkuDetailClient` 안에
+인라인으로 있던 두 줄을 **동작 변경 없이** 꺼낸 것이며, unit 테스트가
+`supplier.read` / `supplier_price.read` 중 **어느 한쪽만 잃어도 `basic` 으로
+되돌아감**을 고정한다. 탭 자체의 노출 경계(EXECUTIVE 는 안 보임)는 E2E 가
+그대로 검증한다.
