@@ -412,6 +412,29 @@ export function parseUpdateSupplierSkuInput(body: unknown): UpdateSupplierSkuInp
 }
 
 // ═══════════════════════════════════════════════════════════════
+// Supplier — 단건 상세 (T06-4 supporting API)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * `GET /api/suppliers/{id}` 는 **query parameter 를 하나도 받지 않는다** (D-36).
+ *
+ * ⛔ 조용히 무시하지 않는다 — 어떤 키든 있으면 400 이다. 미래에 `include=skus`
+ *    같은 파라미터가 생기더라도 그때 명시적으로 계약을 넓힌다.
+ */
+export function assertNoSupplierDetailQuery(searchParams: URLSearchParams): void {
+  const keys = [...new Set([...searchParams.keys()])];
+  if (keys.length > 0) {
+    throw new ValidationError(
+      keys.map((key) => ({
+        path: key,
+        message: '거래처 상세 조회는 어떤 쿼리 파라미터도 받지 않습니다.',
+      })),
+      { message: '지원하지 않는 거래처 상세 파라미터가 있습니다.' },
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 경로 식별자
 // ═══════════════════════════════════════════════════════════════
 
