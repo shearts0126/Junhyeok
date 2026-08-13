@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveRoutePermission } from '@/modules/auth/application/route-policy';
-import { SUPPLIER_PAGE_SIZE as API_PAGE_SIZE } from '@/modules/supplier/application/dto';
+import {
+  SUPPLIER_PAGE_SIZE as API_PAGE_SIZE,
+  SUPPLY_TYPES,
+} from '@/modules/supplier/application/dto';
+import {
+  SUPPLY_TYPE_LABELS,
+  SUPPLY_TYPE_VALUES,
+  supplyTypeLabel,
+} from '@/modules/supplier/presentation/supply-type';
 
-import { SUPPLY_TYPE_LABELS } from '../../suppliers/[id]/terms-form';
+import * as termsForm from '../../suppliers/[id]/terms-form';
+import { SKU_DETAIL_TABS } from '../sku-form-fields';
 
+import { resolveActiveSkuDetailTab, visibleSkuDetailTabs } from './detail-tabs';
 import {
   formatEffectiveLeadTime,
   formatRecentPrice,
@@ -16,11 +26,10 @@ import {
   SUPPLIER_TAB_EMPTY_MESSAGE,
   SUPPLIER_TAB_PAGE_SIZE,
   SUPPLIER_TAB_QUERY_KEYS,
-  SUPPLY_TYPE_TAB_LABELS,
-  supplyTypeTabLabel,
   supplierTabTotalPages,
   type SupplierSummaryRow,
 } from './supplier-view';
+import * as supplierView from './supplier-view';
 
 /**
  * SKU 상세 ⑥ 공급조건 탭 단위 테스트 (T1-6B4) — 브라우저 없이 고정하는 계약.
@@ -30,10 +39,11 @@ import {
  *   - 쿼리는 `page` 하나뿐 — `asOf` 를 보내지 않는다 (D-6)
  *   - 리드타임 `null → —` / **`0 → 0`** (D-9, G-03)
  *   - MOQ Decimal 문자열 그대로 (D-10)
- *   - 사급/턴키 라벨이 **T06-4 매핑과 같은 값** (D-11)
+ *   - 사급/턴키 라벨은 **저장소 유일한 공유 helper** 다 (D-11, remediation R1)
  *   - 최근 단가 없음 `—` / 0원 `0 KRW` (D-17)
  *   - 관리 링크는 `?tab=terms` 하나 (D-22)
  *   - proxy first-match: `/api/skus/{id}/supplier-skus` → `supplier.read`
+ *   - 탭 노출 · **권한 상실 시 basic fallback** (D-4, remediation R2-6)
  */
 
 const SKU_ID = '11111111-1111-4111-8111-111111111111';
@@ -124,15 +134,35 @@ describe('MOQ (D-10)', () => {
   });
 });
 
-describe('SupplyType 라벨 (D-11)', () => {
-  it('★ T06-4 관리화면 매핑과 같은 값이다 — 두 화면이 갈리지 않는다', () => {
-    expect(SUPPLY_TYPE_TAB_LABELS).toEqual(SUPPLY_TYPE_LABELS);
-    expect(supplyTypeTabLabel('SELF_SUPPLIED')).toBe('사급');
-    expect(supplyTypeTabLabel('TURNKEY')).toBe('턴키');
+describe('★ SupplyType 라벨 — source of truth 가 하나다 (D-11)', () => {
+  it('공유 helper 의 값이 사급/턴키다', () => {
+    expect(SUPPLY_TYPE_LABELS).toEqual({ SELF_SUPPLIED: '사급', TURNKEY: '턴키' });
+    expect(supplyTypeLabel('SELF_SUPPLIED')).toBe('사급');
+    expect(supplyTypeLabel('TURNKEY')).toBe('턴키');
   });
 
   it('알 수 없는 값은 원문 그대로 — 임의 라벨을 만들지 않는다', () => {
-    expect(supplyTypeTabLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW');
+    expect(supplyTypeLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW');
+  });
+
+  it('backend enum(SUPPLY_TYPES)과 값·순서가 같다 — 세 번째 값이 없다', () => {
+    expect([...SUPPLY_TYPE_VALUES]).toEqual([...SUPPLY_TYPES]);
+    expect(Object.keys(SUPPLY_TYPE_LABELS)).toEqual([...SUPPLY_TYPE_VALUES]);
+  });
+
+  /**
+   * ★ remediation R1 — 화면별 복제 매핑을 만들지 않는다.
+   *
+   * 이전 구현은 T06-4 `terms-form` 과 T1-6B4 `supplier-view` 가 각자
+   * `{SELF_SUPPLIED:'사급', TURNKEY:'턴키'}` 를 들고 "값이 같음"만 테스트로
+   * 고정했다. 값 일치는 source of truth 가 아니다 — 한쪽만 바뀌면 갈린다.
+   */
+  it('★ 두 화면 모듈 어디에도 라벨 매핑을 재정의하지 않는다', () => {
+    expect(supplierView).not.toHaveProperty('SUPPLY_TYPE_TAB_LABELS');
+    expect(supplierView).not.toHaveProperty('supplyTypeTabLabel');
+    expect(supplierView).not.toHaveProperty('SUPPLY_TYPE_LABELS');
+    expect(termsForm).not.toHaveProperty('SUPPLY_TYPE_LABELS');
+    expect(termsForm).not.toHaveProperty('supplyTypeLabel');
   });
 });
 
@@ -214,6 +244,82 @@ describe('★ 요약 행 모델 (D-7)', () => {
   it('recentPrice 는 unitPrice·currency 두 필드뿐이다', () => {
     const priced = row({ recentPrice: { unitPrice: '100', currency: 'KRW' } });
     expect(Object.keys(priced.recentPrice ?? {}).sort()).toEqual(['currency', 'unitPrice']);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 탭 노출 · 권한 상실 fallback (D-4 · remediation R2-6)
+//
+// ⚠️ Playwright 로 옮기지 않은 이유는 `./detail-tabs` 파일 주석에 있다 —
+//    권한은 mount 시 1회만 조회되고 선택 탭은 remount 하면 초기화되므로,
+//    "탭 선택 후 권한 상실" 전이는 브라우저 세션에서 재현할 수단이 없다.
+// ═══════════════════════════════════════════════════════════════
+
+const BOTH = ['sku.read', 'supplier.read', 'supplier_price.read'] as const;
+
+function tabKeys(permissions: readonly string[] | null): readonly string[] {
+  return visibleSkuDetailTabs({ permissions }).map((entry) => entry.key);
+}
+
+describe('★ 공급조건 탭 노출 — 두 permission 을 모두 요구한다 (D-4)', () => {
+  it('둘 다 있으면 보인다', () => {
+    expect(tabKeys([...BOTH])).toContain('supplier');
+  });
+
+  it('★ supplier.read 만 있으면 보이지 않는다', () => {
+    expect(tabKeys(['sku.read', 'supplier.read'])).not.toContain('supplier');
+  });
+
+  it('★ supplier_price.read 만 있으면 보이지 않는다', () => {
+    expect(tabKeys(['sku.read', 'supplier_price.read'])).not.toContain('supplier');
+  });
+
+  it('sku.read 로 대신 판단하지 않는다 (EXECUTIVE 경계)', () => {
+    expect(tabKeys(['sku.read', 'barcode.read'])).toEqual([
+      'basic',
+      'classification',
+      'barcode',
+      'inventory',
+      'history',
+    ]);
+  });
+
+  it('permissions 가 아직 null 이면 child 탭을 먼저 보여주지 않는다', () => {
+    const keys = tabKeys(null);
+    expect(keys).not.toContain('supplier');
+    expect(keys).not.toContain('barcode');
+    expect(keys).not.toContain('externalMapping');
+  });
+
+  it('탭 순서는 SKU_DETAIL_TABS 선언 순서 그대로다', () => {
+    const all = tabKeys([
+      'barcode.read',
+      'external_mapping.read',
+      'supplier.read',
+      'supplier_price.read',
+    ]);
+    expect(all).toEqual(SKU_DETAIL_TABS.map((entry) => entry.key));
+  });
+});
+
+describe('★ 권한 상실 fallback — basic 으로 되돌린다 (remediation R2-6)', () => {
+  it('★ 공급조건 탭 선택 중 supplier_price.read 를 잃으면 basic 이다', () => {
+    const before = visibleSkuDetailTabs({ permissions: [...BOTH] });
+    expect(resolveActiveSkuDetailTab('supplier', before)).toBe('supplier');
+
+    const after = visibleSkuDetailTabs({ permissions: ['sku.read', 'supplier.read'] });
+    expect(resolveActiveSkuDetailTab('supplier', after)).toBe('basic');
+  });
+
+  it('★ supplier.read 를 잃어도 basic 이다', () => {
+    const after = visibleSkuDetailTabs({ permissions: ['sku.read', 'supplier_price.read'] });
+    expect(resolveActiveSkuDetailTab('supplier', after)).toBe('basic');
+  });
+
+  it('권한이 유지되면 선택을 바꾸지 않는다 — 무조건 basic 으로 떨구지 않는다', () => {
+    const visible = visibleSkuDetailTabs({ permissions: [...BOTH] });
+    expect(resolveActiveSkuDetailTab('inventory', visible)).toBe('inventory');
+    expect(resolveActiveSkuDetailTab('history', visible)).toBe('history');
   });
 });
 

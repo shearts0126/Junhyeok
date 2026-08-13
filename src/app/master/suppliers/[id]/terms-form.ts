@@ -13,24 +13,16 @@
  *
  * ⚠️ Decimal(`moq`·`orderMultiple`)은 **문자열 그대로** 주고받는다 —
  *    `Number()`/`parseFloat()` 를 쓰지 않는다 (D-15, T1-3 convention 동일).
+ *
+ * ⚠️ `SupplyType` 표시 계약(값·라벨)은 이 파일이 아니라
+ *    `@/modules/supplier/presentation/supply-type` 에 있다 — SKU 상세 ⑥
+ *    공급조건 탭(T1-6B4)과 **같은 매핑 하나**를 쓰기 위해서다.
  */
 
-export const SUPPLY_TYPE_VALUES = ['SELF_SUPPLIED', 'TURNKEY'] as const;
-
-export type SupplyTypeValue = (typeof SUPPLY_TYPE_VALUES)[number];
-
-/**
- * 화면 라벨 (D-14). API payload 에는 **enum 원문**을 쓴다 — 라벨은 표시 전용이다.
- * 근거: `docs/01:161`·`docs/03:48` 의 `사급/턴키` 표기와 enum 선언 순서.
- */
-export const SUPPLY_TYPE_LABELS: Readonly<Record<SupplyTypeValue, string>> = {
-  SELF_SUPPLIED: '사급',
-  TURNKEY: '턴키',
-};
-
-export function supplyTypeLabel(value: string): string {
-  return (SUPPLY_TYPE_LABELS as Record<string, string | undefined>)[value] ?? value;
-}
+import {
+  SUPPLY_TYPE_VALUES,
+  type SupplyTypeValue,
+} from '@/modules/supplier/presentation/supply-type';
 
 export interface SupplierSkuFormValues {
   supplierSkuCode: string;

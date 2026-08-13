@@ -296,6 +296,17 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ⑥ 공급조건 탭 — **가격 chain 손상** 전용 SKU (T1-6B4 remediation R2-5).
+      // ⚠️ 반드시 ZZS-E2E-018 과 분리한다 — chain conflict 는 whole-request 409 라
+      //    같은 SKU 에 두면 정상 시나리오 테스트가 전부 409 가 된다.
+      {
+        skuCode: 'ZZS-E2E-019',
+        skuName: 'E2E 공급조건 가격손상',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
     ],
   });
 
@@ -557,11 +568,15 @@ async function main(): Promise<void> {
   });
 
   // ── SKU 상세 ⑥ 공급조건 탭 픽스처 (T1-6B4) ──────────────────
-  // `ZZS-E2E-018` 이 세 거래처와 관계를 갖는다:
-  //   ZZV-TAB-CUR  현재 유효 · 리드타임 미입력(거래처 기본값 7 fallback) ·
-  //                MOQ 100 · 대표 · **0원 승인 가격** + 미승인 가격
-  //   ZZV-TAB-PAST 이미 종료 → 탭에 보이면 안 된다
-  //   ZZV-TAB-FUT  미래 시작 → 탭에 보이면 안 된다
+  // `ZZS-E2E-018` 이 네 거래처와 관계를 갖는다:
+  //   ZZV-TAB-CUR     현재 유효 · 리드타임 미입력(거래처 기본값 7 fallback) ·
+  //                   MOQ 100 · 대표 · **0원 승인 가격** + 미래 미승인 가격
+  //   ZZV-TAB-NOPRICE 현재 유효 · **현재 발효 구간의 미승인 가격만** 보유 →
+  //                   최근 단가가 `—` 여야 한다 (pending 이 새면 55555 가 보인다)
+  //   ZZV-TAB-PAST    이미 종료 → 탭에 보이면 안 된다
+  //   ZZV-TAB-FUT     미래 시작 → 탭에 보이면 안 된다
+  //
+  // `ZZS-E2E-019` 는 chain 손상 전용이다 (아래).
   const tabSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-018' } });
 
   const tabCurrentSupplier = await prisma.supplier.create({
@@ -585,6 +600,15 @@ async function main(): Promise<void> {
       supplierCode: 'ZZV-TAB-FUT',
       supplierName: 'E2E 탭 미래 거래처',
       supplierType: 'VENDOR',
+    },
+  });
+  // ★ 거래처 기본 리드타임도 없다 → 적용 리드타임이 `—` 로 나온다 (G-03 null 쪽).
+  const tabNoPriceSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-TAB-NOPRICE',
+      supplierName: 'E2E 탭 미승인가격 거래처',
+      supplierType: 'VENDOR',
+      defaultLeadTimeDays: null,
     },
   });
 
@@ -619,11 +643,38 @@ async function main(): Promise<void> {
       effectiveTo: null,
     },
   });
+  // ★ 현재 유효한 공급조건이지만 **승인된 가격이 없다**.
+  const tabNoPriceTerm = await prisma.supplierSku.create({
+    data: {
+      supplierId: tabNoPriceSupplier.id,
+      skuId: tabSku.id,
+      supplyType: 'SELF_SUPPLIED',
+      supplierSkuCode: 'ZZV-TAB-SKU-2',
+      moq: null,
+      leadTimeDays: null,
+      isPrimary: false,
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+    },
+  });
   await prisma.supplierSkuPrice.createMany({
     data: [
       {
         supplierSkuId: tabCurrentTerm.id,
-        // ★ 0원 승인 가격 — 탭이 `0 KRW` 로 보여야 한다("가격 없음"과 구분).
+        // ⛔ 이미 마감된 승인 가격 — "승인됐다"는 이유로 잡히면 안 된다.
+        //    최근 단가는 **지금 유효한** 승인 가격이다 (asOf 판정).
+        unitPrice: '1234.5678',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2019-01-01T00:00:00.000Z'),
+        effectiveTo: new Date('2020-01-01T00:00:00.000Z'),
+        createdBy: adminUser.id,
+        approvedBy: leaderUser.id,
+      },
+      {
+        supplierSkuId: tabCurrentTerm.id,
+        // ★ 현재 유효한 승인 가격. 0원이라 탭이 `0 KRW` 로 보여야 한다
+        //   ("가격 없음"과 구분 — D-17).
         unitPrice: '0',
         currency: 'KRW',
         vatIncluded: false,
@@ -640,6 +691,77 @@ async function main(): Promise<void> {
         vatIncluded: false,
         effectiveFrom: new Date('2098-01-01T00:00:00.000Z'),
         createdBy: adminUser.id,
+      },
+      {
+        supplierSkuId: tabNoPriceTerm.id,
+        // ★★ **지금 발효 구간**의 미승인 가격이다 — 승인 여부만 다르다.
+        //     resolver 가 `approvedBy IS NOT NULL` 을 빠뜨리면 곧바로
+        //     `55555 KRW` 가 보인다. 기대값은 `—` 다 (D-16·D-17).
+        unitPrice: '55555',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+        createdBy: adminUser.id,
+        approvedBy: null,
+      },
+    ],
+  });
+
+  // ── ⑥ 공급조건 탭 — 가격 chain 손상 픽스처 (remediation R2-5) ──
+  //
+  // 승인된 가격 두 건이 **같은 시점에 동시에 유효**하다:
+  //   [2020-01-01, ∞) 와 [2021-01-01, ∞)
+  // T06-3 승인 트랜잭션은 이런 상태를 만들지 않지만, DB 에는 이를 막는 제약이
+  // 없다 (`SupplierSkuPrice` 에 EXCLUDE 를 두지 않는다 — docs/17 §21). 즉
+  // **직접 심어야만 재현되는 손상 상태**이며, 그래서 픽스처로 심는다.
+  //
+  // 기대: resolver 가 candidate 2건을 발견 → whole-request 409
+  //       `SUPPLIER_PRICE_CHAIN_CONFLICT` → 탭이 ErrorBanner 로 드러낸다.
+  //       ⛔ `LIMIT 1` 로 최신 하나를 골라 조용히 넘어가지 않는다 (D-18·D-23).
+  const conflictSku = await prisma.sku.findUniqueOrThrow({
+    where: { skuCode: 'ZZS-E2E-019' },
+  });
+  const conflictSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-TAB-CONFLICT',
+      supplierName: 'E2E 탭 가격손상 거래처',
+      supplierType: 'VENDOR',
+      defaultLeadTimeDays: 3,
+    },
+  });
+  const conflictTerm = await prisma.supplierSku.create({
+    data: {
+      supplierId: conflictSupplier.id,
+      skuId: conflictSku.id,
+      supplyType: 'TURNKEY',
+      supplierSkuCode: 'ZZV-TAB-SKU-3',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+    },
+  });
+  await prisma.supplierSkuPrice.createMany({
+    data: [
+      {
+        supplierSkuId: conflictTerm.id,
+        unitPrice: '1000',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+        // ⚠️ 마감되지 않았다 — 아래 행과 구간이 겹친다.
+        effectiveTo: null,
+        createdBy: adminUser.id,
+        approvedBy: leaderUser.id,
+      },
+      {
+        supplierSkuId: conflictTerm.id,
+        unitPrice: '2000',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2021-01-01T00:00:00.000Z'),
+        effectiveTo: null,
+        createdBy: adminUser.id,
+        approvedBy: leaderUser.id,
       },
     ],
   });

@@ -15,6 +15,10 @@
  *     **`0 → 0`** (§00 G-03).
  *   - `최근 단가` 는 asOf 유효 **승인** 가격이다 — 없으면 `—`, 0원이면 `0`.
  *   - 쿼리는 `page` 하나뿐. `asOf` 는 서버 업무일자라 보내지 않는다.
+ *
+ * ⚠️ `SupplyType` 라벨은 이 파일이 아니라
+ *    `@/modules/supplier/presentation/supply-type` 에 있다 — T06-4 관리화면과
+ *    **같은 매핑 하나**를 쓴다. 화면마다 복제본을 두지 않는다 (D-11).
  */
 
 /** 서버 고정 페이지 크기 — UI 선택지를 만들지 않는다 (D-21). */
@@ -64,24 +68,6 @@ export interface SupplierSummaryResponse {
 // ═══════════════════════════════════════════════════════════════
 // 표시 헬퍼
 // ═══════════════════════════════════════════════════════════════
-
-/**
- * `SupplyType` 라벨 — T06-4 가 확정한 매핑과 **같은 값**이다 (D-11).
- *
- * ⚠️ T06-4 의 helper 는 관리화면 전용 위치(`master/suppliers/[id]/terms-form.ts`)
- *    에 있어 SKU 상세가 직접 import 하면 화면 간 결합이 생긴다. 값을 여기
- *    상수로 두고 **unit 테스트가 두 매핑의 일치를 고정**한다 (T1-6B2 가
- *    `MAPPING_STATUS_LABELS` 를 다룬 방식과 같은 원칙).
- */
-export const SUPPLY_TYPE_TAB_LABELS: Readonly<Record<string, string>> = {
-  SELF_SUPPLIED: '사급',
-  TURNKEY: '턴키',
-};
-
-/** 알 수 없는 값은 원문 그대로 — 임의 라벨을 만들지 않는다. */
-export function supplyTypeTabLabel(value: string): string {
-  return SUPPLY_TYPE_TAB_LABELS[value] ?? value;
-}
 
 /** 값 없음 표기. 빈 문자열도 `—` 로 본다. */
 export function orDash(value: string | null | undefined): string {

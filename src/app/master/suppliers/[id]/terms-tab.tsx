@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import {
+  SUPPLY_TYPE_LABELS,
+  SUPPLY_TYPE_VALUES,
+  supplyTypeLabel,
+  type SupplyTypeValue,
+} from '@/modules/supplier/presentation/supply-type';
 
 import { readApiError, type UiError } from '../../skus/sku-ui';
 import { formatLeadTimeDays, formatOptionalText } from '../list-params';
@@ -13,13 +19,9 @@ import {
   buildTermVersionPayload,
   canSubmitVersion,
   EMPTY_TERM_CREATE_FORM,
-  SUPPLY_TYPE_LABELS,
-  SUPPLY_TYPE_VALUES,
-  supplyTypeLabel,
   toVersionForm,
   type SupplierSkuCreateForm,
   type SupplierSkuVersionForm,
-  type SupplyTypeValue,
 } from './terms-form';
 import type { SkuOption, SupplierSkuItem, SupplierSkuListResponse } from './types';
 

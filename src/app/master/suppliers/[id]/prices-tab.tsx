@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { supplyTypeLabel } from '@/modules/supplier/presentation/supply-type';
 
 import { readApiError, type UiError } from '../../skus/sku-ui';
 import { formatOptionalText } from '../list-params';
@@ -15,7 +16,6 @@ import {
   priceApprovalLabel,
   type PriceCreateForm,
 } from './price-form';
-import { supplyTypeLabel } from './terms-form';
 import { Dialog, DialogActions, TextInput } from './terms-tab';
 import type {
   PriceItem,

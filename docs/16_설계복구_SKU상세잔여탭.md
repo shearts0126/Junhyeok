@@ -1210,3 +1210,72 @@ seed 변경 **0**. 기존 `supplier.read`·`supplier_price.read` 만 쓴다.
 | **T1-6B5** | ⑦ BOM | **BLOCKED** — T07 이후 |
 
 T1-6B4 가 끝나면 **T07 에 의존하지 않는 SKU 상세 탭은 전부 완료**다.
+
+## 64. Remediation R1 — SupplyType 라벨 source of truth 단일화
+
+**지적**: §D-11 은 `SELF_SUPPLIED → 사급` / `TURNKEY → 턴키` 를 확정하면서
+**새 mapping 중복 정의를 금지**하고, T06-4 helper 가 screen-private 이면
+pure display helper 를 shared 위치로 최소 추출하라고 했다. 최초 구현은 값을
+복제하고 "두 매핑의 값이 같다"는 unit 테스트로 대신했는데, **값 일치는 source
+of truth 가 아니다** — 한쪽만 바뀌면 두 화면이 조용히 갈린다.
+
+**조치**: 표시 전용 계약만 `src/modules/supplier/presentation/supply-type.ts`
+로 옮겼다. import 가 하나도 없는 순수 모듈이라 서버·클라이언트 양쪽에서 안전
+하고, Prisma 런타임을 끌고 오는 `application` barrel 과 경로가 겹치지 않는다.
+
+| 항목 | 내용 |
+|---|---|
+| 이동 대상 | `SUPPLY_TYPE_VALUES` · `SupplyTypeValue` · `SUPPLY_TYPE_LABELS` · `supplyTypeLabel` |
+| T06-4 사용처 | `terms-form.ts` · `terms-tab.tsx` · `prices-tab.tsx` (import 만 변경) |
+| T1-6B4 사용처 | `supplier-tab.tsx` (`supplyTypeLabel` 그대로 사용) |
+| 삭제 | `supplier-view.ts` 의 `SUPPLY_TYPE_TAB_LABELS` · `supplyTypeTabLabel` |
+
+- 라벨 값·순서·미지원 값 fallback(원문 그대로) 동작은 **한 글자도 바뀌지
+  않았다**. API payload 는 여전히 enum 원문이며 supplier domain semantics·
+  응답 스키마는 손대지 않았다.
+- unit 테스트가 ① 공유 helper 값 ② backend `SUPPLY_TYPES` 와의 값·순서 일치
+  ③ **두 화면 모듈이 라벨 매핑을 재정의하지 않음**(export 부재 단언)을 고정한다.
+
+## 65. Remediation R2 — child-tab E2E acceptance 보강
+
+§D-16·D-17·D-18·D-23 이 잠근 semantic 중 E2E 로 확인되지 않던 것을 채웠다.
+픽스처는 기존 `tests/e2e/setup-db.ts` 안에서 늘렸고 **새 test framework 를
+만들지 않았다**.
+
+| # | semantic | 검증 layer |
+|---|---|---|
+| 1 | 승인된 **유효** 가격이 최근 단가로 표시 | E2E (+ DB) |
+| 2 | **미승인** 가격은 반영되지 않음 | E2E (+ DB) |
+| 3 | 유효 승인가 없음 → `—` | E2E (+ unit) |
+| 4 | 실제 0원 → `0 KRW` | E2E (+ unit) |
+| 5 | chain 손상 → 409 → ErrorBanner | E2E (+ DB) |
+| 6 | 권한 상실 → `basic` fallback | **unit** (사유는 §66) |
+
+추가 픽스처:
+
+- `ZZV-TAB-NOPRICE` — `ZZS-E2E-018` 의 **현재 유효** 공급조건인데 가진 가격이
+  **지금 발효 구간의 미승인 55555 하나뿐**이다. 승인 필터가 빠지면 곧바로
+  `55555 KRW` 가 보이므로, 기대값 `—` 가 pending 제외와 no-price 를 **동시에**
+  잠근다. MOQ·리드타임도 null 이라 `—` 표기까지 함께 고정된다.
+- `ZZV-TAB-CUR` 에 **이미 마감된 승인가 `1234.5678`** 을 추가했다. "승인됐다"는
+  이유만으로 잡히면 안 되고, 최근 단가는 **asOf 시점에 유효한** 승인가여야 한다.
+- `ZZS-E2E-019` + `ZZV-TAB-CONFLICT` — 승인 가격 두 건이 동시에 유효한 **손상**
+  상태다. `SupplierSkuPrice` 에는 이를 막는 EXCLUDE 가 없으므로(docs/17 §21)
+  직접 심어야만 재현된다. chain conflict 는 **whole-request 409** 라 정상
+  시나리오와 **반드시 다른 SKU** 여야 한다 — 같은 SKU 에 두면 그 SKU 의 탭
+  테스트가 전부 409 가 된다.
+
+## 66. Remediation R2-6 — 권한 상실 fallback 을 Playwright 에서 분리한 이유
+
+`usePermissions()` 는 mount 시 `/api/me` 를 **한 번** 부르고 다시 부르지 않으며,
+선택된 탭은 component state 라 remount 하면 `basic` 으로 초기화된다. 즉 "탭을
+고른 뒤 권한이 사라지는" 전이는 브라우저 세션 안에서 만들 수 없다 — 만들려면
+권한 refetch 를 새로 구현하거나 실행 중에 role matrix 를 흔들어야 하는데, 전자는
+이번 범위 밖이고 후자는 workers=1 로 DB 를 공유하는 다른 spec 을 오염시킨다.
+
+그래서 규칙만 순수 함수로 분리했다 — `src/app/master/skus/[id]/detail-tabs.ts`
+의 `visibleSkuDetailTabs` · `resolveActiveSkuDetailTab`. `SkuDetailClient` 안에
+인라인으로 있던 두 줄을 **동작 변경 없이** 꺼낸 것이며, unit 테스트가
+`supplier.read` / `supplier_price.read` 중 **어느 한쪽만 잃어도 `basic` 으로
+되돌아감**을 고정한다. 탭 자체의 노출 경계(EXECUTIVE 는 안 보임)는 E2E 가
+그대로 검증한다.

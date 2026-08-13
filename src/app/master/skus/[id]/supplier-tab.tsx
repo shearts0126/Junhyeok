@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { supplyTypeLabel } from '@/modules/supplier/presentation/supply-type';
+
 import { ErrorBanner, readApiError, type UiError } from '../sku-ui';
 
 import {
@@ -15,7 +17,6 @@ import {
   supplierSkuLabel,
   SUPPLIER_TAB_EMPTY_MESSAGE,
   SUPPLIER_TAB_LOADING_MESSAGE,
-  supplyTypeTabLabel,
   type SupplierSummaryResponse,
   type SupplierSummaryRow,
 } from './supplier-view';
@@ -164,7 +165,7 @@ export function SupplierTab({ skuId }: { readonly skuId: string }) {
                     {formatEffectiveLeadTime(row.effectiveLeadTimeDays)}
                   </td>
                   <td className="px-3 py-2" data-testid="supplier-tab-supply-type">
-                    {supplyTypeTabLabel(row.supplyType)}
+                    {supplyTypeLabel(row.supplyType)}
                   </td>
                   <td className="px-3 py-2" data-testid="supplier-tab-primary">
                     {primaryTabLabel(row.isPrimary)}

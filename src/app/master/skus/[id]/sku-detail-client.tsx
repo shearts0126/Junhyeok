@@ -13,12 +13,7 @@ import {
   type SkuFormValue,
   type SkuViewLike,
 } from '../sku-form';
-import {
-  SKU_DETAIL_TABS,
-  SkuTabPanel,
-  type SkuDetailTabKey,
-  type SkuTabKey,
-} from '../sku-form-fields';
+import { SkuTabPanel, type SkuDetailTabKey, type SkuTabKey } from '../sku-form-fields';
 import {
   ErrorBanner,
   ValidationReportPanel,
@@ -30,6 +25,7 @@ import {
 } from '../sku-ui';
 
 import { BarcodeTab } from './barcode-tab';
+import { resolveActiveSkuDetailTab, visibleSkuDetailTabs } from './detail-tabs';
 import { ExternalMappingTab } from './external-mapping-tab';
 import { HistoryTab } from './history-tab';
 import { SupplierTab } from './supplier-tab';
@@ -147,18 +143,11 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
   const [actionText, setActionText] = useState('');
 
   const canUpdate = permissions?.includes('sku.update') ?? false;
-  /** ★ child 모듈은 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다. */
-  const canReadBarcode = permissions?.includes('barcode.read') ?? false;
-  const canReadExternalMapping = permissions?.includes('external_mapping.read') ?? false;
   /**
-   * ⑥ 공급조건 탭은 **두 capability 를 모두** 요구한다 (T1-6B4 D-4) — 응답에
-   * 공급조건과 **가격**이 함께 들어가기 때문이다. 현재 role matrix 에서 둘 다
-   * A·L·S·F 라는 사실은 우연이며 계약상 별개다.
-   * ★ EXECUTIVE 는 `sku.read` 가 있어 상세는 열리지만 이 탭은 보이지 않는다.
+   * ★ child 모듈은 독립 capability 다 — `sku.read` 로 대신 판단하지 않는다.
+   *   탭별 요구 permission 과 권한 상실 시 fallback 은 `./detail-tabs` 의
+   *   순수 함수가 갖고 있고, 단위 테스트가 그 규칙을 고정한다.
    */
-  const canReadSupplierTab =
-    (permissions?.includes('supplier.read') ?? false) &&
-    (permissions?.includes('supplier_price.read') ?? false);
 
   // 상세 조회 — 400/403/404 를 빈 화면으로 위장하지 않는다.
   useEffect(() => {
@@ -323,14 +312,9 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       action.fromStatus === detail.status && (permissions?.includes(action.permission) ?? false),
   );
   const statusLabel = SKU_STATUS_LABELS[detail.status as SkuListStatus] ?? detail.status;
-  const visibleTabs = SKU_DETAIL_TABS.filter((entry) => {
-    if (entry.key === 'barcode') return canReadBarcode;
-    if (entry.key === 'externalMapping') return canReadExternalMapping;
-    if (entry.key === 'supplier') return canReadSupplierTab;
-    return true;
-  });
-  // 권한을 잃은 상태로 남은 탭 선택을 붙들지 않는다.
-  const activeTab: SkuDetailTabKey = visibleTabs.some((entry) => entry.key === tab) ? tab : 'basic';
+  const visibleTabs = visibleSkuDetailTabs({ permissions });
+  // 권한을 잃은 상태로 남은 탭 선택을 붙들지 않는다 (단위 테스트가 고정한다).
+  const activeTab: SkuDetailTabKey = resolveActiveSkuDetailTab(tab, visibleTabs);
 
   return (
     <main className="mx-auto w-full max-w-5xl space-y-6 px-6 py-10">
