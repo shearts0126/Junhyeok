@@ -233,6 +233,13 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     methods: ['GET', 'HEAD'],
     permission: 'external_mapping.read',
   },
+  // 거래처·공급조건·가격 관리 화면 `/master/suppliers`(목록)·`/master/suppliers/{id}`
+  // (상세 3탭) (T06-4, docs/17 §80~). 같은 prefix 라 두 route 를 한 정책이 잡는다 —
+  // supplier id 는 UUID 라 `/new` 같은 하위 경로와 충돌하지 않는다(⛔ `/new` route
+  // 자체를 만들지 않는다 — 신규 등록은 목록 화면의 dialog 다, D-1·D-6).
+  // ★ 진입은 `supplier.read` 다 — 가격 탭은 화면 안에서 `supplier_price.read` 로
+  //   따로 가린다(권한을 role 로 합치지 않는다, D-28).
+  { prefix: '/master/suppliers', methods: ['GET', 'HEAD'], permission: 'supplier.read' },
 ];
 
 export function isPublicPath(pathname: string): boolean {

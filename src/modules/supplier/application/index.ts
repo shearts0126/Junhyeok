@@ -45,6 +45,7 @@ export {
   type CreateSupplierSkuResult,
 } from './create-supplier-sku';
 export {
+  assertNoSupplierDetailQuery,
   createSupplierSchema,
   createSupplierSkuSchema,
   listSuppliersQuerySchema,
@@ -74,6 +75,7 @@ export {
   type SupplierListResult,
   type SupplierReadDependencies,
 } from './list-suppliers';
+export { getSupplier } from './get-supplier';
 export { listSupplierSkus, type SupplierSkuListResult } from './list-supplier-skus';
 export { listSupplierSkuPrices, type SupplierSkuPriceListResult } from './list-prices';
 export {

@@ -72,6 +72,16 @@ async function main(): Promise<void> {
     where: { sku: { skuCode: { startsWith: 'ZZS-' } } },
   });
 
+  // ⚠️ 거래처 픽스처(T06-4)도 SKU 를 FK RESTRICT 로 붙든다 — 가격 → 공급조건 →
+  //    거래처 순으로 지운다. 접두사 ZZV-.
+  await prisma.supplierSkuPrice.deleteMany({
+    where: { supplierSku: { supplier: { supplierCode: { startsWith: 'ZZV-' } } } },
+  });
+  await prisma.supplierSku.deleteMany({
+    where: { supplier: { supplierCode: { startsWith: 'ZZV-' } } },
+  });
+  await prisma.supplier.deleteMany({ where: { supplierCode: { startsWith: 'ZZV-' } } });
+
   // ⚠️ SKU 픽스처를 **먼저** 지운다 — SKU 가 참조 중인 공통코드는 FK RESTRICT 로
   //    삭제되지 않기 때문이다.
   await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
@@ -475,6 +485,65 @@ async function main(): Promise<void> {
       // `>= 08-01 AND < 08-05` 범위 안에 있어야 다음 실행에서 지워진다.
       occurredAt: new Date(Date.UTC(2026, 7, 3, 23, 59 - index, 0)),
     })),
+  });
+
+  // ── 거래처 화면 픽스처 (T06-4) — 접두사 ZZV- ────────────────
+  // `ZZV-E2E-001`: 공급조건 1건 + 승인/미승인 가격 각 1건 (권한·상태 표시 검증용).
+  // `ZZV-E2E-002`: 공급조건 0건 (빈 상태 검증용 — mutation 이 닿지 않는 픽스처).
+  const supplierWithTerms = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-E2E-001',
+      supplierName: 'E2E 공급업체 알파',
+      supplierType: 'MANUFACTURER',
+      businessRegistrationNo: '111-22-33333',
+      contactName: 'E2E 담당자',
+      // ★ 0 은 즉시납 — 화면이 `—` 로 표시하면 안 된다 (G-03).
+      defaultLeadTimeDays: 0,
+    },
+  });
+  await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-E2E-002',
+      supplierName: 'E2E 공급업체 베타',
+      supplierType: 'VENDOR',
+    },
+  });
+
+  const termSku = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-001' } });
+  const e2eTerm = await prisma.supplierSku.create({
+    data: {
+      supplierId: supplierWithTerms.id,
+      skuId: termSku.id,
+      supplyType: 'SELF_SUPPLIED',
+      supplierSkuCode: 'ZZV-SKU-001',
+      moq: '100',
+      // ★ leadTimeDays 는 null — 화면이 입력값 `—` / 적용값 `0`(거래처 기본값)로
+      //   나눠 보여줘야 한다 (D-13).
+      effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+    },
+  });
+  await prisma.supplierSkuPrice.createMany({
+    data: [
+      {
+        supplierSkuId: e2eTerm.id,
+        unitPrice: '1000.0000',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+        createdBy: adminUser.id,
+        // 승인된 가격 — 승인 버튼이 보이면 안 된다.
+        approvedBy: leaderUser.id,
+      },
+      {
+        supplierSkuId: e2eTerm.id,
+        unitPrice: '0',
+        currency: 'KRW',
+        vatIncluded: false,
+        effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
+        // ★ 미승인 + 0원 — "미승인" 표시와 0원 표시를 함께 검증한다.
+        createdBy: adminUser.id,
+      },
+    ],
   });
 
   await disconnectPrisma();
