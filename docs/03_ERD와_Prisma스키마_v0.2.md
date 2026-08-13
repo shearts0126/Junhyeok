@@ -274,6 +274,8 @@ erDiagram
 | `supplier_sku_price` | `UNIQUE(supplier_sku_id, effective_from)` | `(supplier_sku_id, effective_from DESC)` |
 | `bom_header` | `UNIQUE(parent_sku_id, version)` <br> **EXCLUDE**: 동일 `parent_sku_id`의 `ACTIVE` 기간 중첩 금지 | `(parent_sku_id, status)` |
 | `bom_line` | `UNIQUE(bom_header_id, line_no)` <br> `UNIQUE(bom_header_id, component_sku_id, alternate_group)` | `(component_sku_id)` |
+
+> ✏️ **2026-08-13 설계복구 (BOM, T07)**: `bom_line` 의 `UNIQUE(bom_header_id, component_sku_id, alternate_group)` 은 `alternate_group` 이 nullable 이라 **PostgreSQL 이 NULL 을 서로 다른 값으로 취급해 중복 구성품을 전혀 막지 못한다**(실측상 383행 전량 NULL — `01 §2.3` "대체 부자재 미관리"). `SUPERSEDED BY 18_설계복구_BOM.md §D-3` — `CREATE UNIQUE INDEX ux_bom_line_component_group ON bom_line (bom_header_id, component_sku_id, COALESCE(alternate_group, ''))` 표현식 UNIQUE 로 구현한다(NULL 을 하나의 동일 그룹으로 취급). `NULLS NOT DISTINCT` 는 `00 §C-09` 의 기존 결정에 따라 사용하지 않으며, 센티넬 정규화는 C-09 자신이 채택한 방식과 같다. `bom_header` 의 EXCLUDE 의미는 **§D-7** 이 확정한다.
 | `warehouse_location` | `UNIQUE(warehouse_id, location_code)` | |
 
 ## 6.4 ERD — Layer 3 (재고 코어) ★
