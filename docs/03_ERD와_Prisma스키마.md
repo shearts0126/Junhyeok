@@ -289,6 +289,8 @@ erDiagram
 | `supplier_sku_price` | `UNIQUE(supplier_sku_id, effective_from)` | `(supplier_sku_id, effective_from DESC)` |
 | `bom_header` | `UNIQUE(parent_sku_id, version)` <br> **EXCLUDE 제약**: 동일 `parent_sku_id`의 `status='ACTIVE'` 적용기간 중첩 금지 (`daterange` GiST) | `(parent_sku_id, status)`, `(status, effective_from)` |
 | `bom_line` | `UNIQUE(bom_header_id, line_no)` <br> `UNIQUE(bom_header_id, component_sku_id, alternate_group)` | `(component_sku_id)` — 역전개용 |
+
+> ✏️ **2026-08-13 설계복구 (BOM, T07)**: `SUPERSEDED BY 18_설계복구_BOM.md §D-3` — `alternate_group` nullable 로 인해 NULL 행 중복이 차단되지 않는다. `COALESCE(alternate_group, '')` 표현식 UNIQUE 로 대체한다.
 | `warehouse_location` | `UNIQUE(warehouse_id, location_code)` | |
 | `external_channel_mapping` | `UNIQUE(external_system_id, mapping_type, external_value)` | |
 
