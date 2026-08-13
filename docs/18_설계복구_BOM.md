@@ -265,6 +265,25 @@ CREATE UNIQUE INDEX "ux_bom_line_component_group"
 
 위반 시 → `BOM_LINE_DUPLICATE` / **409** (D-29).
 
+#### ★ `alternateGroup` 정규화 — 센티넬은 DB 전용이다
+
+인덱스가 `NULL` 과 `''` 를 **같은 키**로 접는 이상, API 가 두 값을 서로 다른
+business value 로 남기면 의미가 갈린다(`{alternateGroup: ""}` 과
+`{alternateGroup: null}` 이 응답에서는 달라 보이는데 DB 에서는 충돌한다).
+
+> **`alternateGroup` 은 저장 전에 `trim` 하고, trim 후 빈 문자열이면 `null` 로
+> 정규화한다.** 따라서 **`alternate_group = ''` 인 행은 존재할 수 없다.**
+
+| 계층 | 계약 |
+|---|---|
+| API DTO | `optional`·`nullable` string. `trim` → blank 면 `null` (D-14) |
+| 도메인·저장 | `null` 또는 **1~50자 non-blank** 문자열뿐 (D-9) |
+| DB 인덱스 | `COALESCE(alternate_group, '')` — 센티넬 `''` 은 **NULL uniqueness 정규화 전용**이며 business value 가 아니다 |
+| 응답 | 저장값 그대로(`null` 또는 non-blank) |
+
+⛔ API 가 실제 빈 문자열을 저장하는 경로를 만들지 않는다.
+⛔ 컬럼을 `NOT NULL DEFAULT ''` 로 바꾸지 않는다 — `03v2` 의 nullable 선언을 유지한다.
+
 ### D-4 — version identity
 
 | 항목 | 확정 |
@@ -356,7 +375,9 @@ UI 는 직전 버전 문자열을 **placeholder 로만** 보여줄 수 있다(�
 상태는 `BOM_NOT_EDITABLE`(422, D-29)다. ⛔ **generic `status` PATCH 를 만들지
 않는다** — 상태는 전용 endpoint 로만 바뀐다(T1-4A 와 같은 원칙).
 
-`clone` 은 **모든 status 에서** 가능하다(원본을 읽기만 하므로).
+`clone` 은 **모든 status 에서** 가능하다(원본을 읽기만 하므로). 단 결과물은 새
+`effectiveFrom` 을 갖는 별개 candidate 이므로 **복제 직후 cycle 검사를 거친다**
+(D-13).
 
 ### D-7 — active replacement ★ 핵심
 
@@ -460,7 +481,7 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 | `lossRate` | ⛔ | DRAFT·REJECTED | `0 ≤ x < 1`, Decimal(8,6) | **string** · null |
 | `componentRole` | ✅ | DRAFT·REJECTED | enum 4종 | enum 문자열 |
 | `supplyType` | ⛔ | DRAFT·REJECTED | enum 2종 | enum 문자열 · null |
-| `alternateGroup` | ⛔ | DRAFT·REJECTED | trim, 1~50자, 빈 문자열 → null | string · null |
+| `alternateGroup` | ⛔ | DRAFT·REJECTED | **`trim` → blank 면 `null`**, 아니면 1~50자. ⛔ `''` 저장 불가 (D-3) | string · null |
 | `isRequired` | ⛔ (default `true`) | DRAFT·REJECTED | boolean | boolean |
 | `issueWarehouseId` | ⛔ | DRAFT·REJECTED | UUID 형식만(**존재 검증 없음** — T08) | string · null |
 | `packQuantity` | ⛔ | DRAFT·REJECTED | > 0, Decimal(18,6) | **string** · null |
@@ -556,60 +577,141 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 
 ### D-13 — cycle detection
 
-#### 알고리즘
+#### 대전제 — 검사 대상은 "BOM row 의 집합"이 아니라 "한 시점의 graph" 다 ★
 
-**recursion-stack(경로) 기반 DFS.** ⛔ 전역 `visited` 하나로 판정하지 않는다 —
+> cycle 검사 그래프는 **하나의 evaluation date 에서 parent SKU 마다 정확히
+> 하나의 버전을 선택해** 구성한다. 여러 버전의 edge 를 union 하지 않는다.
+
+이 대전제가 없으면 **실제로는 어느 시점에도 동시에 존재하지 않는 edge 조합**으로
+가짜 순환(false positive)을 만든다. BOM 은 같은 parent SKU 에 여러 버전을 동시에
+가질 수 있고, `ACTIVE` 조차 적용기간이 다른 여러 버전이 공존할 수 있기 때문이다.
+
+**false positive 예시**
+
+candidate `X` = `B v1` (DRAFT, `effectiveFrom = 2027-06-01`, 구성품 `C`).
+기존 데이터:
+
+```
+A v1  ACTIVE  [2020-01-01, 2027-01-01)  → B      ← 2027-01-01 에 이미 마감됨
+A v2  ACTIVE  [2027-01-01, ∞)           → D      ← B 를 갖지 않는다
+C     ACTIVE  [2020-01-01, ∞)           → A
+```
+
+| 방식 | 그래프 | 판정 |
+|---|---|---|
+| **union**(폐기) | `A→B` · `A→D` · `B→C` · `C→A` | `B→C→A→B` ⇒ **CYCLE (오판)** |
+| **evaluation date 선택**(확정) | `D = 2027-06-01` → `A` 는 `v2` 뿐 → `B→C` · `C→A` · `A→D` | `B→C→A→D` ⇒ **정상** |
+
+`A v1` 과 `A v2` 는 **같은 날 동시에 유효한 적이 없다.** `A → B` edge 는
+2027-01-01 에 이미 사라졌는데, union 은 그것을 영구히 살려 두어 **선택될 리 없는
+버전의 edge 로 새 BOM 을 무기한 차단**한다.
+
+#### evaluation date
+
+검사 대상 candidate BOM 을 `X` 라 할 때:
+
+| 상황 | evaluation date |
+|---|---|
+| 기본 | **`X.effectiveFrom`** |
+| `POST …/activate` 가 `{effectiveFrom: T}` 를 지정 | **`T`** (요청 override 값) |
+| header `PATCH` 가 `effectiveFrom` 을 바꿈 | **변경 후 `effectiveFrom`** |
+| `POST /api/boms/import` | **각 imported header 의 `effectiveFrom`** |
+
+★ **activate 에서 override 가 결정적이다.** D-7 이 historical 삽입과 future
+activation 을 모두 허용하므로, approve 당시 cycle-free 였어도 `T` 가 달라지면
+그 시점의 sibling 선택이 통째로 바뀐다. **approve 시점의 통과를 재사용하지 않는다.**
+
+#### graph construction
+
+```
+buildCycleGraph(candidate X, evaluationDate D):
+  # 1. candidate 의 parent 는 X 로 고정 — resolveEffectiveBom 을 쓰지 않는다.
+  bomOf(X.parentSkuId) := X
+
+  # 2. 그 밖의 parent SKU 는 D 시점의 유효 ACTIVE 버전 0/1건만.
+  bomOf(otherSkuId)    := resolveEffectiveBom(otherSkuId, D)      # D-22 와 동일 predicate
+
+  # 3. 같은 parent 의 다른 DRAFT / PENDING_APPROVAL / APPROVED / ACTIVE 버전은
+  #    graph 에 넣지 않는다.
+  # 4. bomOf(...) 가 null 인 SKU 는 leaf 다.
+  # 5. candidate X 의 line set 은 **이번 mutation 이 반영된 이후 상태**를 쓴다.
+  childrenOf(skuId) := bomOf(skuId)?.lines.map(l => l.componentSkuId) ?? []
+```
+
+| 규칙 | 확정 |
+|---|---|
+| candidate 의 parent | **X 를 강제 선택**. 같은 parent 의 다른 버전은 배제 |
+| 그 밖의 parent | `resolveEffectiveBom(parentSkuId, D)` 로 **최대 1건** |
+| 동일 parent 의 다른 버전 | ⛔ **동시 투입 금지** (DRAFT·PENDING·APPROVED·ACTIVE 무관) |
+| 유효 BOM 0건인 SKU | **leaf** |
+| candidate 의 line set | **mutation 반영 후** 상태 (같은 트랜잭션 안에서 읽는다) |
+| 자식 판정 | `resolveEffectiveBom` 이 2건 이상을 만나면 **409 `BOM_EFFECTIVE_CONFLICT`** (D-22) — 순환 판정으로 감추지 않는다 |
+
+★ candidate 가 `DRAFT` 여도 **자기 자신은 반드시 graph 에 들어간다.** 그래야
+"입력 시점에 막는다"가 성립한다. 반면 **다른** SKU 의 DRAFT 는 들어가지 않는다 —
+아직 발효되지 않은 남의 초안이 내 BOM 을 막을 이유가 없다.
+
+#### DFS
+
+**recursion-path(재귀 경로) 기반.** ⛔ 전역 `visited` 하나로 판정하지 않는다 —
 그러면 **다이아몬드를 순환으로 오판**한다(`07v2:427` 이 다이아몬드를 "순환 아님"
 으로 명시).
 
 ```
-detectCycle(startSkuId):
-  path    := []        # 현재 재귀 경로 (순환 판정용)
-  done    := Set()     # 이미 안전 확인된 노드 (재방문 가지치기용, 판정에 미사용)
+detectCycle(X, D):
+  graph := buildCycleGraph(X, D)
+  path  := []        # 현재 재귀 경로 — 순환 판정은 오직 이것으로 한다
+  done  := Set()     # 이미 안전 확인된 노드 — 재방문 가지치기용, 판정에 미사용
   dfs(skuId, level):
     if skuId in path       -> BOM_CYCLE_DETECTED (path + skuId 를 오류에 포함)
     if skuId in done       -> return                # 다이아몬드: 순환 아님
     if level > MAX_LEVEL   -> BOM_MAX_LEVEL_EXCEEDED
     path.push(skuId)
-    for child in componentsOf(skuId):
+    for child in graph.childrenOf(skuId):
       dfs(child, level + 1)
     path.pop()
     done.add(skuId)
+  dfs(X.parentSkuId, 0)
 ```
 
 `MAX_LEVEL = 10` (`05:132` explode 기본값과 **같은 상수를 공유**한다).
 
-#### graph scope ★
+| 그래프 | 판정 |
+|---|---|
+| `A→B` · `A→C` · `B→D` · `C→D` (다이아몬드) | **정상** |
+| `A→A` (직접 자기참조) | `BOM_CYCLE_DETECTED` |
+| `A→B→A` | `BOM_CYCLE_DETECTED` |
+| `A→B→C→A` | `BOM_CYCLE_DETECTED` |
 
-> cycle 그래프에 참여하는 BOM 버전은 **`status ∈ {DRAFT, PENDING_APPROVAL,
-> APPROVED, ACTIVE}` 인 모든 버전**이다. `REJECTED` · `INACTIVE` · `ARCHIVED`
-> 는 제외한다.
-
-근거:
-
-- `ACTIVE` 만 보면 **DRAFT 단계에서 순환을 만들어 두었다가 activate 시점에
-  터진다.** 그때는 이미 여러 버전이 얽혀 있어 되돌리기 어렵다. 순환은
-  **입력 시점에** 막아야 한다.
-- 반대로 **모든 버전**을 보면 `REJECTED`·`ARCHIVED` 같은 폐기 이력이 새 BOM 을
-  영구히 막는다. 살아 있는 버전만 본다.
-- `INACTIVE` 는 사용종료이므로 미래 그래프에 영향을 주지 않는다.
-
-같은 parent SKU 에 살아 있는 버전이 여럿이면 **그 구성품들의 합집합**을 자식으로
-본다(보수적 판정). 어느 한 버전에서라도 순환이 성립하면 거부한다.
+★ **`A→A` 직접 자기참조도 이 검사가 함께 막는다.** D-12 의
+`BOM_SELF_COMPONENT` 는 DTO 단계의 빠른 거부이고, DFS 는 같은 사실을 그래프
+차원에서 다시 확인한다(두 방어를 모두 둔다).
 
 #### 검사 시점
 
-| 시점 | 검사 | 이유 |
-|---|:-:|---|
-| `POST …/lines` | ✅ | `05:122` 원문 명시 |
-| `PATCH …/lines/{lid}` | ✅ | `componentSkuId` 를 바꿀 수 있다 |
-| `POST …/submit` | ✅ | 라인 추가 이후 다른 BOM 이 바뀌었을 수 있다 |
-| `POST …/activate` | ✅ | 최종 방어선 |
-| `POST /api/boms/import` | ✅ | 배치 전체를 하나의 그래프로 검사 |
-| `POST …/clone` | ⛔ | 원본이 이미 통과한 그래프를 복제할 뿐 |
+| 시점 | 검사 | evaluation date | 이유 |
+|---|:-:|---|---|
+| `POST …/lines` | ✅ | `X.effectiveFrom` | `05:122` 원문 명시 |
+| `PATCH …/lines/{lid}` | ✅ | `X.effectiveFrom` | `componentSkuId` 를 바꿀 수 있다 |
+| **`PATCH /api/boms/{id}`** | ✅ **(`effectiveFrom` 변경 시)** | **변경 후 값** | 날짜가 바뀌면 sibling 선택이 통째로 바뀐다 |
+| `POST …/submit` | ✅ | `X.effectiveFrom` | 라인 추가 이후 다른 BOM 이 바뀌었을 수 있다 |
+| **`POST …/activate`** | ✅ **(필수)** | **최종 `T`** | approve 시점 통과를 재사용하지 않는다 |
+| `POST …/clone` | ✅ | 새 header 의 `effectiveFrom` | 아래 |
+| `POST /api/boms/import` | ✅ | 각 header 의 `effectiveFrom` | header 마다 개별 candidate 로 검사 |
 
-**DB 로는 막을 수 없다.** 따라서 위 경로 전부가 각각 검사해야 하며, race 는
-D-28 의 lock 으로 막는다.
+**`clone` 도 검사한다** (기존 결정 변경). clone 은 `05:130` 대로 **기존 라인
+전체를 복제**하고 `newVersion`·`effectiveFrom` 을 새로 받으므로, **원본이
+통과했던 evaluation date 와 다른 날짜**가 된다. 그 날짜의 sibling 조합에서는
+순환일 수 있다. 복제가 끝난 뒤 **같은 트랜잭션 안에서** candidate graph 를
+검사하고, 실패하면 **clone 전체를 rollback** 한다.
+
+`import` 는 배치를 하나의 union graph 로 묶지 않는다. **imported header 마다
+자기 `effectiveFrom` 을 evaluation date 로 삼아 개별 candidate 로 검사**한다.
+같은 배치의 다른 header 는 저장된 뒤 `resolveEffectiveBom` 의 대상이 될 뿐이며,
+전량 `DRAFT` 로 들어오므로(`06v2:268`) 서로의 그래프에 들어가지 않는다.
+
+**DB 로는 막을 수 없다.** 위 경로 전부가 각각 검사하며, race 는 D-28 의
+lock 으로 막는다.
 
 ### D-14 — exact DTO
 
@@ -655,7 +757,7 @@ D-28 의 lock 으로 막는다.
   lossRate:         string|null   optional
   componentRole:    'PRODUCT'|'MATERIAL'|'PACKAGING'|'SERVICE'  required
   supplyType:       'SELF_SUPPLIED'|'TURNKEY'|null  optional
-  alternateGroup:   string|null   optional
+  alternateGroup:   string|null   optional  // trim → blank 면 null 로 정규화 (D-3)
   isRequired:       boolean       optional, default true
   issueWarehouseId: string (uuid)|null optional
   packQuantity:     string|null   optional
@@ -1025,7 +1127,8 @@ AND (effectiveTo IS NULL OR asOf < effectiveTo)
 `resolveEffectiveSupplierPrices` 와 같은 방식). 단건은 배치의 1-id wrapper 로
 두어 semantics 를 한 군데에 모은다.
 
-**T07-2(도메인)에 둔다.** 소비자: `explode`(D-18) · `cost`(D-23) · `where-used` ·
+**T07-2(도메인)에 둔다.** 소비자: **`cycle` graph 구성(D-13)** · `explode`(D-18) ·
+`cost`(D-23) · `where-used` ·
 T1-6B5 · 향후 WO/assembly.
 
 ### D-23 — SupplierSku selection ★
@@ -1170,7 +1273,7 @@ T06-3·T1-6B4 와 같은 판단이다.
 | 시나리오 | lock 전략 |
 |---|---|
 | **activate chain** | `SELECT … FROM "sku" WHERE id = :parentSkuId FOR UPDATE` — 부모 SKU 행 1개. T06-3 이 `supplier_sku` 부모를 잠근 것과 같은 패턴. + EXCLUDE 가 최종 backstop |
-| **cycle 유발 write** (`lines` POST/PATCH, `submit`, `activate`, `import`) | 관련 SKU 행들을 **`id` 오름차순 정렬 후** `FOR UPDATE` — deadlock 방지 |
+| **cycle 유발 write** (`lines` POST/PATCH, header PATCH(`effectiveFrom`), `submit`, `activate`, `clone`, `import`) | **cycle graph 에 관여하는 SKU 행 전부**를 `id` 오름차순 `FOR UPDATE` → 그 뒤에 graph 를 읽고 검사 |
 | `bulk-confirm-qty` | 해당 BOM 의 라인만 → `bom_header` 행 `FOR UPDATE` |
 | version 중복 | lock 불필요 — `UNIQUE(parentSkuId, version)` 이 처리(P2002 → 409) |
 | 라인 중복 | lock 불필요 — D-3 의 표현식 UNIQUE 가 처리(→ 409) |
@@ -1180,16 +1283,31 @@ T06-3·T1-6B4 와 같은 판단이다.
 `A→B` 추가와 `B→A` 추가가 동시에 커밋되면 **둘 다 검사를 통과한다**(각자 상대의
 미커밋 행을 못 본다). DB 제약으로는 막을 수 없다.
 
-**lock 대상**: 해당 write 가 건드리는 `parentSkuId` 와 `componentSkuId`
-**두 SKU 행**을 `id` 오름차순으로 `FOR UPDATE` 한다. 위 예에서 A·B 는 어느
-트랜잭션에서도 같은 순서로 잠기므로 하나가 대기하고, 뒤이은 검사에서 순환이
-드러난다.
+**순서가 중요하다 — 잠근 뒤에 graph 를 읽는다.**
+
+```
+1. lockSkuIds := { X.parentSkuId } ∪ { 이번 mutation 이 건드리는 componentSkuId }
+2. SELECT id FROM "sku" WHERE id = ANY(lockSkuIds) ORDER BY id ASC FOR UPDATE
+3. buildCycleGraph(X, D)   -- ★ 잠금 이후에 읽는다
+4. detectCycle
+```
+
+2단계에서 `A`·`B` 가 어느 트랜잭션에서도 **같은 순서(`id` ASC)** 로 잠기므로
+하나가 대기하고, 3단계에서 상대의 커밋 결과를 보게 되어 순환이 드러난다.
+⛔ graph 를 먼저 읽고 나중에 잠그면 race 가 그대로 남는다.
+
+**DFS 가 확장하며 만나는 SKU 까지 전부 선잠그지는 않는다.** 그래프 전체를
+잠그면 사실상 BOM 전역 직렬화가 되어 실용적이지 않다. **이번 write 가 실제로
+edge 를 추가·변경하는 두 끝점(parent · component)만** 잠그면 상호 순환을 만드는
+두 트랜잭션이 반드시 공통 SKU 를 공유하므로 충돌이 검출된다. 그 밖의 원격 노드가
+동시에 바뀌어 생기는 순환은 `submit`·`activate` 재검사가 잡는다.
 
 `pg_advisory_xact_lock` 대신 **행 잠금**을 쓰는 근거: ① `sku` 행이 이미
 존재하는 자연스러운 잠금 대상이고, ② advisory lock 은 키 공간을 따로 관리해야
 하며, ③ T06-3 이 이미 행 잠금 패턴을 쓰고 있어 일관된다.
 
 **lock order 규약**: BOM 관련 트랜잭션은 **항상 `sku.id` 오름차순**으로 잠근다.
+activate 의 부모 SKU 잠금도 같은 규약 안에 있다(단일 행이므로 자동 충족).
 이 규약을 `T07-2` 도메인 모듈 주석과 이 문서에 함께 남긴다.
 
 ### D-29 — error codes
@@ -1338,11 +1456,11 @@ hasBomUsage(skuId) =
 | Task | unit | DB integration | E2E |
 |---|---|---|---|
 | T07-1 | — | EXCLUDE 중첩 차단(**TC-BOM-004**) · 표현식 UNIQUE(D-3) · `(parentSkuId,version)` UNIQUE · CHECK · FK Restrict | — |
-| T07-2 | cycle 5종(자기참조 / 2단계 / 3단계 / **다이아몬드=정상** / maxLevel) — **TC-BOM-001·007** · 검증규칙 14종 | graph scope(DRAFT 경유 순환) · lock race | — |
-| T07-3 | DTO strict · 편집 가능 상태 · route-policy first-match | CRUD · `BOM_ACTIVE_IMMUTABLE`(**TC-BOM-005**) · 권한 5역할 · 멱등 scope · audit 건수 | — |
+| T07-2 | cycle 5종(`A→A` / `A→B→A` / `A→B→C→A` / **다이아몬드=정상** / maxLevel) — **TC-BOM-001·007** · 검증규칙 14종 | ★ **evaluation-date graph**: 동일 parent 두 버전 동시 투입 없음 · historical/future ACTIVE 미혼입 · **union 이면 걸릴 false positive 가 통과** · candidate 자기 자신 강제 포함 · 다른 SKU 의 DRAFT 미포함 · `resolveEffectiveBom` 2건 → 409 · **lock 후 graph 읽기** 순서 · concurrent `A→B`/`B→A` | — |
+| T07-3 | DTO strict · 편집 가능 상태 · route-policy first-match · **`alternateGroup` trim→blank→null 정규화** | CRUD · `BOM_ACTIVE_IMMUTABLE`(**TC-BOM-005**) · 권한 5역할 · 멱등 scope · audit 건수 · **header PATCH 로 `effectiveFrom` 변경 시 cycle 재검사** · **`alternate_group=''` 행이 생기지 않음** | — |
 | T1-6B5 | 탭 노출·fallback · 표시 헬퍼 | where-used 응답 | 8탭 · 상위/구성품 · 링크 이동 · EXECUTIVE 노출 |
 | T07-4 | 정합 3종 · 자동 1 금지(**TC-BOM-010**) · 0/음수(**TC-BOM-002**) | `pack=30`/`qty=1/30` 별도 저장(**TC-BOM-003**) · bulk 트랜잭션 | — |
-| T07-5 | 전이 표 전량 · 자가승인 | **D-7 chain 전량**(미래/과거/gap/동일일/반복) · 동시 activate 수렴 · **TC-BOM-006** | **E2E-05**(생성→일괄확정→승인→활성화) · **E2E-06**(활성 수정 차단→버전 생성→활성화) |
+| T07-5 | 전이 표 전량 · 자가승인 | **D-7 chain 전량**(미래/과거/gap/동일일/반복) · 동시 activate 수렴 · **TC-BOM-006** · ★ **activate `T` override 시 `T` 기준 cycle 재검사**(approve 통과 재사용 금지) · **clone 후 cycle 검사 + 실패 시 전체 rollback** | **E2E-05**(생성→일괄확정→승인→활성화) · **E2E-06**(활성 수정 차단→버전 생성→활성화) |
 | T07-6 | 공식(D-19) · aggregation · ordering | 3단계 전개 정확(**TC-BOM-008**) · maxLevel · 순환 422 | — |
 | T07-7A | provisional 조합 · subtotal grouping | SupplierSku 선택 0/1/2건 · price 0/1/2건 · **0원 ≠ 가격없음** · 통화 혼재(**TC-BOM-009**) | — |
 | T07-7B | roll-up | 다단계 원가 | — |
@@ -1400,7 +1518,7 @@ T07-8  standalone UI (/master/boms · /master/boms/{id})
 | task | prerequisite | exact scope | explicit non-scope |
 |---|---|---|---|
 | **T07-1** | `T03-1`(SKU 스키마, 완료) | `BomHeader`/`BomLine`/enum 4종 · `Sku` inverse 2개 · migration(UNIQUE·표현식 UNIQUE·CHECK·EXCLUDE·index) · DB 테스트 | 도메인 · API · permission · UI |
-| **T07-2** | T07-1 | cycle DFS · 14종 · `resolveEffectiveBom(s)` · lock order 문서화 | API · UI |
+| **T07-2** | T07-1 | `resolveEffectiveBom(s)` **먼저** → cycle DFS(evaluation-date graph) · 14종 · lock order 문서화 | API · UI |
 | **T07-3** | T07-2 | CRUD 8 endpoint + `where-used` · DTO · permission seed 5종 · route-policy · audit · 멱등 · `hasBomUsage` provider | workflow · explode · cost · UI |
 | **T1-6B5** | T07-3 | SKU 상세 ⑦ 탭 read-only · 8탭 전환 | mutation · explode · cost |
 | **T07-4** | T07-3 | `quantityStatus` 정합 · `bulk-confirm-qty` · 추천값 계약 | UI |
@@ -1444,7 +1562,7 @@ D-1 ~ D-32 를 전부 확정했다. PRE-FLIGHT 가 BLOCKED 로 든 14개 blocker
 | `bom_line` duplicate NULL 결함 | **D-3** — `COALESCE(…,'')` 표현식 UNIQUE |
 | workflow transition graph 불완전 | **D-6** — 8전이 확정 + `archive` endpoint 신설 |
 | UOM contract 부재 | **D-11** — component `baseUom` 고정, 환산 없음 |
-| cycle 알고리즘/시점/scope 부재 | **D-13** — path 기반 DFS · 살아있는 4 status · 5시점 |
+| cycle 알고리즘/시점/scope 부재 | **D-13** — path 기반 DFS · **evaluation-date 별 parent당 1버전 graph**(union 폐기) · 7시점 |
 | explode quantity formula 부재 | **D-19** — 가산식 확정 + precision |
 | aggregation semantics 부재 | **D-20** — explode=detail / cost=합산 |
 | SupplierSku selection rule 부재 | **D-23** — asOf 유효 `isPrimary` 1건 |
