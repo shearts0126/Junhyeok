@@ -710,8 +710,10 @@ detectCycle(X, D):
 같은 배치의 다른 header 는 저장된 뒤 `resolveEffectiveBom` 의 대상이 될 뿐이며,
 전량 `DRAFT` 로 들어오므로(`06v2:268`) 서로의 그래프에 들어가지 않는다.
 
-**DB 로는 막을 수 없다.** 위 경로 전부가 각각 검사하며, race 는 D-28 의
-lock 으로 막는다.
+**DB 로는 막을 수 없다.** 위 경로 전부가 각각 검사하며, 동시성은 **D-28 의
+`BOM_CYCLE_GRAPH` transaction advisory lock** 이 보장한다 — cycle graph 를
+**읽기 전에** 그 lock 을 획득한다. ⛔ SKU 행 잠금만으로는 disjoint edge write
+skew(`A→B` + `C→D` 에 `B→C`·`D→A` 동시 추가)를 막지 못한다(D-28 반례).
 
 ### D-14 — exact DTO
 
@@ -1270,45 +1272,238 @@ T06-3·T1-6B4 와 같은 판단이다.
 
 ### D-28 — concurrency
 
-| 시나리오 | lock 전략 |
+#### ⛔ 폐기된 계약 — endpoint row lock 만으로는 순환을 막을 수 없다
+
+이 문서의 이전 판은 *"이번 write 가 edge 를 추가·변경하는 두 끝점(parent ·
+component)만 `sku.id` ASC `FOR UPDATE` 하면, 순환을 공동으로 만드는 두
+트랜잭션은 **반드시 공통 SKU 를 공유**하므로 충돌이 검출된다"* 고 했다.
+**이 명제는 거짓이다.** 폐기한다.
+
+**반례 — disjoint lock set 으로 만들어지는 장주기 순환**
+
+기존 그래프:
+
+```
+A → B
+C → D
+```
+
+동시 실행:
+
+| | 추가하는 edge | lock set | 각자 읽은 그래프 | 각자 판정 |
+|---|---|---|---|---|
+| **TX1** | `B → C` | `{B, C}` | `A→B→C` · `C→D` | cycle 없음 ✅ |
+| **TX2** | `D → A` | `{D, A}` | `C→D→A→B` | cycle 없음 ✅ |
+
+두 lock set `{B,C}` 와 `{D,A}` 는 **완전히 disjoint** 하므로 서로 대기하지
+않는다. 각자 상대의 미커밋 edge 를 보지 못한 채 통과하고, 둘 다 커밋되면
+
+```
+A → B → C → D → A
+```
+
+**순환이 생긴다.** 2-node 상호 경쟁(`A→B` vs `B→A`)은 공통 노드를 공유해서
+막히지만, **서로 다른 edge 두 개가 합쳐져 장주기 순환을 만드는 write skew** 는
+행 잠금으로 막을 수 없다. 순환 판정은 **그래프 전역 속성**이라 국소 잠금으로
+직렬화되지 않기 때문이다.
+
+`isolationLevel: 'Serializable'` 로 올리는 것도 답이 아니다. 두 트랜잭션이
+읽은 행 집합이 겹치지 않으면 predicate lock 이 잡히지 않을 수 있고, 잡히더라도
+직렬화 실패(`40001`)가 사용자에게 그대로 노출되어 재시도 계약을 따로 설계해야
+한다. 무엇보다 `withTransaction` 주석이 *"재고 검증에 `Serializable` 을 쓰면
+직렬화 실패가 늘어난다"* 는 이유로 이 프로젝트는 `ReadCommitted` 를 기본으로
+쓰고 있다.
+
+#### 확정 계약 — graph mutation advisory lock ★
+
+> **BOM cycle 그래프에 영향을 줄 수 있는 모든 mutation 은, cycle graph 를
+> 읽기 전에 하나의 공통 transaction-scoped advisory lock 을 획득한다.**
+
+```sql
+SELECT pg_advisory_xact_lock(:BOM_CYCLE_GRAPH_LOCK_KEY);
+```
+
+| 항목 | 확정 |
 |---|---|
-| **activate chain** | `SELECT … FROM "sku" WHERE id = :parentSkuId FOR UPDATE` — 부모 SKU 행 1개. T06-3 이 `supplier_sku` 부모를 잠근 것과 같은 패턴. + EXCLUDE 가 최종 backstop |
-| **cycle 유발 write** (`lines` POST/PATCH, header PATCH(`effectiveFrom`), `submit`, `activate`, `clone`, `import`) | **cycle graph 에 관여하는 SKU 행 전부**를 `id` 오름차순 `FOR UPDATE` → 그 뒤에 graph 를 읽고 검사 |
-| `bulk-confirm-qty` | 해당 BOM 의 라인만 → `bom_header` 행 `FOR UPDATE` |
-| version 중복 | lock 불필요 — `UNIQUE(parentSkuId, version)` 이 처리(P2002 → 409) |
-| 라인 중복 | lock 불필요 — D-3 의 표현식 UNIQUE 가 처리(→ 409) |
+| 종류 | **`pg_advisory_xact_lock`** — transaction-scoped. ⛔ `pg_advisory_lock`(session lock) **금지** |
+| 해제 | 트랜잭션 종료 시 **자동**. ⛔ 명시적 unlock 호출 없음(누수 불가) |
+| 범위 | **고정 key 1개**. SKU·BOM 별로 쪼개지 않는다 — 쪼개면 위 반례가 그대로 남는다 |
+| key 관리 | production code 의 **named constant**(예: `BOM_CYCLE_GRAPH_LOCK_KEY`)로 한 곳에서 관리. 정확한 numeric value 는 구현 시 확정하되, 다른 advisory lock namespace 와 충돌하지 않도록 프로젝트 상수 파일에 모은다 |
+| 획득 시점 | **cycle graph read 이전**. ⛔ graph 를 먼저 읽고 나중에 잠그는 순서 금지 |
+| 검증·write | **같은 트랜잭션** 안에서 수행 |
 
-#### cycle race 상세
+**직렬화 비용을 감수하는 근거**: BOM 편집은 재고 Posting 같은 초고빈도 경로가
+아니다. 실측 규모는 **헤더 80 / 라인 383**(`01 §2.3`)이고 소요량 확정도 사람이
+하는 작업이다. 순환 없는 그래프라는 correctness 를 국소 잠금으로는 얻을 수
+없으므로, 이 정도 전역 직렬화는 합리적인 교환이다.
 
-`A→B` 추가와 `B→A` 추가가 동시에 커밋되면 **둘 다 검사를 통과한다**(각자 상대의
-미커밋 행을 못 본다). DB 제약으로는 막을 수 없다.
+#### lock acquisition order
 
-**순서가 중요하다 — 잠근 뒤에 graph 를 읽는다.**
+cycle-affecting operation 은 **정확히 이 순서**를 따른다.
 
 ```
-1. lockSkuIds := { X.parentSkuId } ∪ { 이번 mutation 이 건드리는 componentSkuId }
-2. SELECT id FROM "sku" WHERE id = ANY(lockSkuIds) ORDER BY id ASC FOR UPDATE
-3. buildCycleGraph(X, D)   -- ★ 잠금 이후에 읽는다
-4. detectCycle
+1. DB transaction 시작
+2. pg_advisory_xact_lock(BOM_CYCLE_GRAPH_LOCK_KEY)      ← ★ 가장 먼저
+3. 필요한 SKU / bom_header row lock 을 deterministic order 로 획득
+   (sku.id ASC → bom_header.id ASC)
+4. evaluation date 확정 (D-13)
+5. cycle graph read / build
+6. DFS validation
+7. business write
+8. audit
+9. commit  → advisory lock 자동 해제
 ```
 
-2단계에서 `A`·`B` 가 어느 트랜잭션에서도 **같은 순서(`id` ASC)** 로 잠기므로
-하나가 대기하고, 3단계에서 상대의 커밋 결과를 보게 되어 순환이 드러난다.
-⛔ graph 를 먼저 읽고 나중에 잠그면 race 가 그대로 남는다.
+⛔ **2단계보다 앞에서 graph 를 읽지 않는다.** 위 반례의 TX1·TX2 는 2단계에서
+직렬화되므로, 뒤에 들어온 트랜잭션은 5단계에서 **상대의 커밋 결과가 반영된
+그래프**를 읽고 `BOM_CYCLE_DETECTED` 로 실패한다.
 
-**DFS 가 확장하며 만나는 SKU 까지 전부 선잠그지는 않는다.** 그래프 전체를
-잠그면 사실상 BOM 전역 직렬화가 되어 실용적이지 않다. **이번 write 가 실제로
-edge 를 추가·변경하는 두 끝점(parent · component)만** 잠그면 상호 순환을 만드는
-두 트랜잭션이 반드시 공통 SKU 를 공유하므로 충돌이 검출된다. 그 밖의 원격 노드가
-동시에 바뀌어 생기는 순환은 `submit`·`activate` 재검사가 잡는다.
+advisory lock 은 항상 **가장 먼저** 잡으므로 row lock 과의 사이에 deadlock 이
+생기지 않는다(모든 cycle-affecting 트랜잭션이 같은 첫 자원을 기다린다).
 
-`pg_advisory_xact_lock` 대신 **행 잠금**을 쓰는 근거: ① `sku` 행이 이미
-존재하는 자연스러운 잠금 대상이고, ② advisory lock 은 키 공간을 따로 관리해야
-하며, ③ T06-3 이 이미 행 잠금 패턴을 쓰고 있어 일관된다.
+#### SKU / header row lock 의 역할
 
-**lock order 규약**: BOM 관련 트랜잭션은 **항상 `sku.id` 오름차순**으로 잠근다.
-activate 의 부모 SKU 잠금도 같은 규약 안에 있다(단일 행이므로 자동 충족).
-이 규약을 `T07-2` 도메인 모듈 주석과 이 문서에 함께 남긴다.
+기존 `sku.id` ASC `FOR UPDATE` 는 **제거하지 않는다.** 다만 역할을 재정의한다.
+
+> **SKU row lock 은 cycle serializability 의 primary guarantee 가 아니다.**
+> cycle correctness 의 primary guarantee 는 **`BOM_CYCLE_GRAPH` transaction
+> advisory lock** 이다.
+
+row lock 이 계속 담당하는 것:
+
+- candidate 의 parent/component **행 존재성 안정화**(검사 도중 SKU 가 archive 되는 것 방지)
+- **activate 의 predecessor/successor chain mutation** 직렬화 (D-7)
+- deterministic row mutation · 일반 write 경합
+
+#### advisory lock 대상 operation
+
+| endpoint | graph lock | 비고 |
+|---|:-:|---|
+| `POST /api/boms/{id}/lines` | ✅ | edge 추가 |
+| `PATCH /api/boms/{id}/lines/{lid}` | ✅ | `componentSkuId` 변경 시 **old·new 두 SKU 모두** row lock |
+| `DELETE /api/boms/{id}/lines/{lid}` | ✅ | edge 제거도 포함 — 동시 graph snapshot 일관성을 위해 |
+| `PATCH /api/boms/{id}` | ✅ | `effectiveFrom` 등 **graph semantics 에 영향을 주는 header 변경** |
+| `POST /api/boms/{id}/submit` | ✅ | 재검사 |
+| `POST /api/boms/{id}/activate` | ✅ | 최종 `T` 기준 재검사 |
+| `POST /api/boms/{id}/clone` | ✅ | 복제 결과 검사 |
+| `POST /api/boms/import` | ✅ | 배치 전체에 **1회** |
+| `POST …/approve` · `…/reject` | ⛔ | 아래 |
+| `POST …/deactivate` · `…/archive` | ⛔ | edge 를 **제거**할 뿐이라 순환을 만들 수 없다 |
+| `POST …/lines/bulk-confirm-qty` | ⛔ | `quantityPer` 만 바꾼다 — edge 불변 |
+| 모든 `GET` | ⛔ | read-only |
+
+**`approve`/`reject` 가 graph lock 대상이 아닌 이유** — D-13 이 확정한 graph
+construction 은 sibling parent 를 **`resolveEffectiveBom`(= `status='ACTIVE'`
+predicate)** 으로만 고른다. `PENDING_APPROVAL → APPROVED` 전이는 어느 버전도
+`ACTIVE` 로 만들지 않으므로 **graph membership 을 바꾸지 않는다.** 그래프를
+바꾸는 것은 `activate` 뿐이며 그쪽이 lock 대상이다. (candidate 자신은 D-13 이
+status 와 무관하게 강제 투입하므로 approve 여부가 영향을 주지 않는다.)
+★ 만약 후속 Recovery 가 D-13 의 sibling predicate 를 `ACTIVE` 외로 넓힌다면
+**이 판정을 반드시 재검토**한다.
+
+#### activate lock sequence
+
+```
+1. transaction 시작
+2. pg_advisory_xact_lock(BOM_CYCLE_GRAPH_LOCK_KEY)
+3. sku(parentSkuId) FOR UPDATE  → 필요한 bom_header 행 FOR UPDATE (id ASC)
+4. 최종 T 결정 (body.effectiveFrom ?? target.effectiveFrom)
+5. T 기준 cycle validation (D-13)
+6. predecessor / successor temporal mutation (D-7 chain)
+7. target activation (status=ACTIVE, activatedAt)
+8. audit (ACTIVATE + predecessor UPDATE)
+9. commit
+```
+
+EXCLUDE(`23P01`)는 여전히 최종 backstop 이다.
+
+#### clone lock sequence
+
+```
+1. transaction 시작
+2. pg_advisory_xact_lock(BOM_CYCLE_GRAPH_LOCK_KEY)
+3. 새 header + lines 복제
+4. 새 effectiveFrom 기준 candidate graph 검사 (D-13)
+5. cycle 이면 **transaction 전체 rollback**
+6. audit (CREATE) → commit
+```
+
+#### import lock sequence
+
+`import` 는 `PENDING #7` 확정 전까지 T07-8 범위에서 유예하지만(D-1) 계약은
+지금 고정한다.
+
+```
+1. transaction 시작 (동기·atomic — 부분 성공 금지, PENDING #7 조건 ③)
+2. pg_advisory_xact_lock(BOM_CYCLE_GRAPH_LOCK_KEY)   ← 배치 전체에 1회
+3. 전체 header/line 저장
+4. imported header 마다 개별 candidate graph 검사 (D-13 — union 금지)
+5. 하나라도 실패하면 배치 전체 rollback
+6. commit
+```
+
+⛔ header 마다 advisory lock 을 acquire/release 반복하지 않는다.
+
+#### 그 밖의 lock
+
+| 시나리오 | 전략 |
+|---|---|
+| `bulk-confirm-qty` | `bom_header` 행 `FOR UPDATE` (graph lock 불필요) |
+| version 중복 | lock 불필요 — `UNIQUE(parentSkuId, version)`(P2002 → 409) |
+| 라인 중복 | lock 불필요 — D-3 의 표현식 UNIQUE(→ 409) |
+| 기간 중첩 | lock 불필요 — EXCLUDE(`23P01` → 409) |
+
+#### concurrency acceptance criteria (T07-2 DB integration)
+
+아래 3종은 **실제 동시 트랜잭션**으로 실행한다. 순차 호출로 흉내 내면 계약을
+검증하지 못한다.
+
+**① 공유 노드 2-edge 직접 순환** (기존)
+
+```
+기존: A → B
+TX1:  B → A 추가
+```
+기대 — 하나가 통과하고 다른 하나는 `BOM_CYCLE_DETECTED`. 최종 그래프에 순환 0.
+
+**② ★ disjoint-lock 장주기 순환 — 필수 신규**
+
+```
+기존: A → B
+      C → D
+TX1:  B → C 추가      (구 계약의 lock set {B,C})
+TX2:  D → A 추가      (구 계약의 lock set {D,A})
+```
+
+두 트랜잭션을 **실제 동시 실행**한다. 기대:
+
+1. 둘 중 하나가 `pg_advisory_xact_lock` 에서 **대기**한다
+2. 선행 트랜잭션 커밋 후, 후행 트랜잭션이 **새 그래프를 다시 읽어**
+   **`BOM_CYCLE_DETECTED`** 로 실패한다
+3. 최종 DB 그래프에 순환 **0건**
+
+⛔ **이 테스트가 없으면 concurrency contract acceptance 미충족**이다. 구
+계약(endpoint row lock)에서는 두 lock set 이 disjoint 라 **둘 다 통과**하므로,
+이 테스트는 회귀 방지선 역할을 한다.
+
+**③ 다이아몬드 동시 mutation — false positive 금지**
+
+```
+기존: A → B, A → C
+TX1:  B → D 추가
+TX2:  C → D 추가
+```
+기대 — advisory lock 으로 직렬화되지만 **둘 다 최종 성공**한다. 정상 DAG
+mutation 이 직렬화 때문에 실패하거나 순환으로 오판되면 안 된다.
+
+#### T06-3 price chain lock 과의 관계
+
+T06-3 은 `supplier_sku` **행**을 잠그고, BOM 은 `BOM_CYCLE_GRAPH` advisory
+lock → `sku` 행 순으로 잠근다. **자원 집합이 겹치지 않으므로 상호 deadlock 이
+성립하지 않는다.** 향후 BOM 트랜잭션이 `supplier_sku` 를 잠글 일이 생기면
+(예: 원가 산정을 write 경로에 넣는 경우) **advisory → sku → supplier_sku**
+순서를 지킨다. 이 전역 lock order 를 `T07-2` 도메인 모듈 주석과 이 문서에
+함께 남긴다.
 
 ### D-29 — error codes
 
@@ -1456,7 +1651,7 @@ hasBomUsage(skuId) =
 | Task | unit | DB integration | E2E |
 |---|---|---|---|
 | T07-1 | — | EXCLUDE 중첩 차단(**TC-BOM-004**) · 표현식 UNIQUE(D-3) · `(parentSkuId,version)` UNIQUE · CHECK · FK Restrict | — |
-| T07-2 | cycle 5종(`A→A` / `A→B→A` / `A→B→C→A` / **다이아몬드=정상** / maxLevel) — **TC-BOM-001·007** · 검증규칙 14종 | ★ **evaluation-date graph**: 동일 parent 두 버전 동시 투입 없음 · historical/future ACTIVE 미혼입 · **union 이면 걸릴 false positive 가 통과** · candidate 자기 자신 강제 포함 · 다른 SKU 의 DRAFT 미포함 · `resolveEffectiveBom` 2건 → 409 · **lock 후 graph 읽기** 순서 · concurrent `A→B`/`B→A` | — |
+| T07-2 | cycle 5종(`A→A` / `A→B→A` / `A→B→C→A` / **다이아몬드=정상** / maxLevel) — **TC-BOM-001·007** · 검증규칙 14종 | ★ **evaluation-date graph**: 동일 parent 두 버전 동시 투입 없음 · historical/future ACTIVE 미혼입 · **union 이면 걸릴 false positive 가 통과** · candidate 자기 자신 강제 포함 · 다른 SKU 의 DRAFT 미포함 · `resolveEffectiveBom` 2건 → 409 · ★★ **동시성 3종**(§D-28 acceptance) | — |
 | T07-3 | DTO strict · 편집 가능 상태 · route-policy first-match · **`alternateGroup` trim→blank→null 정규화** | CRUD · `BOM_ACTIVE_IMMUTABLE`(**TC-BOM-005**) · 권한 5역할 · 멱등 scope · audit 건수 · **header PATCH 로 `effectiveFrom` 변경 시 cycle 재검사** · **`alternate_group=''` 행이 생기지 않음** | — |
 | T1-6B5 | 탭 노출·fallback · 표시 헬퍼 | where-used 응답 | 8탭 · 상위/구성품 · 링크 이동 · EXECUTIVE 노출 |
 | T07-4 | 정합 3종 · 자동 1 금지(**TC-BOM-010**) · 0/음수(**TC-BOM-002**) | `pack=30`/`qty=1/30` 별도 저장(**TC-BOM-003**) · bulk 트랜잭션 | — |
@@ -1569,7 +1764,7 @@ D-1 ~ D-32 를 전부 확정했다. PRE-FLIGHT 가 BLOCKED 로 든 14개 blocker
 | provisional semantics 부재 | **D-25** — 3사유 · partial subtotal · 손상은 409 |
 | mixed currency 처리 부재 | **D-26** — `(currency, vatIncluded)` subtotal, 환산 금지 |
 | VAT normalization 부재 | **D-27** — 저장값 그대로, grouping 으로 분리 |
-| concurrency lock contract 부재 | **D-28** — 부모 SKU 행 잠금 + `id` 오름차순 lock order |
+| concurrency lock contract 부재 | **D-28** — `BOM_CYCLE_GRAPH` **transaction advisory lock**(graph read 이전 획득) + row lock 은 보조 · 전역 lock order |
 | API DTO 6종 미정 | **D-14** — 7종 전량 확정 |
 | permission / audit 미정 | **D-15 / D-16** — 5 key + EXECUTIVE read · `ACTIVATE` 신규 action |
 
