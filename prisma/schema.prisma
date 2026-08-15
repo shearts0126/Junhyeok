@@ -73,6 +73,9 @@ model User {
   createdSupplierSkuPrices  SupplierSkuPrice[] @relation("SupplierSkuPriceCreatedBy")
   approvedSupplierSkuPrices SupplierSkuPrice[] @relation("SupplierSkuPriceApprovedBy")
 
+  createdBomHeaders  BomHeader[] @relation("BomHeaderCreatedBy")
+  approvedBomHeaders BomHeader[] @relation("BomHeaderApprovedBy")
+
   @@map("user")
 }
 
@@ -405,6 +408,14 @@ model Sku {
   /// 신규 업무 컬럼이 아니다.
   supplierSkus SupplierSku[]
 
+  /// BOM (T07-1). 두 relation 은 `BomHeader.parentSku` · `BomLine.componentSku`
+  /// 의 필수 inverse 이며 신규 업무 컬럼이 아니다.
+  ///   - `bomHeaders` : 이 SKU 를 **상위**로 갖는 BOM 버전들
+  ///   - `bomLines`   : 이 SKU 가 **구성품**으로 쓰인 라인들 (역전개/where-used)
+  /// ⛔ `hasBomUsage` provider 는 T07-3 이다 — 여기서 파생 필드를 만들지 않는다.
+  bomHeaders BomHeader[] @relation("BomParent")
+  bomLines   BomLine[]   @relation("BomComponent")
+
   @@index([status])
   @@index([itemType])
   @@index([brandId, majorCategoryId, minorCategoryId])
@@ -713,6 +724,10 @@ model Supplier {
 
   supplierSkus SupplierSku[]
 
+  /// BOM 조립처 (T07-1). `BomHeader.productionPartner` 의 필수 inverse relation
+  /// 이며 신규 업무 컬럼이 아니다. ⛔ Supplier business logic 은 그대로다.
+  bomHeaders BomHeader[] @relation("BomProductionPartner")
+
   @@map("supplier")
 }
 
@@ -837,4 +852,217 @@ model SupplierSkuPrice {
   @@unique([supplierSkuId, effectiveFrom])
   @@index([supplierSkuId, effectiveFrom(sort: Desc)])
   @@map("supplier_sku_price")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BOM — 헤더 · 라인 (T07-1)
+//
+// 설계 문서: docs/18_설계복구_BOM.md
+//   (2026-08-13 BOM Design Recovery Decision — D-1 ~ D-32)
+// 원 설계: docs/03_ERD와_Prisma스키마_v0.2.md §Layer 2(BOM_HEADER · BOM_LINE)
+//          및 §고유조건·인덱스의 bom_header / bom_line 행.
+//
+// T07-1 은 **테이블과 DB 제약까지만** 만든다.
+//   - T07-2 도메인(순환 탐지 · 검증규칙 14종 · resolveEffectiveBom)
+//   - T07-3 CRUD API · permission · route-policy · audit · 멱등
+//   - T07-4 소요량 관리   - T07-5 승인·활성화·복사 워크플로
+//   - T07-6 다단계 전개   - T07-7 원가   - T07-8 화면
+// 은 범위가 아니다.
+//
+// ⛔ `Warehouse` 모델·FK·stub 을 만들지 않는다 — `destinationWarehouseId`·
+//    `issueWarehouseId` 는 T08-1 까지 **의도된 staged scalar** 다 (docs/18 §D-32,
+//    docs/17 §14 선례).
+// ⛔ `Attachment` 필드를 만들지 않는다 — BOM scope 0 (docs/18 §D-32).
+// ⛔ 상태 전이·활성 교체(predecessor 기간 마감)를 DB trigger 로 구현하지 않는다.
+//    `activate` 의 chain mutation 은 **application(T07-5)** 의 몫이다 (docs/18 §D-7).
+// ⛔ 순환 탐지를 DB 로 구현하지 않는다 — 불가능하며 T07-2 의 DFS + advisory lock
+//    이 담당한다 (docs/18 §D-13·§D-28).
+// ═══════════════════════════════════════════════════════════════
+
+/// BOM 상태 7종. 전이 그래프는 T07-5 가 구현한다 (docs/18 §D-6).
+///
+/// ★ `ACTIVE` 는 "지금 유효"가 아니라 **"적용기간이 발효 승인됨"** 이다.
+///   어느 시점에 실제로 유효한지는 `[effectiveFrom, effectiveTo)` 와 asOf 가
+///   정한다 (docs/18 §D-7). `INACTIVE` 는 명시적 `deactivate` 전용이며
+///   버전 교체의 부작용으로 발생하지 않는다.
+/// ⛔ 값을 추가·삭제하지 않는다.
+enum BomStatus {
+  DRAFT
+  PENDING_APPROVAL
+  REJECTED
+  APPROVED
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+/// BOM 유형 3종. ⛔ 네 번째 값을 추가하지 않는다.
+enum BomType {
+  MANUFACTURING
+  KIT
+  REPACK
+}
+
+/// 구성품 역할 4종.
+/// ★ `SERVICE` 는 임가공비처럼 **재고관리 대상이 아닌** 라인이다
+///   (`01:193` 조립 임가공 464원). 허용값이며 배제하지 않는다.
+enum ComponentRole {
+  PRODUCT
+  MATERIAL
+  PACKAGING
+  SERVICE
+}
+
+/// 소요량 확정 단계 3종 (§00 G-02).
+/// `SUGGESTED` 는 **마이그레이션이 `1 ÷ packQuantity` 로 자동 생성**한 값을 뜻하며,
+/// 사람이 수락하면 `CONFIRMED` 다 (docs/18 §D-10). 정합 규칙은 T07-4 다.
+enum QuantityStatus {
+  CONFIRMED
+  SUGGESTED
+  UNKNOWN
+}
+
+/// BOM 헤더 — 상위 SKU 의 한 버전. 실측 80 헤더 / 383 라인.
+///
+/// 적용기간은 **half-open `[effectiveFrom, effectiveTo)`** 다.
+/// `status='ACTIVE'` 인 행끼리만 기간 중첩이 EXCLUDE 로 차단된다 —
+/// DRAFT/PENDING_APPROVAL/APPROVED 는 여러 후보 버전을 동시에 준비할 수 있으므로
+/// 중첩이 허용된다 (docs/18 §D-5). ⚠️ `SupplierSku` 의 EXCLUDE 는 status 조건이
+/// 없다 — **복사하지 말 것.**
+model BomHeader {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// 상위 SKU. 마스터는 물리삭제 대상이 아니므로 RESTRICT.
+  parentSkuId String @map("parent_sku_id") @db.Uuid
+
+  bomType BomType @map("bom_type")
+
+  /// ★ **client 가 준다.** 서버 자동 채번·semantic version 파싱 없다 (docs/18 §D-4).
+  ///   `(parentSkuId, version)` UNIQUE 이며 **case-sensitive** 다.
+  ///   ⛔ 정렬에 쓰지 않는다 — 버전 순서는 `effectiveFrom` 이 정한다.
+  version String @db.VarChar(20)
+
+  status BomStatus @default(DRAFT)
+
+  /// 이 BOM 1회 실행의 **산출 수량**. `quantityPer` 는 이 수량 기준이다.
+  /// 소요량 계산식은 T07-6 이 구현한다 (docs/18 §D-19).
+  outputQty Decimal @default(1) @map("output_qty") @db.Decimal(18, 6)
+
+  /// 상위 SKU 의 `baseUom` 과 같아야 한다 — 강제는 application(T07-3)이다.
+  /// ⛔ BOM 은 단위 환산을 하지 않는다 (docs/18 §D-11).
+  outputUom String @map("output_uom") @db.VarChar(20)
+
+  /// ★ `DRAFT` 여도 **필수**다. 서버가 오늘로 채우지 않는다 (docs/18 §D-5).
+  effectiveFrom DateTime  @map("effective_from") @db.Date
+  effectiveTo   DateTime? @map("effective_to") @db.Date
+
+  /// 조립처(제조사). `Supplier` 가 이미 존재하므로 **FK 로 연결**한다
+  /// — staged scalar 가 아니다 (docs/18 §D-2, `01:157` P열 매핑).
+  productionPartnerId String? @map("production_partner_id") @db.Uuid
+
+  /// ★ **staged scalar** — `Warehouse` 는 T08-1 이다. FK·relation 없음.
+  destinationWarehouseId String? @map("destination_warehouse_id") @db.Uuid
+
+  /// 전체 로스율. null = 0 으로 본다 (⛔ 임의 추정 금지, `01:190`).
+  overallLossRate Decimal? @map("overall_loss_rate") @db.Decimal(8, 6)
+
+  description  String?
+  /// clone(버전 생성) 시 필수 — 강제는 T07-5 다.
+  changeReason String? @map("change_reason")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// ★ actor 는 **RESTRICT** 다 (`Sku` 의 SET NULL 과 다르다).
+  ///   `approvedBy` 는 승인 사실 자체이므로 사용자 삭제로 지워지면 안 된다
+  ///   (`SupplierSkuPrice` 와 같은 판단, docs/17 §30).
+  createdBy   String?   @map("created_by") @db.Uuid
+  approvedAt  DateTime? @map("approved_at") @db.Timestamptz
+  approvedBy  String?   @map("approved_by") @db.Uuid
+  activatedAt DateTime? @map("activated_at") @db.Timestamptz
+
+  parentSku         Sku       @relation("BomParent", fields: [parentSkuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  productionPartner Supplier? @relation("BomProductionPartner", fields: [productionPartnerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdByUser     User?     @relation("BomHeaderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  approvedByUser    User?     @relation("BomHeaderApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  lines BomLine[]
+
+  @@unique([parentSkuId, version])
+  @@index([parentSkuId, status])
+  @@map("bom_header")
+  // raw SQL (migration 참조):
+  //   1) CHECK   bom_header_effective_period_check
+  //        effective_to IS NULL OR effective_to > effective_from
+  //   2) EXCLUDE bom_header_active_period_excl  ★ WHERE (status = 'ACTIVE')
+  //        (parent_sku_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&)
+}
+
+/// BOM 라인 — 한 버전의 구성품 한 줄.
+///
+/// ★ `packQuantity`(포장 입수량)와 `quantityPer`(소요량)는 **물리적으로 다른
+///   컬럼**이다. 아웃박스 30개입이면 `packQuantity=30` / `quantityPer=1/30`
+///   이며, `1 ÷ packQuantity` 는 **UI 추천값일 뿐** 자동 전환하지 않는다
+///   (`01:188`, F-19, docs/18 §D-10). ⛔ 소요량 없는 행에 1 을 채우지 않는다.
+model BomLine {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// 이력을 부모 삭제에 딸려 물리삭제하지 않는다 — CASCADE 금지.
+  bomHeaderId String @map("bom_header_id") @db.Uuid
+
+  /// BOM 안에서 UNIQUE. 다른 헤더라면 같은 번호를 써도 된다.
+  lineNo Int @map("line_no")
+
+  componentSkuId String @map("component_sku_id") @db.Uuid
+
+  /// ★ `DRAFT` 는 NULL 허용 — 원본 엑셀 383행에 소요량 컬럼 자체가 없다(G-02).
+  ///   `> 0` 강제와 `quantityStatus` 정합은 **T07-4 application** 의 몫이다.
+  ///   ⛔ 자동 1 입력 금지.
+  quantityPer    Decimal?       @map("quantity_per") @db.Decimal(18, 6)
+  quantityStatus QuantityStatus @default(UNKNOWN) @map("quantity_status")
+
+  /// 구성품 SKU 의 `baseUom` 과 같아야 한다 — 강제는 T07-3 이다 (docs/18 §D-11).
+  uom String @db.VarChar(20)
+
+  /// 라인 손실률. null = 0 (⛔ 임의 추정 금지).
+  lossRate Decimal? @map("loss_rate") @db.Decimal(8, 6)
+
+  componentRole ComponentRole @map("component_role")
+
+  /// 기존 enum 재사용 — BOM 전용 enum 을 만들지 않는다.
+  supplyType SupplyType? @map("supply_type")
+
+  /// 대체 부자재 그룹. ★ 중복 방지는 표현식 UNIQUE
+  /// `ux_bom_line_component_group (bom_header_id, component_sku_id,
+  /// COALESCE(alternate_group, ''))` 이며 **NULL 끼리도 같은 그룹**으로 본다
+  /// (docs/18 §D-3). 센티넬 `''` 은 인덱스 전용이고 **business value 가 아니다**
+  /// — `alternate_group = ''` 인 행은 존재하지 않는다(blank→null 정규화는 T07-3).
+  /// ⛔ `NOT NULL DEFAULT ''` 로 바꾸지 않는다.
+  alternateGroup String? @map("alternate_group") @db.VarChar(50)
+
+  isRequired Boolean @default(true) @map("is_required")
+
+  /// ★ **staged scalar** — `Warehouse` 는 T08-1 이다. FK·relation 없음.
+  issueWarehouseId String? @map("issue_warehouse_id") @db.Uuid
+
+  /// ★ 포장 입수량. **소요량이 아니다** (위 모델 주석 참조).
+  packQuantity Decimal? @map("pack_quantity") @db.Decimal(18, 6)
+
+  specification String?
+
+  /// 마이그레이션 추적 전용 (Phase 8, R1a-4). API 입력 대상이 아니다.
+  legacyBomCode       String? @map("legacy_bom_code") @db.VarChar(100)
+  legacyCommonBomCode String? @map("legacy_common_bom_code") @db.VarChar(100)
+
+  note String?
+
+  bomHeader    BomHeader @relation(fields: [bomHeaderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  componentSku Sku       @relation("BomComponent", fields: [componentSkuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([bomHeaderId, lineNo])
+  /// 역전개(where-used)용. T07-3 `hasBomUsage` provider 가 이 인덱스를 탄다.
+  @@index([componentSkuId])
+  @@map("bom_line")
+  // raw SQL (migration 참조):
+  //   3) UNIQUE INDEX ux_bom_line_component_group
+  //        (bom_header_id, component_sku_id, COALESCE(alternate_group, ''))
 }
