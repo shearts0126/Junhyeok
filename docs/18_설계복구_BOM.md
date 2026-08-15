@@ -83,7 +83,7 @@ provisional · currency · VAT · concurrency 가 전부 비어 있었다.
 | 항목 | 상태 |
 |---|---|
 | BOM 구현물 | **0건** — 모델·migration·라우트·permission·오류코드·테스트 전무 |
-| `bom_header`/`bom_line` 설계 초안 | `03v2:876-935` 에 20/19 필드 **완비** (v0.1 과 동일) |
+| `bom_header`/`bom_line` 설계 초안 | `03v2:876-935` 에 **scalar 19 / 18** 개 **완비** (v0.1 과 동일). ⚠️ PRE-FLIGHT 는 `(relation)` 행을 포함해 `20/19` 로 셌으나, authoritative contract 는 **D-2 의 scalar 19 / 18 + relation 5 / 2** 다 |
 | enum 4종 | `03v2:588-592` 에 값 확정 |
 | API | `05v2 §10.8` 에 **18 endpoint** URL 확정, DTO 6종은 **이름만** |
 | UI | `05v2 §11.8`·`§11.9` 에 목록·상세 명세 **존재** (T06-4 때와 다름) |
@@ -140,7 +140,7 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
 
 `03v2:876-935` 를 **필드 추가·삭제 없이** 채택한다(v0.1 과 동일 명시).
 
-#### `BomHeader` — 20 필드
+#### `BomHeader` — scalar 19 개
 
 | 필드 | 타입 | 계약 |
 |---|---|---|
@@ -163,7 +163,19 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
 | `approvedAt` | `DateTime? @db.Timestamptz` | |
 | `approvedBy` | `String? @db.Uuid` | FK → `User`, `onDelete: Restrict` |
 | `activatedAt` | `DateTime? @db.Timestamptz` | |
-| (relation) | `parentSku` · `lines` | |
+
+**relation 5 개** — scalar 와 **분리해서 센다**. 구현 편의를 위한 임의 추가가
+아니라, 위에서 확정한 FK scalar 와 `lines` inverse 의 **Prisma 표현**이다.
+
+| relation | 대응 | 방향 |
+|---|---|---|
+| `parentSku` | `parentSkuId` FK | → `Sku` |
+| `productionPartner` | `productionPartnerId` FK | → `Supplier` |
+| `createdByUser` | `createdBy` FK | → `User` |
+| `approvedByUser` | `approvedBy` FK | → `User` |
+| `lines` | — | ← `BomLine.bomHeader` inverse |
+
+⛔ `destinationWarehouseId` 에는 relation 이 **없다** — staged scalar 다 (D-32).
 
 `productionPartnerId` 는 **`Supplier` FK 로 연결한다**. 근거: `03v2:242` ERD 가
 `BOM_HEADER` 에서 SKU 만 FK 로 그리지만 `01:157` 이 P열(제조사)을 `supplier`
@@ -178,7 +190,7 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
 ⛔ **Attachment 필드를 신규 추가하지 않는다.** BOM 에는 문서상 attachment 참조가
 0건이며 `SupplierSkuPrice.attachmentId` 같은 staged 컬럼조차 없다.
 
-#### `BomLine` — 19 필드
+#### `BomLine` — scalar 18 개
 
 | 필드 | 타입 | 계약 |
 |---|---|---|
@@ -200,7 +212,15 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
 | `legacyBomCode` | `String? @db.VarChar(100)` | 마이그레이션 추적 |
 | `legacyCommonBomCode` | `String? @db.VarChar(100)` | 마이그레이션 추적 |
 | `note` | `String?` | |
-| (relation) | `bomHeader` · `componentSku` | |
+
+**relation 2 개** — scalar 와 분리해서 센다.
+
+| relation | 대응 | 방향 |
+|---|---|---|
+| `bomHeader` | `bomHeaderId` FK | → `BomHeader` |
+| `componentSku` | `componentSkuId` FK | → `Sku` |
+
+⛔ `issueWarehouseId` 에는 relation 이 **없다** — staged scalar 다 (D-32).
 
 `bomHeaderId` FK 를 **`Restrict`** 로 둔다 — `03v2` 는 `onDelete` 를 명시하지
 않았으나 프로젝트 원칙이 물리삭제 금지이고 `SupplierSkuPrice` 가 부모
@@ -218,14 +238,32 @@ enum QuantityStatus { CONFIRMED SUGGESTED UNKNOWN }
 
 ⛔ 값을 추가·삭제하지 않는다. `SupplyType` 은 기존 enum 을 재사용한다.
 
-#### `Sku` 모델 변경
+#### 기존 모델의 inverse relation
 
-inverse relation **2개만** 추가한다. 그 밖의 `Sku` 필드 변경은 없다.
+BOM 의 FK 는 상대 모델에 inverse relation 을 요구한다(Prisma 규칙). 아래가
+**전부**이며, ⛔ 그 밖의 필드·제약·동작은 하나도 바뀌지 않는다.
+
+**`Sku`** — inverse **2개만**.
 
 ```
-bomHeaders BomHeader[] @relation("BomParent")
-bomLines   BomLine[]   @relation("BomComponent")
+bomHeaders BomHeader[] @relation("BomParent")      // 이 SKU 를 상위로 갖는 BOM 버전
+bomLines   BomLine[]   @relation("BomComponent")   // 이 SKU 가 구성품으로 쓰인 라인 (역전개)
 ```
+
+**`Supplier`** — inverse **1개만**. `BomHeader.productionPartner` 의 짝이다.
+
+```
+bomHeaders BomHeader[] @relation("BomProductionPartner")
+```
+
+**`User`** — inverse **2개**. `BomHeader.createdByUser` / `approvedByUser` 의 짝이다.
+
+```
+createdBomHeaders  BomHeader[] @relation("BomHeaderCreatedBy")
+approvedBomHeaders BomHeader[] @relation("BomHeaderApprovedBy")
+```
+
+⛔ `Warehouse` 쪽 inverse 는 **없다** — 모델 자체가 없으며 T08-1 이다 (D-32).
 
 ### D-3 — duplicate line constraint
 
@@ -794,7 +832,7 @@ skew(`A→B` + `C→D` 에 `B→C`·`D→A` 동시 추가)를 막지 못한다(D
 }
 ```
 
-`BomLineView` = D-9 의 19필드 + `componentSku: {id, skuCode, skuName, baseUom}`.
+`BomLineView` = **`BomLine` scalar 18 개 전부**(D-2·D-9) + `componentSku: {id, skuCode, skuName, baseUom}`.
 ⛔ 원가·전개 결과를 여기 섞지 않는다(각 endpoint 가 담당).
 
 `GET /api/boms` 목록은 `lines` 없이 header + `lineCount`·`unconfirmedCount` 만
