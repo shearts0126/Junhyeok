@@ -12,8 +12,11 @@ import {
   BOM_UPDATE_PERMISSION,
   parseDateOnly,
 } from '@/modules/bom/application';
-import { BOM_CYCLE_GRAPH_LOCK_KEY } from '@/modules/bom/infrastructure/cycle-graph-lock';
-import { disconnectPrisma, getPrismaClient } from '@/shared/db';
+import {
+  acquireBomCycleGraphLock,
+  BOM_CYCLE_GRAPH_LOCK_KEY,
+} from '@/modules/bom/infrastructure/cycle-graph-lock';
+import { disconnectPrisma, getPrismaClient, withTransaction } from '@/shared/db';
 import { ERROR_CODES } from '@/shared/errors';
 
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
@@ -138,6 +141,15 @@ async function waitUntilBlockedOnCycleLock(): Promise<void> {
   throw new Error('advisory lock 대기가 관찰되지 않았다 — BOM_CYCLE_GRAPH lock 이 동작하지 않는다');
 }
 
+/** 결정론적 순서 제어용 barrier — sleep 을 쓰지 않는다. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
 function codeOf(error: unknown): string | undefined {
   return (error as { code?: string }).code;
 }
@@ -258,27 +270,71 @@ describe('★★ disjoint-edge 시나리오 — T07-3 mutation path 에서의 �
   });
 });
 
-describe('★ createBomLine 은 실제로 BOM_CYCLE_GRAPH lock 을 잡는다 (wiring 증명)', () => {
-  it('★ 서비스 실행 중 두 번째 호출이 advisory lock 대기 상태로 관찰된다', async () => {
+describe('★★ createBomLine 은 실제로 BOM_CYCLE_GRAPH lock 을 잡는다 (wiring 증명)', () => {
+  /**
+   * ⚠️ 두 서비스 호출을 동시에 던져 놓고 "겹치겠지" 하고 기대하면 **경쟁적**이다 —
+   *    먼저 시작한 쪽이 상대가 lock 을 요청하기도 전에 커밋해 버리면 대기가
+   *    관찰되지 않는다(CI 에서 실제로 그렇게 실패했다).
+   *
+   * ★ 그래서 **테스트가 직접 lock 을 잡고 붙들고 있는 상태**에서 production
+   *   서비스를 호출한다. lock 이 연결돼 있다면 서비스는 **반드시** 대기하므로
+   *   관찰이 결정론적이다. 연결돼 있지 않으면 서비스가 그냥 끝나 버려
+   *   `waitUntilBlockedOnCycleLock` 이 던진다 — 회귀 방지선은 그대로다.
+   */
+  it('★ 외부 트랜잭션이 lock 을 쥐고 있으면 createBomLine 이 대기한다', async () => {
     const parent = await newSku('lock-parent');
-    const c1 = await newSku('lock-c1');
-    const c2 = await newSku('lock-c2');
+    const component = await newSku('lock-comp');
     const bom = await draftBom(parent);
 
-    // 두 라인 추가를 동시에 던진다 — 둘 다 정상이지만 lock 때문에 직렬화된다.
-    const first = createBomLine(STAFF, bom, { componentSkuId: c1, componentRole: 'MATERIAL' });
-    const second = (async () => {
-      // ★ 두 번째가 대기하는 것을 관찰한다. lock 이 없으면 여기서 실패한다.
-      const observed = waitUntilBlockedOnCycleLock();
-      const call = createBomLine(STAFF2, bom, { componentSkuId: c2, componentRole: 'MATERIAL' });
-      await observed;
-      return call;
-    })();
+    const release = deferred();
+    const holderDone = deferred();
 
-    const [a, b] = await Promise.all([first, second]);
-    expect(a.line.id).not.toBe(b.line.id);
-    // 직렬화된 결과 순번이 충돌 없이 1, 2 로 부여된다.
-    expect(new Set([a.line.lineNo, b.line.lineNo])).toEqual(new Set([1, 2]));
+    // ① 테스트가 advisory lock 을 잡고 `release` 까지 붙든다.
+    const holder = withTransaction(
+      async (tx) => {
+        await acquireBomCycleGraphLock(tx);
+        holderDone.resolve();
+        await release.promise;
+      },
+      { timeout: 30_000 },
+    );
+    await holderDone.promise;
+
+    // ② production 서비스를 호출한다 — lock 이 연결돼 있으면 여기서 멈춘다.
+    const call = createBomLine(STAFF, bom, {
+      componentSkuId: component,
+      componentRole: 'MATERIAL',
+    });
+
+    // ③ 실제 대기 상태를 pg_locks 로 확인한다. ⛔ sleep 으로 가정하지 않는다.
+    await waitUntilBlockedOnCycleLock();
+
+    // ④ 놓아 주면 서비스가 진행된다.
+    release.resolve();
+    await holder;
+
+    const { line } = await call;
+    expect(line.bomHeaderId).toBe(bom);
+    expect(line.lineNo).toBe(1);
+  });
+
+  it('★ lock 이 풀린 뒤에는 정상 속도로 처리된다 — 영구 점유가 아니다', async () => {
+    const parent = await newSku('lock-after');
+    const component = await newSku('lock-after-c');
+    const bom = await draftBom(parent);
+    const { line } = await createBomLine(STAFF, bom, {
+      componentSkuId: component,
+      componentRole: 'MATERIAL',
+    });
+    expect(line.id).toBeDefined();
+
+    // transaction advisory lock 이므로 커밋과 함께 해제됐다 — 잔량 0.
+    const objid = Number(BOM_CYCLE_GRAPH_LOCK_KEY & 0xffffffffn);
+    const rows = await getPrismaClient().$queryRawUnsafe<{ count: bigint }[]>(
+      `SELECT count(*)::bigint AS count FROM pg_locks
+        WHERE locktype = 'advisory' AND objid = ${objid}`,
+    );
+    expect(Number(rows[0]?.count ?? 0)).toBe(0);
   });
 });
 
