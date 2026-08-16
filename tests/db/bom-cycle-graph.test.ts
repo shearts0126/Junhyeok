@@ -388,6 +388,179 @@ describe('★ 순환 판정 (TC-BOM-001 · TC-BOM-007)', () => {
   });
 });
 
+// ═══════════════════════════════════════════════════════════════
+// line → edge 포함 계약 (D-13)
+//
+// ★ 계약: `BomLine` 에 `componentSkuId` 가 있으면 **무조건 edge** 다.
+//   순환은 소요량 계산 가능 여부가 아니라 구조적 참조 관계이기 때문이다.
+//   optional line 이라고 `A → B` 를 빼면 `B → A` 가 통과해 실물 순환이 생긴다.
+// ═══════════════════════════════════════════════════════════════
+
+/** edge 필터 근거가 **될 수 없는** 속성들. 각 항목이 독립적으로 고정된다. */
+const EDGE_VARIANTS = [
+  { label: 'isRequired=false', data: { isRequired: false } },
+  { label: 'componentRole=SERVICE', data: { componentRole: 'SERVICE' as const } },
+  { label: 'componentRole=PACKAGING', data: { componentRole: 'PACKAGING' as const } },
+  { label: 'componentRole=PRODUCT', data: { componentRole: 'PRODUCT' as const } },
+  { label: 'supplyType=null', data: { supplyType: null } },
+  { label: 'supplyType=SELF_SUPPLIED', data: { supplyType: 'SELF_SUPPLIED' as const } },
+  { label: 'supplyType=TURNKEY', data: { supplyType: 'TURNKEY' as const } },
+  { label: 'alternateGroup=null', data: { alternateGroup: null } },
+  { label: 'alternateGroup 값 있음', data: { alternateGroup: 'ALT-EDGE' } },
+  {
+    label: 'quantityStatus=UNKNOWN + quantityPer=null',
+    data: { quantityStatus: 'UNKNOWN' as const, quantityPer: null },
+  },
+  {
+    label: 'quantityStatus=SUGGESTED',
+    data: { quantityStatus: 'SUGGESTED' as const, quantityPer: '0.033333' },
+  },
+  {
+    label: 'quantityStatus=CONFIRMED',
+    data: { quantityStatus: 'CONFIRMED' as const, quantityPer: '2' },
+  },
+  { label: 'lossRate 있음', data: { lossRate: '0.05' } },
+] as const;
+
+/** 주어진 속성으로 `parent → component` 라인 하나짜리 ACTIVE BOM 을 만든다. */
+async function newBomWithLine(
+  parentSkuId: string,
+  componentSkuId: string,
+  extra: Record<string, unknown>,
+): Promise<void> {
+  seq += 1;
+  const client = getPrismaClient();
+  const header = await client.bomHeader.create({
+    data: {
+      parentSkuId,
+      bomType: 'MANUFACTURING',
+      version: `ev${String(seq).padStart(4, '0')}`,
+      status: 'ACTIVE',
+      outputUom: 'EA',
+      effectiveFrom: d('2020-01-01'),
+    },
+    select: { id: true },
+  });
+  await client.bomLine.create({
+    data: {
+      bomHeaderId: header.id,
+      lineNo: 1,
+      componentSkuId,
+      uom: 'EA',
+      componentRole: 'MATERIAL',
+      ...extra,
+    },
+  });
+}
+
+describe('★★ line → edge 포함 계약 — 어떤 속성으로도 제외되지 않는다 (D-13)', () => {
+  it.each(EDGE_VARIANTS.map((variant) => [variant.label, variant.data] as const))(
+    '%s 라인도 graph edge 다',
+    async (_label, data) => {
+      const parent = await newSku('edge상위');
+      const component = await newSku('edge구성품');
+      await newBomWithLine(parent, component, { ...data });
+
+      const graph = await buildBomCycleGraph(getPrismaClient(), {
+        candidate: { parentSkuId: await newSku('edge루트'), componentSkuIds: [parent] },
+        evaluationDate: asOf('2026-06-01'),
+      });
+      expect(graph.edges.get(parent)).toEqual([component]);
+    },
+  );
+
+  it.each(EDGE_VARIANTS.map((variant) => [variant.label, variant.data] as const))(
+    '★ %s 라인을 통한 역방향 순환도 BOM_CYCLE_DETECTED 다',
+    async (_label, data) => {
+      const a = await newSku('순환A');
+      const b = await newSku('순환B');
+      // 기존 구조: B --(해당 속성)--> A
+      await newBomWithLine(b, a, { ...data });
+
+      // candidate: A → B  ⇒ A → B → A
+      let caught: unknown;
+      try {
+        await assertNoBomCycleForCandidate(getPrismaClient(), {
+          candidate: { parentSkuId: a, componentSkuIds: [b] },
+          evaluationDate: asOf('2026-06-01'),
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(codeOf(caught)).toBe(ERROR_CODES.BOM_CYCLE_DETECTED);
+    },
+  );
+
+  it('★ inventoryManaged=false 인 구성품도 edge 이며 순환을 만든다', async () => {
+    const client = getPrismaClient();
+    seq += 1;
+    const a = await newSku('무재고A');
+    const unmanaged = await client.sku.create({
+      data: {
+        skuCode: CODE(`U${String(seq).padStart(3, '0')}`),
+        skuName: '재고관리 안 함',
+        itemType: 'FINISHED_GOOD',
+        inventoryManaged: false,
+      },
+      select: { id: true },
+    });
+    await newBomWithLine(unmanaged.id, a, {});
+
+    let caught: unknown;
+    try {
+      await assertNoBomCycleForCandidate(client, {
+        candidate: { parentSkuId: a, componentSkuIds: [unmanaged.id] },
+        evaluationDate: asOf('2026-06-01'),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(codeOf(caught)).toBe(ERROR_CODES.BOM_CYCLE_DETECTED);
+  });
+
+  it('★ 여러 속성이 섞인 라인들이 lineNo 순서대로 전부 edge 다 — 부분 누락 없음', async () => {
+    const parent = await newSku('혼합상위');
+    const client = getPrismaClient();
+    seq += 1;
+    const header = await client.bomHeader.create({
+      data: {
+        parentSkuId: parent,
+        bomType: 'MANUFACTURING',
+        version: `mix${String(seq).padStart(4, '0')}`,
+        status: 'ACTIVE',
+        outputUom: 'EA',
+        effectiveFrom: d('2020-01-01'),
+      },
+      select: { id: true },
+    });
+
+    const componentIds: string[] = [];
+    let lineNo = 0;
+    for (const variant of EDGE_VARIANTS) {
+      lineNo += 1;
+      const componentSkuId = await newSku(`혼합${lineNo}`);
+      componentIds.push(componentSkuId);
+      await client.bomLine.create({
+        data: {
+          bomHeaderId: header.id,
+          lineNo,
+          componentSkuId,
+          uom: 'EA',
+          componentRole: 'MATERIAL',
+          ...variant.data,
+        },
+      });
+    }
+
+    const graph = await buildBomCycleGraph(client, {
+      candidate: { parentSkuId: await newSku('혼합루트'), componentSkuIds: [parent] },
+      evaluationDate: asOf('2026-06-01'),
+    });
+    // 하나라도 필터링되면 여기서 길이가 줄어든다.
+    expect(graph.edges.get(parent)).toEqual(componentIds);
+  });
+});
+
 describe('line → edge 포함 규칙 (D-13)', () => {
   it('★ isRequired=false · SERVICE · alternateGroup 라인도 edge 다 — 임의 제외 없음', async () => {
     const a = await newSku('edge상위');

@@ -20,9 +20,24 @@ import type { TransactionClient } from '@/shared/db';
  * edge 를 못 본 채 통과한다. 둘 다 커밋되면 `A → B → C → D → A` 가 된다.
  * 순환 판정은 **그래프 전역 속성**이라 국소 잠금으로 직렬화되지 않는다.
  *
- * `Serializable` 격리도 답이 아니다 — 읽은 행 집합이 겹치지 않으면 predicate
- * lock 이 잡히지 않을 수 있고, `40001` 재시도 계약을 따로 설계해야 하며,
- * `withTransaction` 은 이미 `ReadCommitted` 를 기본으로 쓴다.
+ * ## `SERIALIZABLE` 을 쓰지 않는 이유 — "막지 못해서"가 아니다
+ *
+ * PostgreSQL 의 `SERIALIZABLE` 은 SSI(Serializable Snapshot Isolation)를 쓰며
+ * **write skew 를 포함한 serialization anomaly 를 감지할 수 있다.** 위 disjoint
+ * 사례에서도 serialization failure 가 발생할 수 있다. 즉 "SSI 로는 못 막는다"는
+ * 서술은 정확하지 않으며, 그것이 advisory lock 을 택한 근거도 아니다.
+ *
+ * 채택하지 않은 실제 이유는 **도입 비용**이다:
+ *   - 직렬화 실패(`40001`) 가 발생할 수 있어 **application 전역 재시도 계약**을
+ *     따로 설계·검증해야 한다.
+ *   - 현재 `withTransaction` 은 `ReadCommitted` 를 기본으로 쓴다. cycle 정합성
+ *     하나 때문에 transaction isolation 을 전역으로 바꾸면 무관한 경로까지
+ *     재시도 semantics 를 갖게 된다.
+ *   - BOM 편집은 **저빈도 경로**다(실측 헤더 80 / 라인 383).
+ *
+ * → 그래서 격리수준·재시도 계약을 확장하는 대신, **이 경로에 한정된 명시적이고
+ *   결정적인** transaction advisory lock 을 쓴다. 두 방식 모두 정합성을 얻을 수
+ *   있고, 현재 architecture 에서는 후자가 더 단순하다.
  *
  * ## 확정 계약
  *

@@ -33,6 +33,30 @@ import { resolveEffectiveBoms } from './resolve-effective-bom';
  *      (다른 SKU 의 DRAFT·PENDING_APPROVAL·APPROVED·historical/future ACTIVE 는
  *       들어가지 않는다. 아직 발효되지 않은 남의 초안이 내 BOM 을 막을 이유가 없다.)
  *
+ * ## ★ line → edge 포함 계약 (D-13)
+ *
+ * > **`BomLine` 에 `componentSkuId` 가 있으면 그 line 은 무조건 edge 다.**
+ *
+ * 순환은 "소요량을 계산할 수 있는가"가 아니라 **parent SKU → component SKU 의
+ * 구조적 참조 관계**다. 그래서 아래 속성은 **edge 필터 근거가 되지 않는다**:
+ *
+ * | 속성 | 값 | edge |
+ * |---|---|---|
+ * | `isRequired` | `false` | **포함** |
+ * | `componentRole` | `SERVICE`(및 `PRODUCT`·`PACKAGING`) | **포함** |
+ * | `supplyType` | `null` · `SELF_SUPPLIED` · `TURNKEY` | **포함** |
+ * | `alternateGroup` | `null` · 값 있음 | **포함** |
+ * | `quantityStatus` | `UNKNOWN` · `SUGGESTED` · `CONFIRMED` | **포함** |
+ * | `quantityPer` | `null` | **포함** |
+ * | 구성품 `inventoryManaged` | `false` | **포함** |
+ *
+ * ⛔ optional line 이라고 `A → B` 를 빼면 `B → A` 를 허용하게 된다 — 두 line 이
+ *    모두 살아 있는 한 실물 구조는 순환이다. 소요량 확정 여부(D-10 submit 게이트)와
+ *    순환 topology(D-13)는 **서로 다른 계약**이며 섞지 않는다.
+ *
+ * ⛔ docs/18 에 line 단위 제외 규정은 없다. 따라서 아래 `bomLine.findMany` 의
+ *    `where` 는 `bomHeaderId` **하나뿐**이며, 새 필터를 추가하지 않는다.
+ *
  * ## 동시성
  *
  * ⚠️ 이 모듈은 lock 을 잡지 않는다. 호출부가 **`withBomCycleGraphLock` 을 먼저
@@ -115,6 +139,10 @@ export async function buildBomCycleGraph(
       .filter((row): row is NonNullable<typeof row> => row !== null)
       .map((row) => row.id);
 
+    // ★ line → edge 포함 계약 (위 헤더 주석): `bomHeaderId` 외의 조건이 없다.
+    //   ⛔ isRequired · componentRole · supplyType · alternateGroup ·
+    //      quantityStatus · quantityPer 로 거르지 않는다. 하나라도 거르면
+    //      그 line 의 역방향 edge 가 허용돼 실물 순환이 통과한다.
     const lines =
       headerIds.length === 0
         ? []
