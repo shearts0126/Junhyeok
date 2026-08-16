@@ -1,0 +1,255 @@
+import type { Prisma } from '@/generated/prisma/client';
+import { toDecimalString } from '@/shared/decimal';
+
+import { toDateOnlyString } from './dto';
+
+/**
+ * BOM 외부 표현 (T07-3).
+ *
+ * ⚠️ 근거: `docs/18_설계복구_BOM.md` §D-14(`BomDetail`·`BomLineView`) · §D-2·§D-9.
+ *
+ * ⚠️ Decimal 은 **문자열**로 직렬화한다 — `Number()` 변환 금지.
+ * ⚠️ `@db.Date` 는 `YYYY-MM-DD`, `@db.Timestamptz` 는 ISO 8601 이다.
+ *    date-only 를 timestamp 로 왜곡하면 timezone 에 따라 하루가 밀린다.
+ * ⚠️ `destinationWarehouseId`·`issueWarehouseId` 는 **UUID 를 그대로** 낸다 —
+ *    이름 join 없음 (T08 미착수, D-31·D-32).
+ * ⛔ Prisma relation 객체를 통째로 노출하지 않는다 — 최소 projection 만 낸다.
+ * ⛔ 원가·전개 결과를 여기 섞지 않는다 (각 endpoint 담당, D-14).
+ */
+
+export interface SkuRefView {
+  readonly id: string;
+  readonly skuCode: string;
+  readonly skuName: string;
+}
+
+export interface ComponentSkuRefView extends SkuRefView {
+  readonly baseUom: string;
+}
+
+export interface SupplierRefView {
+  readonly id: string;
+  readonly supplierCode: string;
+  readonly supplierName: string;
+}
+
+/** `BomLine` scalar **18개 전부** + 구성품 최소 projection (D-14). */
+export interface BomLineView {
+  readonly id: string;
+  readonly bomHeaderId: string;
+  readonly lineNo: number;
+  readonly componentSkuId: string;
+  readonly quantityPer: string | null;
+  readonly quantityStatus: string;
+  readonly uom: string;
+  readonly lossRate: string | null;
+  readonly componentRole: string;
+  readonly supplyType: string | null;
+  readonly alternateGroup: string | null;
+  readonly isRequired: boolean;
+  readonly issueWarehouseId: string | null;
+  readonly packQuantity: string | null;
+  readonly specification: string | null;
+  readonly legacyBomCode: string | null;
+  readonly legacyCommonBomCode: string | null;
+  readonly note: string | null;
+  readonly componentSku: ComponentSkuRefView;
+}
+
+export const BOM_LINE_VIEW_INCLUDE = {
+  componentSku: { select: { id: true, skuCode: true, skuName: true, baseUom: true } },
+} as const satisfies Prisma.BomLineInclude;
+
+export type BomLineRow = Prisma.BomLineGetPayload<{ include: typeof BOM_LINE_VIEW_INCLUDE }>;
+
+export function toBomLineView(row: BomLineRow): BomLineView {
+  return {
+    id: row.id,
+    bomHeaderId: row.bomHeaderId,
+    lineNo: row.lineNo,
+    componentSkuId: row.componentSkuId,
+    quantityPer: row.quantityPer === null ? null : toDecimalString(row.quantityPer),
+    quantityStatus: row.quantityStatus,
+    uom: row.uom,
+    lossRate: row.lossRate === null ? null : toDecimalString(row.lossRate),
+    componentRole: row.componentRole,
+    supplyType: row.supplyType,
+    alternateGroup: row.alternateGroup,
+    isRequired: row.isRequired,
+    issueWarehouseId: row.issueWarehouseId,
+    packQuantity: row.packQuantity === null ? null : toDecimalString(row.packQuantity),
+    specification: row.specification,
+    legacyBomCode: row.legacyBomCode,
+    legacyCommonBomCode: row.legacyCommonBomCode,
+    note: row.note,
+    componentSku: {
+      id: row.componentSku.id,
+      skuCode: row.componentSku.skuCode,
+      skuName: row.componentSku.skuName,
+      baseUom: row.componentSku.baseUom,
+    },
+  };
+}
+
+/** 헤더 표현 — 목록(`lines` 없음)과 상세가 같은 필드를 공유한다 (D-14). */
+export interface BomHeaderView {
+  readonly id: string;
+  readonly parentSkuId: string;
+  readonly parentSku: SkuRefView;
+  readonly bomType: string;
+  readonly version: string;
+  readonly status: string;
+  readonly outputQty: string;
+  readonly outputUom: string;
+  /** `YYYY-MM-DD` */
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly productionPartnerId: string | null;
+  readonly productionPartner: SupplierRefView | null;
+  /** ★ 이름 join 없음 — staged scalar 그대로 (D-31·D-32). */
+  readonly destinationWarehouseId: string | null;
+  readonly overallLossRate: string | null;
+  readonly description: string | null;
+  readonly changeReason: string | null;
+  /** ISO 8601 */
+  readonly createdAt: string;
+  readonly createdBy: string | null;
+  readonly approvedAt: string | null;
+  readonly approvedBy: string | null;
+  readonly activatedAt: string | null;
+  /** 진행률 바용 (D-14·D-31). */
+  readonly lineCount: number;
+  /** `quantityStatus ≠ CONFIRMED` 인 라인 수 — "확정 N / 전체 M" 의 여집합. */
+  readonly unconfirmedCount: number;
+}
+
+export interface BomDetailView extends BomHeaderView {
+  readonly lines: readonly BomLineView[];
+}
+
+export const BOM_HEADER_VIEW_INCLUDE = {
+  parentSku: { select: { id: true, skuCode: true, skuName: true } },
+  productionPartner: { select: { id: true, supplierCode: true, supplierName: true } },
+} as const satisfies Prisma.BomHeaderInclude;
+
+export type BomHeaderRow = Prisma.BomHeaderGetPayload<{ include: typeof BOM_HEADER_VIEW_INCLUDE }>;
+
+export interface BomLineCounts {
+  readonly lineCount: number;
+  readonly unconfirmedCount: number;
+}
+
+export function toBomHeaderView(row: BomHeaderRow, counts: BomLineCounts): BomHeaderView {
+  return {
+    id: row.id,
+    parentSkuId: row.parentSkuId,
+    parentSku: {
+      id: row.parentSku.id,
+      skuCode: row.parentSku.skuCode,
+      skuName: row.parentSku.skuName,
+    },
+    bomType: row.bomType,
+    version: row.version,
+    status: row.status,
+    outputQty: toDecimalString(row.outputQty),
+    outputUom: row.outputUom,
+    effectiveFrom: toDateOnlyString(row.effectiveFrom),
+    effectiveTo: row.effectiveTo === null ? null : toDateOnlyString(row.effectiveTo),
+    productionPartnerId: row.productionPartnerId,
+    productionPartner:
+      row.productionPartner === null
+        ? null
+        : {
+            id: row.productionPartner.id,
+            supplierCode: row.productionPartner.supplierCode,
+            supplierName: row.productionPartner.supplierName,
+          },
+    destinationWarehouseId: row.destinationWarehouseId,
+    overallLossRate: row.overallLossRate === null ? null : toDecimalString(row.overallLossRate),
+    description: row.description,
+    changeReason: row.changeReason,
+    createdAt: row.createdAt.toISOString(),
+    createdBy: row.createdBy,
+    approvedAt: row.approvedAt === null ? null : row.approvedAt.toISOString(),
+    approvedBy: row.approvedBy,
+    activatedAt: row.activatedAt === null ? null : row.activatedAt.toISOString(),
+    lineCount: counts.lineCount,
+    unconfirmedCount: counts.unconfirmedCount,
+  };
+}
+
+export function toBomDetailView(row: BomHeaderRow, lines: readonly BomLineRow[]): BomDetailView {
+  return {
+    ...toBomHeaderView(row, countsOf(lines)),
+    lines: lines.map(toBomLineView),
+  };
+}
+
+/** `unconfirmedCount` = `quantityStatus ≠ CONFIRMED` (D-10 어휘 · D-31 진행률 바). */
+export function countsOf(lines: readonly { readonly quantityStatus: string }[]): BomLineCounts {
+  return {
+    lineCount: lines.length,
+    unconfirmedCount: lines.filter((line) => line.quantityStatus !== 'CONFIRMED').length,
+  };
+}
+
+/**
+ * `GET /api/skus/{id}/where-used` 의 한 행 — **line 하나가 한 행**이다 (D-30).
+ *
+ * ★ 같은 BOM 에 같은 SKU 가 대체그룹만 달리해 여러 line 으로 들어가면 **행이
+ *   여러 개** 나온다. 소요량(`quantityPer`)은 line 단위 사실이라 header 단위로
+ *   접으면 표현할 수 없기 때문이다(D-30 ⑦탭 "상위 SKU · 버전 · 상태 · 소요량").
+ * ⛔ "최신 1건" 같은 임의 선택을 하지 않는다.
+ */
+export interface BomWhereUsedView {
+  readonly bomHeaderId: string;
+  readonly parentSkuId: string;
+  readonly parentSku: SkuRefView;
+  readonly bomType: string;
+  readonly version: string;
+  readonly status: string;
+  readonly effectiveFrom: string;
+  readonly effectiveTo: string | null;
+  readonly lineId: string;
+  readonly lineNo: number;
+  readonly quantityPer: string | null;
+  readonly quantityStatus: string;
+  readonly uom: string;
+  readonly componentRole: string;
+  readonly isRequired: boolean;
+  readonly alternateGroup: string | null;
+}
+
+export const WHERE_USED_INCLUDE = {
+  bomHeader: {
+    include: { parentSku: { select: { id: true, skuCode: true, skuName: true } } },
+  },
+} as const satisfies Prisma.BomLineInclude;
+
+export type WhereUsedRow = Prisma.BomLineGetPayload<{ include: typeof WHERE_USED_INCLUDE }>;
+
+export function toWhereUsedView(row: WhereUsedRow): BomWhereUsedView {
+  const header = row.bomHeader;
+  return {
+    bomHeaderId: header.id,
+    parentSkuId: header.parentSkuId,
+    parentSku: {
+      id: header.parentSku.id,
+      skuCode: header.parentSku.skuCode,
+      skuName: header.parentSku.skuName,
+    },
+    bomType: header.bomType,
+    version: header.version,
+    status: header.status,
+    effectiveFrom: toDateOnlyString(header.effectiveFrom),
+    effectiveTo: header.effectiveTo === null ? null : toDateOnlyString(header.effectiveTo),
+    lineId: row.id,
+    lineNo: row.lineNo,
+    quantityPer: row.quantityPer === null ? null : toDecimalString(row.quantityPer),
+    quantityStatus: row.quantityStatus,
+    uom: row.uom,
+    componentRole: row.componentRole,
+    isRequired: row.isRequired,
+    alternateGroup: row.alternateGroup,
+  };
+}

@@ -363,7 +363,7 @@ describe('★ 1차 가드 — 라우트 정책 우선순위', () => {
     const skusDir = fileURLToPath(new URL('../../app/api/skus', import.meta.url));
     expect(readdirSync(skusDir).sort()).toEqual(['[id]', 'route.ts', 'suggest-code']);
     // 상세 하위에는 워크플로 4종 + 바코드(T04-3) + 변경이력(T1-6B3) +
-    // 공급조건 요약(T1-6B4) 만 — suggest-code 없음
+    // 공급조건 요약(T1-6B4) + BOM 역전개(T07-3) 만 — suggest-code 없음
     expect(readdirSync(`${skusDir}/[id]`).sort()).toEqual([
       'approve',
       'barcodes',
@@ -373,6 +373,7 @@ describe('★ 1차 가드 — 라우트 정책 우선순위', () => {
       'route.ts',
       'submit',
       'supplier-skus',
+      'where-used',
     ]);
   });
 

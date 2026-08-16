@@ -146,6 +146,18 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     permission: 'supplier.read',
   },
 
+  // SKU 역전개 supporting API (T07-3, docs/18 §D-15·§D-30) — 경로는 `/api/skus`
+  // 아래지만 응답이 전부 BOM 사실이므로 **`bom.read`** 다 (⛔ `sku.read` 아님).
+  // ⚠️ 반드시 일반 `/api/skus` GET 정책보다 **앞에** 둔다 — 뒤에 두면
+  //    `sku.read` 로 shadow 되어 BOM 권한이 없는 사용자에게 구성 정보가 열린다
+  //    (T1-6B4 `supplier-skus` 와 같은 상황).
+  {
+    prefix: '/api/skus',
+    contains: '/where-used',
+    methods: ['GET', 'HEAD'],
+    permission: 'bom.read',
+  },
+
   // SKU 승인 워크플로 (T1-4A) — 일반 POST(생성) 정책보다 앞에 둔다.
   // reject 는 sku.approve — 승인/반려는 동일 authority (별도 sku.reject 없음).
   // ⛔ archive 는 T1-4B — 정책도 라우트도 아직 없다.
@@ -223,6 +235,37 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
     methods: ['PATCH', 'PUT', 'DELETE'],
     permission: 'supplier.update',
   },
+
+  // BOM (T07-3, docs/18_설계복구_BOM.md §D-15) — **독립 capability** 다.
+  // ⛔ `sku.*` 를 재사용하지 않는다. ★ `bom.read` 는 EXECUTIVE 를 포함한다 —
+  //   `supplier.*`(E = —)와 정반대이며 FINANCE 는 read 만 가진다.
+  //
+  // ⚠️ 아래 workflow suffix 정책들은 **T07-5 가 만들 endpoint** 를 위한 것이다.
+  //    route 자체는 아직 없지만(404) 정책을 지금 넣는 이유는, 일반
+  //    `{prefix:'/api/boms', methods:['POST']}` 규칙이 뒤에 있어서 나중에
+  //    `…/submit`·`…/approve` 가 생기면 **`bom.create` 로 잘못 잡히기** 때문이다.
+  //    첫 일치 우선이므로 더 구체적인 정책이 반드시 앞에 있어야 한다.
+  //    ⛔ 정책 추가는 route 를 만드는 것이 아니다 — 없는 경로는 여전히 404 다.
+  { prefix: '/api/boms', suffix: '/submit', methods: ['POST'], permission: 'bom.submit' },
+  { prefix: '/api/boms', suffix: '/approve', methods: ['POST'], permission: 'bom.approve' },
+  { prefix: '/api/boms', suffix: '/reject', methods: ['POST'], permission: 'bom.approve' },
+  { prefix: '/api/boms', suffix: '/activate', methods: ['POST'], permission: 'bom.approve' },
+  { prefix: '/api/boms', suffix: '/deactivate', methods: ['POST'], permission: 'bom.approve' },
+  { prefix: '/api/boms', suffix: '/archive', methods: ['POST'], permission: 'bom.approve' },
+  { prefix: '/api/boms', suffix: '/clone', methods: ['POST'], permission: 'bom.create' },
+  // 라인은 컬렉션(`…/lines`)과 단건(`…/lines/{lineId}`)이 두 깊이라 `contains` 다.
+  // ★ 라인 추가도 **BOM 수정**이므로 `bom.update` 다 — `bom.create` 가 아니다.
+  //   (T07-4 의 `…/lines/bulk-confirm-qty` 도 이 정책에 잡힌다 — 의도된 결과다.)
+  { prefix: '/api/boms', contains: '/lines', methods: ['POST'], permission: 'bom.update' },
+  {
+    prefix: '/api/boms',
+    contains: '/lines',
+    methods: ['PATCH', 'PUT', 'DELETE'],
+    permission: 'bom.update',
+  },
+  { prefix: '/api/boms', methods: ['GET', 'HEAD'], permission: 'bom.read' },
+  { prefix: '/api/boms', methods: ['POST'], permission: 'bom.create' },
+  { prefix: '/api/boms', methods: ['PATCH', 'PUT', 'DELETE'], permission: 'bom.update' },
 
   // 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용, read-only.
   // ⛔ 신규 permission 을 만들지 않는다 — 매핑 조회 권한을 그대로 쓴다.

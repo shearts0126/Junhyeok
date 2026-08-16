@@ -56,6 +56,11 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'supplier_price.read', description: '공급 가격이력 조회' },
   { permissionKey: 'supplier_price.create', description: '공급 가격 등록 (미승인 제안행)' },
   { permissionKey: 'supplier_price.approve', description: '공급 가격 승인 (발효)' },
+  { permissionKey: 'bom.read', description: 'BOM 조회' },
+  { permissionKey: 'bom.create', description: 'BOM 생성' },
+  { permissionKey: 'bom.update', description: 'BOM 수정 (라인 추가·수정·삭제 포함)' },
+  { permissionKey: 'bom.submit', description: 'BOM 승인 요청' },
+  { permissionKey: 'bom.approve', description: 'BOM 승인·반려·활성화·사용종료' },
 ];
 
 /**
@@ -170,6 +175,28 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'ADMIN', permissionKey: 'supplier_price.approve' },
   { roleCode: 'SCM_LEADER', permissionKey: 'supplier_price.approve' },
   { roleCode: 'FINANCE', permissionKey: 'supplier_price.approve' },
+  // BOM (T07-3, docs/18 §D-15). ★ `supplier.*` 와 **정반대 두 지점**이 있다:
+  //   ① read 에 **EXECUTIVE 가 있다** (`05v2:661` `BOM 목록·상세 RW RW RW R R`)
+  //   ② FINANCE 는 **read 만** — mutation 권한이 하나도 없다 (`05v2:661-662`)
+  // ⛔ `bom.cost` 를 만들지 않는다 — 원가도 `bom.read` 로 판정한다.
+  // ⚠️ `bom.submit`·`bom.approve` 의 **사용처(endpoint)는 T07-5** 다.
+  //    docs/18 §5 가 permission seed 5종을 T07-3 에 배정했으므로 키만 먼저 넣는다.
+  { roleCode: 'ADMIN', permissionKey: 'bom.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'bom.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'bom.read' },
+  { roleCode: 'FINANCE', permissionKey: 'bom.read' },
+  { roleCode: 'EXECUTIVE', permissionKey: 'bom.read' },
+  { roleCode: 'ADMIN', permissionKey: 'bom.create' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'bom.create' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'bom.create' },
+  { roleCode: 'ADMIN', permissionKey: 'bom.update' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'bom.update' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'bom.update' },
+  { roleCode: 'ADMIN', permissionKey: 'bom.submit' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'bom.submit' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'bom.submit' },
+  { roleCode: 'ADMIN', permissionKey: 'bom.approve' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'bom.approve' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

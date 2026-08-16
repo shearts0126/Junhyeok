@@ -998,7 +998,10 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
     // ✏️ T04-3 에서 `barcodes`(바코드 CRUD)가 추가됐다 — docs/10 §4.
     // ✏️ T1-6B3 에서 `history`(변경이력 read-only)가 추가됐다 — docs/16 §31.
     // ✏️ T1-6B4 에서 `supplier-skus`(⑥ 공급조건 요약 read-only)가 추가됐다 — docs/16 §41~.
-    // ⛔ archive 는 T1-4B (BOM usage provider 필요) — stub 도 없다.
+    // ✏️ T07-3 에서 `where-used`(BOM 역전개 read-only)가 추가됐다 — docs/18 §D-30.
+    //    ★ 경로는 `/api/skus` 아래지만 **BOM module 이 owner** 이며 권한도
+    //      `bom.read` 다 (⛔ `sku.read` 아님) — route-policy 에 specific 정책이 있다.
+    // ⛔ archive 는 T1-4B — T07-3 은 `hasBomUsage` provider 만 노출한다 (stub 없음).
     expect(detailEntries).toEqual([
       'approve',
       'barcodes',
@@ -1008,6 +1011,7 @@ describe('★ 라우트 모듈 — T1-3 은 4개 endpoint 만', () => {
       'route.ts',
       'submit',
       'supplier-skus',
+      'where-used',
     ]);
   });
 });
