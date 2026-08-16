@@ -549,6 +549,37 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     );
   });
 
+  it('★★ RESERVED POLICY — 예약 정책 8개가 D-15 matrix 와 1:1 일치한다', () => {
+    // ⛔ 아래 경로들은 **route handler 가 없다**(404). 정책만 예약돼 있다.
+    const reserved: readonly [string, string][] = [
+      [`/api/boms/${BOM}/submit`, 'bom.submit'],
+      [`/api/boms/${BOM}/approve`, 'bom.approve'],
+      [`/api/boms/${BOM}/reject`, 'bom.approve'],
+      [`/api/boms/${BOM}/activate`, 'bom.approve'],
+      [`/api/boms/${BOM}/deactivate`, 'bom.approve'],
+      [`/api/boms/${BOM}/archive`, 'bom.approve'],
+      [`/api/boms/${BOM}/clone`, 'bom.create'],
+    ];
+    for (const [pathname, permission] of reserved) {
+      expect(resolveRoutePermission({ pathname, method: 'POST' }), pathname).toBe(permission);
+    }
+    // 화면 예약 — T07-8 이 만들 `/master/boms` 가 인증-only 로 열리지 않게 한다.
+    expect(resolveRoutePermission({ pathname: '/master/boms', method: 'GET' })).toBe('bom.read');
+    expect(resolveRoutePermission({ pathname: `/master/boms/${BOM}`, method: 'GET' })).toBe(
+      'bom.read',
+    );
+  });
+
+  it('★ 예약은 정책일 뿐 endpoint 가 아니다 — workflow route handler 가 0개다', async () => {
+    const { readdirSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
+    expect(readdirSync(bomsDir).sort()).toEqual(['[id]', 'route.ts']);
+    // 상세 하위에는 `lines` 와 route.ts 뿐 — submit/approve/clone 등이 없다.
+    expect(readdirSync(`${bomsDir}/[id]`).sort()).toEqual(['lines', 'route.ts']);
+    expect(readdirSync(`${bomsDir}/[id]/lines`).sort()).toEqual(['[lineId]', 'route.ts']);
+  });
+
   it('★ T07-4 의 bulk-confirm-qty 는 contains:/lines 로 bom.update 에 잡힌다', () => {
     expect(
       resolveRoutePermission({

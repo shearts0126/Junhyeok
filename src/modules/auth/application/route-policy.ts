@@ -240,12 +240,19 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
   // ⛔ `sku.*` 를 재사용하지 않는다. ★ `bom.read` 는 EXECUTIVE 를 포함한다 —
   //   `supplier.*`(E = —)와 정반대이며 FINANCE 는 read 만 가진다.
   //
-  // ⚠️ 아래 workflow suffix 정책들은 **T07-5 가 만들 endpoint** 를 위한 것이다.
-  //    route 자체는 아직 없지만(404) 정책을 지금 넣는 이유는, 일반
-  //    `{prefix:'/api/boms', methods:['POST']}` 규칙이 뒤에 있어서 나중에
-  //    `…/submit`·`…/approve` 가 생기면 **`bom.create` 로 잘못 잡히기** 때문이다.
-  //    첫 일치 우선이므로 더 구체적인 정책이 반드시 앞에 있어야 한다.
-  //    ⛔ 정책 추가는 route 를 만드는 것이 아니다 — 없는 경로는 여전히 404 다.
+  // ★★ **RESERVED POLICY (T07-3)** — 아래 workflow suffix 7종과 `/master/boms`
+  //    는 **아직 존재하지 않는 endpoint·화면**을 위한 정책 예약이다.
+  //
+  //    ⛔ 이것은 endpoint 구현이 **아니다** — route handler 는 0개이고 해당
+  //       경로는 여전히 404 다. T07-5/T07-8 구현으로 간주하지 않는다.
+  //
+  //    왜 지금 넣는가: T07-3 이 일반 `{prefix:'/api/boms', methods:['POST']}`
+  //    규칙을 **처음 도입**했다. 첫 일치 우선이므로, 이 예약이 없으면 나중에
+  //    `…/submit`·`…/approve` 가 생기는 순간 **`bom.create` 로 잘못 잡혀**
+  //    승인 통제가 무너진다 — T07-3 이 만든 규칙 때문에 생기는 구멍이므로
+  //    T07-3 이 함께 닫는다. (T04-4A 바코드 중복 예외 정책과 같은 이유·배치다.)
+  //
+  //    permission 매핑은 docs/18 §D-15 의 확정 matrix 와 **1:1 일치**한다.
   { prefix: '/api/boms', suffix: '/submit', methods: ['POST'], permission: 'bom.submit' },
   { prefix: '/api/boms', suffix: '/approve', methods: ['POST'], permission: 'bom.approve' },
   { prefix: '/api/boms', suffix: '/reject', methods: ['POST'], permission: 'bom.approve' },
@@ -266,6 +273,10 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
   { prefix: '/api/boms', methods: ['GET', 'HEAD'], permission: 'bom.read' },
   { prefix: '/api/boms', methods: ['POST'], permission: 'bom.create' },
   { prefix: '/api/boms', methods: ['PATCH', 'PUT', 'DELETE'], permission: 'bom.update' },
+  // ★ RESERVED — `/master/boms` 화면은 T07-8 이다. 지금은 404 이지만, 정책이
+  //   없으면 화면이 생기는 순간 **인증만으로 통과**한다(표에 없는 경로의 기본값).
+  //   D-15 가 `bom.read` 로 확정했으므로 함께 예약한다.
+  { prefix: '/master/boms', methods: ['GET', 'HEAD'], permission: 'bom.read' },
 
   // 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용, read-only.
   // ⛔ 신규 permission 을 만들지 않는다 — 매핑 조회 권한을 그대로 쓴다.

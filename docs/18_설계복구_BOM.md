@@ -905,6 +905,64 @@ skew(`A→B` + `C→D` 에 `B→C`·`D→A` 동시 추가)를 막지 못한다(D
 반환하고, 페이지 크기는 **서버 고정 50**(`SUPPLIER_PAGE_SIZE` 와 같은 규약)이다.
 `pageSize` 쿼리를 받지 않는다.
 
+#### ★ `GET /api/boms` 쿼리 계약 — T07-3 Recovery gap closure
+
+⚠️ 아래 3건은 원문·D-31 에 **정의가 없어** T07-3 구현이 판단한 것을 이 문서가
+**authoritative contract 로 승격**한 것이다. production behavior 변경은 없다.
+
+##### ① `effectiveOn` 은 **period-only filter** 다 — status 를 함의하지 않는다
+
+```
+effectiveFrom <= D
+AND (effectiveTo IS NULL OR D < effectiveTo)
+```
+
+D-5·D-22 와 **정확히 같은 반열림 `[from, to)`** predicate 이며, `status` 필터와
+**독립적으로 AND** 조합된다.
+
+| 요청 | 의미 |
+|---|---|
+| `?effectiveOn=2026-08-16` | 그 날짜에 기간상 걸리는 **모든 status** 의 BOM |
+| `?effectiveOn=2026-08-16&status=ACTIVE` | 그 날짜에 기간상 걸리는 **ACTIVE** BOM |
+
+⛔ `effectiveOn` 이 `status=ACTIVE` 를 암묵적으로 추가하지 **않는다.**
+
+근거:
+- D-7 이 **status 와 적용기간을 분리된 축**으로 확정했다
+- `DRAFT`·`APPROVED` 도 적용기간을 갖는다 (D-5: `DRAFT` 도 `effectiveFrom` 필수)
+- `status` 쿼리가 이미 별도로 존재한다
+- `effectiveOn` 이 `ACTIVE` 를 강제하면 `?effectiveOn=X&status=DRAFT` 같은
+  합법적 조합이 **항상 0건**이 되어 두 필터가 서로를 무효화한다
+
+##### ② 목록 정렬은 **고정**이며 `version` 으로 정렬하지 않는다
+
+```
+1. parentSku.skuCode ASC
+2. effectiveFrom     DESC
+3. id                ASC        ← deterministic tie-breaker
+```
+
+⛔ `version` 문자열 정렬 금지 — client 가 주는 `VarChar(20)` 이고 semantic
+version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFrom` 이 정한다.**
+⛔ `sort` 쿼리를 추가하지 않는다.
+
+##### ③ `hasUnknownQty` 는 `quantityStatus` 로 판정한다
+
+| 값 | predicate |
+|---|---|
+| `true` | `EXISTS (line WHERE quantityStatus = 'UNKNOWN')` |
+| `false` | `NOT EXISTS (line WHERE quantityStatus = 'UNKNOWN')` (라인 0건 BOM 포함) |
+
+⛔ `quantityPer IS NULL` 로 판정하지 않는다 — D-10 이 두 값의 정합을 보장하지만
+**필터의 근거는 상태 컬럼**이다.
+
+⚠️ `hasUnknownQty` 와 `unconfirmedCount` 는 **서로 다른 것**이다:
+
+| 이름 | 기준 | 근거 |
+|---|---|---|
+| `hasUnknownQty` | `quantityStatus = 'UNKNOWN'` 만 | 이름 그대로 · D-31 UX "① `UNKNOWN` 행 빨간 배경" |
+| `unconfirmedCount` | `quantityStatus ≠ 'CONFIRMED'` (**`SUGGESTED` 포함**) | D-31 진행률 바 "확정 N / 전체 M" · D-10 "`SUGGESTED` 는 확정이 아니다" |
+
 #### `ExplodedNode` (D-18)
 
 ```
@@ -1005,6 +1063,39 @@ shadow 된다(T1-6B4 `supplier-skus` 와 같은 상황). specific-before-general
 
 `…/lines/bulk-confirm-qty` 는 `contains:'/lines'` + POST 로 `bom.update` 에
 잡힌다(의도된 결과). `POST /api/boms/import` 는 T07-8 유예이므로 지금 넣지 않는다.
+
+#### ★★ RESERVED POLICY — T07-3 이 등록하되 endpoint 는 만들지 않는다
+
+T07-3 은 위 13개 정책을 **전부** 등록한다. 그중 **8개는 아직 존재하지 않는
+endpoint·화면을 위한 예약**이다.
+
+| 예약 정책 | 대상 Task | permission |
+|---|---|---|
+| `suffix:'/submit'` | T07-5 | `bom.submit` |
+| `suffix:'/approve'` | T07-5 | `bom.approve` |
+| `suffix:'/reject'` | T07-5 | `bom.approve` |
+| `suffix:'/activate'` | T07-5 | `bom.approve` |
+| `suffix:'/deactivate'` | T07-5 | `bom.approve` |
+| `suffix:'/archive'` | T07-5 | `bom.approve` |
+| `suffix:'/clone'` | T07-5 | `bom.create` |
+| `prefix:'/master/boms'` | T07-8 | `bom.read` |
+
+**왜 endpoint 보다 먼저 등록하는가**
+
+1. T07-3 이 일반 `{prefix:'/api/boms', methods:['POST']}` 규칙을 **처음 도입**한다.
+2. `resolveRoutePermission` 은 **첫 일치 우선**이다.
+3. 따라서 예약이 없으면, T07-5 가 `…/submit` 을 만드는 순간 그 요청이
+   **`bom.create` 로 잡혀** 승인 통제가 무너진다 — T07-3 이 만든 규칙 때문에
+   생기는 구멍이므로 T07-3 이 함께 닫는다.
+4. `/master/boms` 도 마찬가지다 — 표에 없는 경로의 기본값은 "인증만 요구"이므로,
+   화면이 생기는 순간 `bom.read` 없이 열린다.
+5. permission matrix(D-15)는 이미 확정돼 있어 예약 값이 흔들릴 여지가 없다.
+
+**이것이 아닌 것**
+
+⛔ endpoint 구현이 **아니다** — route handler 는 **0개**이고 해당 경로는 여전히
+**404** 다. T07-5·T07-8 의 구현 완료로 간주하지 않는다.
+⛔ 예약 정책은 새 permission 을 만들지 않는다 — D-15 의 5종만 쓴다.
 
 **application 2차 가드**(`assertPermission`)를 route 마다 반드시 둔다.
 ⛔ ADMIN bypass 없음 — RolePermission 데이터로만 판정한다.
@@ -1679,7 +1770,7 @@ lock → `sku` 행 순으로 잠근다. **자원 집합이 겹치지 않으므�
 | SKU 상세 ⑦ BOM 탭 | **read-only summary + navigation** |
 | 근거 | `05v2:455` **"상위/구성품 BOM 링크"** — "링크" 가 navigation 을 뜻한다. T05-4A(외부매핑)·T06-4(공급조건)와 같은 원칙 |
 | 구현 가능 시점 | **`T07-3` 완료 직후** |
-| 필요 API | `GET /api/skus/{id}/where-used` (상위) + `GET /api/boms?parentSkuId=` (구성품) — **둘 다 T07-3 범위** |
+| 필요 API | `GET /api/boms?parentSkuId=` + `GET /api/skus/{id}/where-used` — **둘 다 T07-3 범위** (방향은 아래 표 참조) |
 | permission | `bom.read` — **EXECUTIVE 포함** (D-15). ⛔ ⑥ 탭과 달리 숨기지 않는다 |
 
 **⑦ 탭이 보여줄 것 (최소)**
@@ -1687,6 +1778,27 @@ lock → `sku` 행 순으로 잠근다. **자원 집합이 겹치지 않으므�
 1. **이 SKU 가 상위(parent)인 BOM** — 버전 · 상태 · 적용기간 · 구성품 수 · 미확정 수
 2. **이 SKU 가 구성품(component)으로 쓰인 BOM** — 상위 SKU · 버전 · 상태 · 소요량
 3. 각 행에서 **`/master/boms/{id}` 로 이동**하는 링크
+
+#### ★ 두 API 의 방향 — 정정 (T07-3)
+
+> ⚠️ 이 문서의 이전 "필요 API" 행은 괄호를 **반대로** 적어
+> (`where-used`=상위 / `?parentSkuId=`=구성품) 위 ⑦탭 항목 설명과 모순됐다.
+> 아래가 확정된 방향이며 코드도 이대로다.
+
+SKU `X` 를 기준으로:
+
+| endpoint | 의미 | ⑦탭 항목 |
+|---|---|---|
+| `GET /api/boms?parentSkuId=X` | **`X` 를 상위(완성) SKU 로 갖는 BOM 버전 목록** — "이 SKU 의 BOM" | 1 |
+| `GET /api/skus/X/where-used` | **`X` 가 `BomLine.componentSkuId` 로 사용된 BOM 목록** — "이 SKU 를 어디에서 쓰는가" | 2 |
+
+즉 **`where-used` = 사용처(구성품으로 쓰인 곳)** 이며, 이는 자재소요 도메인의
+보편적 의미와 같다. T1-6B5 도 이 의미를 사용한다.
+
+★ `where-used` 는 **한 행이 한 `BomLine`** 이다 — 같은 BOM 에 대체그룹만 다른
+라인으로 두 번 쓰이면 행이 2개다. `quantityPer` 이 라인 단위 사실이라 header 로
+접으면 표현할 수 없기 때문이다. ⛔ dedup·"최신 1건" 선택을 하지 않는다.
+⛔ status·적용기간으로 거르지 않는다.
 
 ⛔ **T07-6(전개)·T07-7(원가)을 SKU 탭에 중복 구현하지 않는다.**
 ⛔ mutation control 을 하나도 만들지 않는다.

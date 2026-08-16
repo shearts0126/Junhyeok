@@ -9,7 +9,7 @@ import { executeWithIdempotency, requestHashOf } from '@/shared/idempotency';
 import { assertParentEligible, assertUomMatchesBase } from '../domain';
 
 import { translateBomHeaderWriteError } from './constraint-errors';
-import { parseDateOnly, type CreateBomInput } from './dto';
+import { assertPeriodOrder, parseDateOnly, type CreateBomInput } from './dto';
 import { BOM_CREATE_PERMISSION } from './policy';
 import { assertProductionPartnerExists, loadBomSkuRef } from './refs';
 import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './views';
@@ -95,6 +95,14 @@ async function performCreate(
   input: CreateBomInput,
   logger: AuditLogger,
 ): Promise<BomHeaderView> {
+  // ★ 적용기간 순서는 **서비스 경계에서도** 본다 (D-5).
+  //   DTO 가 이미 400 으로 막지만, 이 서비스는 REST 이외의 경로(T07-5 clone·
+  //   import 등 내부 호출)에서도 불린다. 여기서 막지 않으면 DB CHECK
+  //   `bom_header_effective_period_check`(23514)까지 내려가 **500** 이 된다.
+  //   ⛔ 정상 입력이 DB CHECK 에 도달하는 경로를 남기지 않는다 — CHECK 는
+  //      application invariant 가 뚫렸을 때의 최후 방어선이어야 한다.
+  assertPeriodOrder(input.effectiveFrom, input.effectiveTo ?? null);
+
   const parent = await loadBomSkuRef(tx, input.parentSkuId);
   assertParentEligible({ skuId: parent.id, status: parent.status });
 

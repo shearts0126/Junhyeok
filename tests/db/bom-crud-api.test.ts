@@ -11,6 +11,7 @@ import {
   listBoms,
   updateBom,
   updateBomLine,
+  parseCreateBomInput,
   BOM_CREATE_PERMISSION,
   BOM_HEADER_ENTITY_TYPE,
   BOM_LINE_ENTITY_TYPE,
@@ -562,6 +563,151 @@ describe('BOM 헤더 수정 (D-14)', () => {
     expect(
       await codeOf(updateBom(STAFF, '99999999-9999-4999-8999-999999999999', { description: 'x' })),
     ).toBe(ERROR_CODES.BOM_NOT_FOUND);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// ★★ 적용기간 invalid-request path (D-5 · R5)
+//
+// ★ 핵심 계약: **정상 REST/application 입력이 DB CHECK
+//   `bom_header_effective_period_check`(23514) 에 도달하는 경로는 0** 이다.
+//   CHECK 는 application invariant 가 뚫렸을 때의 최후 방어선이며, 도달하면
+//   500(계약 버그)로 드러난다 — 정상 입력이 500 이 되면 안 된다.
+//
+// ⚠️ docs/18 §D-29 에 BOM 전용 invalid-period 오류코드가 **없다.** 임의로 새
+//    코드를 만들지 않고 공통 validation 계약(`VALIDATION_ERROR` / 400)을 쓴다.
+// ═══════════════════════════════════════════════════════════════
+
+describe('★★ 적용기간이 올바르지 않은 요청은 4xx 다 — DB CHECK 까지 가지 않는다 (D-5)', () => {
+  async function auditCount(): Promise<number> {
+    return getPrismaClient().auditLog.count({ where: { actorId: STAFF_ID } });
+  }
+
+  it('★ POST — 같은 날(from == to)은 400 이고 row·Audit 이 0 이다', async () => {
+    const parent = await newSku('per-same', { status: 'ACTIVE' });
+    const before = await auditCount();
+
+    const code = await codeOf(
+      createBom(
+        STAFF,
+        bomInput(parent, { effectiveFrom: '2026-08-10', effectiveTo: '2026-08-10' }),
+      ),
+    );
+    // ⛔ P2039(23514) 가 아니다 — application 이 먼저 막았다.
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+
+    expect(await getPrismaClient().bomHeader.count({ where: { parentSkuId: parent } })).toBe(0);
+    expect(await auditCount()).toBe(before);
+  });
+
+  it('★ POST — to < from 은 400 이고 row·Audit 이 0 이다', async () => {
+    const parent = await newSku('per-before', { status: 'ACTIVE' });
+    const before = await auditCount();
+
+    const code = await codeOf(
+      createBom(
+        STAFF,
+        bomInput(parent, { effectiveFrom: '2026-08-10', effectiveTo: '2026-08-09' }),
+      ),
+    );
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+
+    expect(await getPrismaClient().bomHeader.count({ where: { parentSkuId: parent } })).toBe(0);
+    expect(await auditCount()).toBe(before);
+  });
+
+  it('★ POST — DTO 도 같은 두 입력을 400 으로 막는다 (route 경로)', () => {
+    for (const bad of [
+      { effectiveFrom: '2026-08-10', effectiveTo: '2026-08-10' },
+      { effectiveFrom: '2026-08-10', effectiveTo: '2026-08-09' },
+    ]) {
+      expect(() =>
+        parseCreateBomInput({
+          parentSkuId: '11111111-1111-4111-8111-111111111111',
+          bomType: 'MANUFACTURING',
+          version: '1.0',
+          ...bad,
+        }),
+      ).toThrow();
+    }
+  });
+
+  it('★★ PATCH — merged state 가 같은 날이 되면 400 이고 원래 값이 유지된다', async () => {
+    const parent = await newSku('per-patch', { status: 'ACTIVE' });
+    const { bom } = await createBom(
+      STAFF,
+      bomInput(parent, { effectiveFrom: '2026-01-01', effectiveTo: '2027-01-01' }),
+    );
+    const auditsBefore = await auditsOf(BOM_HEADER_ENTITY_TYPE, bom.id);
+
+    // body 에 effectiveTo 가 없어도 merged state 로 판정한다.
+    const code = await codeOf(updateBom(STAFF, bom.id, { effectiveFrom: '2027-01-01' }));
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+
+    const row = await getPrismaClient().bomHeader.findUniqueOrThrow({ where: { id: bom.id } });
+    expect(row.effectiveFrom.toISOString().slice(0, 10)).toBe('2026-01-01');
+    expect(row.effectiveTo?.toISOString().slice(0, 10)).toBe('2027-01-01');
+    expect(await auditsOf(BOM_HEADER_ENTITY_TYPE, bom.id)).toEqual(auditsBefore);
+  });
+
+  it('★★ PATCH — effectiveFrom 만 바꿔 기존 effectiveTo 를 넘어서면 400 이다', async () => {
+    const parent = await newSku('per-patch2', { status: 'ACTIVE' });
+    const { bom } = await createBom(
+      STAFF,
+      bomInput(parent, { effectiveFrom: '2026-01-01', effectiveTo: '2027-01-01' }),
+    );
+    const auditsBefore = await auditsOf(BOM_HEADER_ENTITY_TYPE, bom.id);
+
+    const code = await codeOf(updateBom(STAFF, bom.id, { effectiveFrom: '2028-01-01' }));
+    expect(code).toBe(ERROR_CODES.VALIDATION_ERROR);
+
+    const row = await getPrismaClient().bomHeader.findUniqueOrThrow({ where: { id: bom.id } });
+    expect(row.effectiveFrom.toISOString().slice(0, 10)).toBe('2026-01-01');
+    expect(await auditsOf(BOM_HEADER_ENTITY_TYPE, bom.id)).toEqual(auditsBefore);
+  });
+
+  it('★ PATCH — effectiveTo = null 은 열린 구간이라 허용된다', async () => {
+    const parent = await newSku('per-open', { status: 'ACTIVE' });
+    const { bom } = await createBom(
+      STAFF,
+      bomInput(parent, { effectiveFrom: '2026-01-01', effectiveTo: '2027-01-01' }),
+    );
+    const updated = await updateBom(STAFF, bom.id, { effectiveTo: null });
+    expect(updated.effectiveTo).toBeNull();
+
+    // 열린 구간이 된 뒤에는 effectiveFrom 을 뒤로 옮겨도 통과한다.
+    const moved = await updateBom(STAFF, bom.id, { effectiveFrom: '2029-01-01' });
+    expect(moved.effectiveFrom).toBe('2029-01-01');
+  });
+
+  it('★ 경계가 맞닿는 정상 기간은 회귀 없이 통과한다 (half-open)', async () => {
+    const parent = await newSku('per-adj', { status: 'ACTIVE' });
+    // to 는 from 보다 하루만 뒤여도 유효하다.
+    const { bom } = await createBom(
+      STAFF,
+      bomInput(parent, { effectiveFrom: '2026-08-10', effectiveTo: '2026-08-11' }),
+    );
+    expect(bom.effectiveFrom).toBe('2026-08-10');
+    expect(bom.effectiveTo).toBe('2026-08-11');
+  });
+
+  it('★★ DB CHECK 는 최후 방어선으로 살아 있다 — application 을 우회하면 거부된다', async () => {
+    const parent = await newSku('per-raw', { status: 'ACTIVE' });
+    const client = getPrismaClient();
+    // ⛔ application 을 거치지 않는 raw INSERT — 정상 경로가 아니다.
+    await expect(
+      client.bomHeader.create({
+        data: {
+          parentSkuId: parent,
+          bomType: 'MANUFACTURING',
+          version: `raw-${RUN}`,
+          outputUom: 'EA',
+          effectiveFrom: parseDateOnly('2026-08-10'),
+          effectiveTo: parseDateOnly('2026-08-10'),
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'P2039' });
+    expect(await client.bomHeader.count({ where: { parentSkuId: parent } })).toBe(0);
   });
 });
 
