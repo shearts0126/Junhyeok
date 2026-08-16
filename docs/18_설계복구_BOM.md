@@ -76,6 +76,41 @@ provisional · currency · VAT · concurrency 가 전부 비어 있었다.
 `§15.1` 을 복구한 것과 **같은 방식**으로, 이 문서가 14종을 D-13·D-10·D-12 로
 복구·확정한다(§3.13 표).
 
+#### ★ "검증규칙 14종" 은 historical title 이다 — 현재 authoritative 는 12종
+
+혼동을 막기 위해 확정한다.
+
+| 항목 | 확정 |
+|---|---|
+| `14종` 의 성격 | 원 backlog·`05:126` 이 **참조한 제목**일 뿐이다. 열거된 14개 목록 자체가 저장소에 없다 |
+| 참조 대상 | `SKU·BOM 상세 PRD v0.1 §22` — **저장소에 존재하지 않는다** |
+| 현재 authoritative | Design Recovery 로 복구 가능한 **enforceable rules 12종** (§3.13 표) |
+| 미복구 2종 | ⛔ **임의로 발명하지 않는다.** 숫자를 맞추기 위한 규칙 추가를 금지한다 |
+| acceptance 기준 | 원본 PRD 가 복구되지 않는 한, **T07 구현 acceptance 는 이 문서에 열거된 12종**을 기준으로 판정한다 |
+
+⚠️ 이 문서에서 이후 등장하는 `14종` 표기는 **historical title 을 가리키는
+참조**이며, 강제 대상 규칙의 개수를 뜻하지 않는다. 강제 대상은 언제나 §3.13 표다.
+
+#### §3.13 — authoritative enforceable rules 12종
+
+| # | 규칙 | 근거 | 성격 | 오류코드 |
+|---|---|---|---|---|
+| 1 | `quantityStatus=UNKNOWN` ⇒ `quantityPer` 는 `null` | D-10 | pure | `BOM_QTY_STATUS_MISMATCH` |
+| 2 | `SUGGESTED`·`CONFIRMED` ⇒ `quantityPer` 필수 | D-10 | pure | `BOM_QTY_STATUS_MISMATCH` |
+| 3 | `quantityPer > 0` (0·음수 거부) | D-10 | pure | `BOM_QTY_INVALID` |
+| 4 | submit 게이트 — `isRequired` 라인 전부 `CONFIRMED` | D-10 | pure | `BOM_QTY_UNCONFIRMED` |
+| 5 | 라인 `uom` == 구성품 `baseUom` | D-11 | pure | `BOM_UOM_MISMATCH` |
+| 6 | 헤더 `outputUom` == parent `baseUom` | D-11 | pure | `BOM_UOM_MISMATCH` |
+| 7 | `parentSkuId ≠ componentSkuId` | D-12 | pure | `BOM_SELF_COMPONENT` |
+| 8 | 상위 SKU `status ≠ DRAFT` | D-12 | data-dependent | `BOM_PARENT_NOT_ELIGIBLE` |
+| 9 | 구성품 SKU `status ≠ ARCHIVED` | D-12 | data-dependent | `BOM_COMPONENT_NOT_ELIGIBLE` |
+| 10 | 그래프 순환 금지 | D-13 | data-dependent | `BOM_CYCLE_DETECTED` |
+| 11 | 전개 깊이 ≤ `BOM_MAX_LEVEL`(10) | D-13 | data-dependent | `BOM_MAX_LEVEL_EXCEEDED` |
+| 12 | asOf 유효 ACTIVE BOM ≤ 1건 | D-22 | data-dependent | `BOM_EFFECTIVE_CONFLICT` |
+
+⛔ **강제하지 않는 것**(근거 문서 없음): 상위 `manufacturable=true` · 구성품
+`itemType` 제한 · `inventoryManaged=false` 배제 · `componentRole=SERVICE` 배제.
+
 ---
 
 ## 2. PRE-FLIGHT findings 요약
@@ -688,6 +723,37 @@ buildCycleGraph(candidate X, evaluationDate D):
 ★ candidate 가 `DRAFT` 여도 **자기 자신은 반드시 graph 에 들어간다.** 그래야
 "입력 시점에 막는다"가 성립한다. 반면 **다른** SKU 의 DRAFT 는 들어가지 않는다 —
 아직 발효되지 않은 남의 초안이 내 BOM 을 막을 이유가 없다.
+
+#### ★ line → edge 포함 계약 (확정)
+
+위 `childrenOf` 가 어떤 line 을 edge 로 삼는지를 명시한다.
+
+> **선택된 BOM header 의 `BomLine` 에 `componentSkuId` 가 있으면, 그 line 은
+> 예외 없이 cycle graph edge 다.**
+
+순환은 "소요량을 계산할 수 있는가"가 아니라 **parent SKU → component SKU 의
+구조적 참조 관계**이기 때문이다. 따라서 아래 속성은 **edge 필터 근거가 되지 않는다.**
+
+| 속성 | 값 | edge |
+|---|---|---|
+| `isRequired` | `false` | **포함** |
+| `componentRole` | `PRODUCT` · `MATERIAL` · `PACKAGING` · `SERVICE` | **전부 포함** |
+| `supplyType` | `null` · `SELF_SUPPLIED` · `TURNKEY` | **전부 포함** |
+| `alternateGroup` | `null` · 값 있음 | **전부 포함** |
+| `quantityStatus` | `UNKNOWN` · `SUGGESTED` · `CONFIRMED` | **전부 포함** |
+| `quantityPer` | `null` | **포함** |
+| `lossRate` | `null` · 값 있음 | **포함** |
+| 구성품 `Sku.inventoryManaged` | `false` | **포함** |
+
+⛔ optional line 이라고 `A → B` 를 그래프에서 빼면 `B → A` 를 허용하게 된다.
+두 line 이 모두 살아 있는 한 실물 구조는 순환이다.
+
+⛔ **소요량 확정 여부(D-10 submit 게이트)와 순환 topology(D-13)는 서로 다른
+계약이며 섞지 않는다.** `quantityStatus = UNKNOWN` 인 라인은 submit 을 막지만
+graph edge 로서는 다른 라인과 완전히 동등하다.
+
+⛔ 이 문서에 **line 단위 제외 규정은 없다.** 구현의 line 조회 `where` 는
+`bomHeaderId` 하나뿐이어야 하며, 위 속성으로 거르는 조건을 추가하지 않는다.
 
 #### DFS
 
@@ -1345,12 +1411,39 @@ A → B → C → D → A
 행 잠금으로 막을 수 없다. 순환 판정은 **그래프 전역 속성**이라 국소 잠금으로
 직렬화되지 않기 때문이다.
 
-`isolationLevel: 'Serializable'` 로 올리는 것도 답이 아니다. 두 트랜잭션이
-읽은 행 집합이 겹치지 않으면 predicate lock 이 잡히지 않을 수 있고, 잡히더라도
-직렬화 실패(`40001`)가 사용자에게 그대로 노출되어 재시도 계약을 따로 설계해야
-한다. 무엇보다 `withTransaction` 주석이 *"재고 검증에 `Serializable` 을 쓰면
-직렬화 실패가 늘어난다"* 는 이유로 이 프로젝트는 `ReadCommitted` 를 기본으로
-쓰고 있다.
+##### ⚠️ 정정 — `Serializable` 에 대한 서술 (T07-2 remediation)
+
+> **⛔ 폐기된 서술 (원문 보존, 더 이상 근거로 쓰지 않는다)**
+>
+> *"`isolationLevel: 'Serializable'` 로 올리는 것도 답이 아니다. 두 트랜잭션이
+> 읽은 행 집합이 겹치지 않으면 predicate lock 이 잡히지 않을 수 있고, 잡히더라도
+> 직렬화 실패(`40001`)가 사용자에게 그대로 노출되어 재시도 계약을 따로 설계해야
+> 한다. 무엇보다 `withTransaction` 주석이 "재고 검증에 `Serializable` 을 쓰면
+> 직렬화 실패가 늘어난다" 는 이유로 이 프로젝트는 `ReadCommitted` 를 기본으로
+> 쓰고 있다."*
+>
+> ❌ **부정확한 부분**: "읽은 행 집합이 겹치지 않으면 predicate lock 이 잡히지
+> 않을 수 있다" 는 PostgreSQL `SERIALIZABLE` 에 대한 일반적 설명으로 옳지 않다.
+
+**정정된 근거 (확정)**
+
+PostgreSQL 의 `SERIALIZABLE` 은 SSI(Serializable Snapshot Isolation)를 사용하며
+**write skew 를 포함한 serialization anomaly 를 감지할 수 있다.** 위 disjoint-edge
+경쟁에서도 serialization failure 가 발생할 수 있다. 즉 `SERIALIZABLE` 이 이
+문제를 **막지 못하는 것이 아니다.**
+
+`SERIALIZABLE` 을 채택하지 않은 실제 이유는 **도입 비용**이다.
+
+| # | 이유 |
+|---|---|
+| 1 | 직렬화 실패(`40001`) 가 발생할 수 있어 **application 전역 retry contract** 를 따로 설계·검증해야 한다 |
+| 2 | 현재 `withTransaction` 은 `ReadCommitted` 를 기본으로 한다. cycle 정합성 하나 때문에 transaction isolation 을 바꾸면 무관한 경로까지 재시도 semantics 를 갖는다 |
+| 3 | BOM 편집은 **저빈도 경로**다 (실측 헤더 80 / 라인 383) |
+
+→ 두 방식 모두 정합성을 얻을 수 있으나, 현재 architecture 에서는 **이 경로에
+한정된 명시적·결정적(deterministic) transaction advisory lock** 이 더 단순하다.
+따라서 BOM cycle graph mutation 에는 `BOM_CYCLE_GRAPH` advisory lock 을 채택한다.
+**결론(advisory lock 채택)은 변경되지 않으며, 근거 문장만 정정한다.**
 
 #### 확정 계약 — graph mutation advisory lock ★
 
