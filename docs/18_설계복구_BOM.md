@@ -1701,15 +1701,15 @@ scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포�
 |---|---|
 | root | **요청한 BOM header 자체**(SKU 가 아니다). root 는 asOf 로 재선택하지 않는다 |
 | `qty` | Decimal 문자열, `> 0`, **기본 `"1"`** |
-| `asOf` | `YYYY-MM-DD`, **기본 = 서버 업무일자**(D-21) |
+| `asOf` | `YYYY-MM-DD`, **기본 = 서버 업무일자**(D-21). ★ **실존하는 달력 날짜**여야 한다 — `2026-02-30` 롤오버 금지(`★ T07-6 explosion response · asOf clarification`) |
 | `maxLevel` | 정수 `1..10`, **기본 10**. 범위 밖 400 |
 | 하위 BOM 선택 | **`resolveEffectiveBom(componentSkuId, asOf)`** (D-22) |
 | leaf | 해당 asOf 에 유효한 ACTIVE BOM 이 **없는** 구성품 |
 | 중간 노드 | **결과에 포함한다** (`isLeaf=false`). 반제품 자체도 소요 대상이다 |
 | `maxLevel` 초과 | **422 `BOM_MAX_LEVEL_EXCEEDED`**. ⛔ 조용히 절단하지 않는다 |
 | 순환 발견 | **422 `BOM_CYCLE_DETECTED`** (경로 포함) |
-| ordering | `level` asc → 같은 level 내 부모의 `lineNo` asc → `lineNo` asc |
-| 응답 | `ExplodedNode[]` — **평면 배열** + `level`·`path` 로 트리 복원 |
+| ordering | `level` asc → 같은 level 내 부모의 `lineNo` asc → `lineNo` asc. ★ level 3 이상의 tie-break 는 `★ T07-6 explosion deterministic ordering clarification`(full `lineNoPath` 사전순)이 정본이다 |
+| 응답 | `ExplodedNode[]` — **평면 배열** + `level`·`path` 로 트리 복원. ★ 이 배열이 곧 **HTTP body** 다 — wrapper object 를 씌우지 않는다(`★ T07-6 explosion response · asOf clarification`) |
 | **미확정 수량** | ★ 위 표에 없던 항목 — **`★ T07-6 explosion quantity gap closure` 가 정본**이다. `quantityStatus = UNKNOWN`(`quantityPer = null`)이면 `requiredQty = null` 이고 **구조 전개는 계속**한다. ⛔ endpoint 전체 422 아님 |
 
 중간 노드를 포함하는 근거: `01:192` 가 `완제품 → 반제품(벌크) → 부자재` 를
@@ -1948,6 +1948,96 @@ child 계산의 Q 는 반드시 0.333333333333 이다.   ⛔ 0.333333 이 아니
 
 `rawRequiredQty` 는 **DB 저장 금지 · public DTO 필드 추가 금지 · cache/영속 금지** —
 계산 중에만 존재하는 내부 값이다.
+
+### ★ T07-6 explosion deterministic ordering clarification
+
+D-18 의 ordering 행은 `level` asc → 같은 level 내 **부모의 `lineNo`** asc →
+`lineNo` asc 다. level 1·2 에서는 이것으로 순서가 완전히 정해지지만,
+**level 3 이상에서는 정해지지 않는다** — 서로 다른 branch 의 부모가 같은
+`lineNo` 를 가질 수 있기 때문이다(`(bomHeaderId, lineNo)` 가 UNIQUE 이므로
+`lineNo` 는 **BOM 안에서만** 유일하다).
+
+#### 확정 규칙
+
+```
+1. level ASC
+2. 같은 level 안에서는 root → 현재 node 까지의 full lineNoPath 사전순 ASC
+```
+
+`lineNoPath` = root BOM 의 라인부터 현재 node 를 만든 라인까지의 `lineNo` 수열.
+`lineNoPath.length === level` 이다.
+
+| level | 순서 |
+|---|---|
+| 1 | `[1]` · `[2]` |
+| 2 | `[1,1]` · `[1,2]` · `[2,1]` |
+| 3 | `[1,1,1]` · `[1,1,2]` · `[1,2,1]` · `[2,1,1]` |
+
+이는 D-18 의 `부모의 lineNo → 자기 lineNo` 를 **깊이 N 까지 재귀 확장**한
+것이며, level 1·2 에서는 D-18 문구와 결과가 같다. 기존 규칙을 바꾸지 않는
+clarification 이다.
+
+#### 왜 한 단계로는 부족한가
+
+```
+A ─ line1 → B ─ line1 → D ─ line1 → G      [1,1,1]
+  │           │ line2 → E ─ line1 → I      [1,2,1]
+  └ line2 → C ─ line1 → F ─ line1 → J      [2,1,1]
+```
+
+`G` 의 부모 `D` 와 `J` 의 부모 `F` 는 **둘 다 부모 라인 `lineNo = 1`** 이고
+`G`·`J` 자신도 `lineNo = 1` 이다. "부모의 lineNo → 자기 lineNo" 만으로는 두
+node 가 동률이라 순서가 비결정적이다. full path 를 봐야 `[1,1,1] < [2,1,1]` 이
+확정된다.
+
+#### 구현 계약
+
+- ⛔ `lineNoPath` 를 **public `ExplodedNode` 에 노출하지 않는다** — 정렬용
+  내부 개념이며 12 필드는 그대로다.
+- ⛔ **DB 의 자연 순서에 의존하지 않는다.** 같은 데이터를 역순으로 삽입해도
+  응답 순서가 같아야 한다.
+- BFS 구현에서는 level 별로 **직전 level 의 순서대로** 부모를 순회하고 각
+  부모의 라인을 `lineNo` 오름차순으로 붙이면 이 순서가 자연히 나온다.
+
+구현 근거: `src/modules/bom/application/explode-bom.ts` ·
+`tests/db/bom-explode-api.test.ts`
+§`★★ deterministic ordering — level 3+ full lineNoPath`.
+
+### ★ T07-6 explosion response · asOf clarification
+
+#### ① 성공 응답은 **`ExplodedNode[]` 그 자체**다
+
+D-18 응답 행(`ExplodedNode[]` — 평면 배열)이 곧 **HTTP body** 다.
+
+```
+HTTP 200
+[ ExplodedNode, ExplodedNode, … ]
+```
+
+⛔ `{nodes, bomId, parentSkuId, asOf, qty, maxLevel, requestId}` 같은 wrapper
+object 를 씌우지 않는다. 근거가 없고, root metadata 는 이미
+`GET /api/boms/{id}`(`BomDetail`)가 답한다. `requestId` 는 오류 응답과 서버
+로그가 담으므로 성공 body 에 넣지 않는다.
+
+⚠️ 다른 endpoint 의 `{…, requestId}` 규약을 explode 로 끌어오지 않는다 —
+그쪽은 단일 객체 응답이고 이쪽은 **배열 응답**이다.
+
+#### ② `asOf` 는 **실존하는 달력 날짜**여야 한다
+
+| 입력 | 결과 |
+|---|---|
+| `2026-02-28` · `2028-02-29`(윤년) · `2026-04-30` | 통과 |
+| `2026-02-29`(평년) · `2026-02-30` · `2026-04-31` · `2026-06-31` | **400 `VALIDATION_ERROR`** |
+| `2026-13-01` · `2026-00-01` · `2026-1-01` · `01-01-2026` | **400** |
+
+⛔ **`2026-02-30` 을 `2026-03-02` 로 조용히 굴리지 않는다.** 전개는 `asOf` 로
+하위 BOM 을 고르므로(D-22) 하루가 밀리면 곧 **다른 구성표**가 나온다.
+사용자가 지정한 기준일과 서버가 조회한 기준일은 반드시 같아야 한다.
+
+⚠️ 공용 `dateString` 은 형식과 `NaN` 여부만 보며 V8 의 날짜 롤오버를 그대로
+통과시킨다. **전역 파서는 이번 범위에서 바꾸지 않고**(다른 모듈의 계약이다)
+explode query DTO 에서 좁게 강화한다 — 기존 `parseDateOnly` →
+`toDateOnlyString` **round-trip 동등성** 검사이며 새 날짜 헬퍼를 만들지 않는다.
 
 #### 변하지 않는 것
 

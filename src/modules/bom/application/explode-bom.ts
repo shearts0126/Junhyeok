@@ -42,11 +42,19 @@ import { EXPLODE_LINE_INCLUDE, type ExplodeLineRow, type ExplodedNodeView } from
  *
  * ## ordering
  *
- * D-18: `level` asc → 같은 level 내 **부모의 `lineNo`** asc → `lineNo` asc.
- * 아래 BFS 는 level 별로 **직전 level 의 순서대로** 부모를 순회하고 각 부모의
- * 라인을 `lineNo` 오름차순으로 붙이므로, 결과는 `level` asc → **lineNo 경로
- * 사전순**이 된다. level 1·2 에서는 D-18 의 문구와 정확히 같고, level 3 이상은
- * 같은 규칙("부모의 lineNo")을 재귀적으로 적용한 **유일한 결정적 확장**이다.
+ 확정 규칙 (`★ T07-6 explosion deterministic ordering clarification`):
+ *
+ * ```
+ *   1. level ASC
+ *   2. 같은 level 안에서는 root → 현재 node 까지의 full lineNoPath 사전순 ASC
+ * ```
+ *
+ * D-18 의 `부모의 lineNo → 자기 lineNo` 를 깊이 N 까지 재귀 확장한 것이며,
+ * level 1·2 에서는 D-18 문구와 결과가 같다.
+ *
+ * 아래 BFS 가 이 순서를 **자연히** 만든다 — level 별로 직전 level 의 순서대로
+ * 부모를 순회하고 각 부모의 라인을 `lineNo` 오름차순으로 붙이기 때문이다.
+ * 별도 정렬이 필요 없고, `lineNoPath` 를 public DTO 에 노출하지도 않는다.
  * ⛔ DB 의 자연 순서에 의존하지 않는다.
  *
  * ## 전역 visited 를 쓰지 않는다 (D-13 · D-20)
@@ -64,21 +72,19 @@ import { EXPLODE_LINE_INCLUDE, type ExplodeLineRow, type ExplodedNodeView } from
  * 해석(`resolveEffectiveBoms`, `IN (...)` 1회). node 수와 무관하며 전체
  * 쿼리 수는 `1 + 2 × 실제 depth` 로 상한이 `maxLevel` 이다.
  *
+ * ## 응답은 **배열 그 자체**다
+ *
+ * D-18: `응답 | ExplodedNode[] — 평면 배열 + level·path 로 트리 복원`.
+ * ⛔ `{nodes, bomId, asOf, …}` 같은 wrapper 를 씌우지 않는다 — 근거가 없고,
+ *    root metadata 는 이미 `GET /api/boms/{id}` 가 답한다. 이 서비스도 배열을
+ *    그대로 돌려주며 route 가 그 배열을 body 로 낸다.
+ *
  * ## read-only
  *
  * ⛔ write 0 · AuditLog 0 · 멱등 계약 없음 · advisory lock 없음 · row lock 없음.
  *    D-28 의 lock 은 **cycle graph 를 바꾸는 mutation** 을 위한 것이며 조회에
  *    관성적으로 복사하지 않는다.
  */
-
-export interface ExplodeBomResult {
-  readonly bomId: string;
-  readonly parentSkuId: string;
-  readonly asOf: string;
-  readonly qty: string;
-  readonly maxLevel: number;
-  readonly nodes: readonly ExplodedNodeView[];
-}
 
 /** 한 header 를 전개하기 위한 작업 단위 — BFS frontier 의 원소. */
 interface ExpansionTask {
@@ -94,7 +100,7 @@ export async function explodeBom(
   rawBomId: string,
   query: ExplodeBomQuery,
   dependencies: BomReadDependencies = {},
-): Promise<ExplodeBomResult> {
+): Promise<readonly ExplodedNodeView[]> {
   // ⚠️ 2차 권한 가드 — proxy 통과를 신뢰하지 않는다. ⛔ ADMIN bypass 없음.
   //    ★ EXECUTIVE 도 `bom.read` 를 가지므로 통과한다 (D-15).
   assertPermission(actor, BOM_READ_PERMISSION);
@@ -102,8 +108,7 @@ export async function explodeBom(
 
   // ★ asOf 는 **request 시작 시 한 번** 확정해 전 level 에 그대로 넘긴다 (D-21).
   //   ⛔ 재귀 도중에 오늘 날짜를 다시 읽지 않는다.
-  const asOfLabel = query.asOf ?? businessDateOf(new Date());
-  const asOf = parseDateOnly(asOfLabel);
+  const asOf = parseDateOnly(query.asOf ?? businessDateOf(new Date()));
 
   const db = dependencies.db ?? (await defaultBomClient());
 
@@ -152,14 +157,7 @@ export async function explodeBom(
       }));
   }
 
-  return {
-    bomId: root.id,
-    parentSkuId: root.parentSkuId,
-    asOf: asOfLabel,
-    qty: toDecimalString(toDecimal(query.qty)),
-    maxLevel: query.maxLevel,
-    nodes,
-  };
+  return nodes;
 }
 
 /** node 와, **public DTO 에 넣지 않는** raw 수량을 함께 들고 다니는 내부 쌍. */

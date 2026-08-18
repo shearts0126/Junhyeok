@@ -15,7 +15,8 @@ import { createSupabaseServerClient } from '@/shared/supabase';
  *
  *   - query 는 정확히 3개 — `qty`(기본 `"1"`) · `asOf`(기본 업무일자) ·
  *     `maxLevel`(기본 `BOM_MAX_LEVEL`). 그 밖의 키는 **400**.
- *   - 응답은 **평면 `ExplodedNode[]`** 이며 `level`·`path` 로 트리를 복원한다.
+ *   - 응답 body 는 **`ExplodedNode[]` 배열 그 자체**다 (D-18). `level`·`path` 로
+ *     트리를 복원한다. ⛔ wrapper object 를 씌우지 않는다.
  *     ⛔ 합산하지 않는다 — 다이아몬드는 경로별로 각각 남는다 (D-20).
  *   - 미확정 수량은 오류가 아니다 — `requiredQty = null` 이고 **구조 전개는
  *     계속**한다 (`★ T07-6 explosion quantity gap closure`).
@@ -44,12 +45,14 @@ export async function GET(
 
       const query = parseExplodeBomQuery(new URL(request.url).searchParams);
       const { id } = await context.params;
-      const result = await explodeBom(actor, id, query);
+      const nodes = await explodeBom(actor, id, query);
 
-      return NextResponse.json(
-        { ...result, requestId },
-        { headers: { 'Cache-Control': 'no-store' } },
-      );
+      // ★ body 는 **`ExplodedNode[]` 그 자체**다 (D-18 응답 행).
+      // ⛔ `{nodes, bomId, asOf, qty, maxLevel, requestId}` wrapper 를 씌우지
+      //    않는다 — 근거가 없다. root metadata 가 필요하면 `GET /api/boms/{id}`
+      //    를 쓴다. `requestId` 는 오류 응답과 서버 로그가 이미 담고 있으므로
+      //    성공 body 에 넣지 않는다.
+      return NextResponse.json(nodes, { headers: { 'Cache-Control': 'no-store' } });
     },
     { route: '/api/boms/[id]/explode' },
   );

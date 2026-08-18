@@ -251,11 +251,11 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     const { a, b, c, d, rootBom, bBom, cBom } = await threeLevel();
     const result = await explodeBom(READER, rootBom, query({ qty: '20' }));
 
-    expect(result.nodes).toHaveLength(3);
-    const [nb, nc, nd] = result.nodes;
+    expect(result).toHaveLength(3);
+    const [nb, nc, nd] = result;
 
     // ★ root header 자체는 node 가 아니다 — 직접 구성품부터 시작한다 (G4).
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual([b, c, d]);
+    expect(result.map((node) => node.componentSkuId)).toEqual([b, c, d]);
 
     // ★ root SKU = level 0 이므로 직접 구성품이 level 1 이다 (G2).
     expect([nb?.level, nc?.level, nd?.level]).toEqual([1, 2, 3]);
@@ -263,7 +263,7 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     expect(nb?.path).toEqual([a]);
     expect(nc?.path).toEqual([a, b]);
     expect(nd?.path).toEqual([a, b, c]);
-    for (const node of result.nodes) {
+    for (const node of result) {
       expect(node.path).toHaveLength(node.level);
     }
 
@@ -279,11 +279,11 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     const result = await explodeBom(READER, rootBom, query({ qty: '20' }));
 
     // B = (20/10) × 3 × 1.1 × 1.2 = 7.92
-    expect(result.nodes[0]?.requiredQty).toBe('7.92');
+    expect(result[0]?.requiredQty).toBe('7.92');
     // C = (7.92/2) × 4 × 1 × 1 = 15.84
-    expect(result.nodes[1]?.requiredQty).toBe('15.84');
+    expect(result[1]?.requiredQty).toBe('15.84');
     // D = (15.84/5) × 7 × 1 × 1 = 22.176
-    expect(result.nodes[2]?.requiredQty).toBe('22.176');
+    expect(result[2]?.requiredQty).toBe('22.176');
   });
 
   it('★★ root qty 를 모든 level 에 다시 쓰지 않는다 — qty 2배면 전부 2배다', async () => {
@@ -291,9 +291,9 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     const single = await explodeBom(READER, rootBom, query({ qty: '20' }));
     const double = await explodeBom(READER, rootBom, query({ qty: '40' }));
 
-    expect(double.nodes.map((node) => node.requiredQty)).toEqual(['15.84', '31.68', '44.352']);
+    expect(double.map((node) => node.requiredQty)).toEqual(['15.84', '31.68', '44.352']);
     // 선형이라는 것 자체가 "Q 가 level 마다 갱신된다"는 증거다.
-    expect(single.nodes).toHaveLength(double.nodes.length);
+    expect(single).toHaveLength(double.length);
   });
 
   it('★ qty 기본값은 "1" 이다 (D-18)', async () => {
@@ -301,12 +301,11 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     const implicit = await explodeBom(READER, rootBom, query({}));
     const explicit = await explodeBom(READER, rootBom, query({ qty: '1' }));
 
-    expect(implicit.qty).toBe('1');
-    expect(implicit.nodes.map((node) => node.requiredQty)).toEqual(
-      explicit.nodes.map((node) => node.requiredQty),
+    expect(implicit.map((node) => node.requiredQty)).toEqual(
+      explicit.map((node) => node.requiredQty),
     );
     // B = (1/10) × 3 × 1.1 × 1.2 = 0.396
-    expect(implicit.nodes[0]?.requiredQty).toBe('0.396');
+    expect(implicit[0]?.requiredQty).toBe('0.396');
   });
 
   it('★★ 중간 반올림이 없다 — 6dp 로 자른 부모 값을 자식에 재사용하지 않는다', async () => {
@@ -321,9 +320,9 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
     await newLine(bBom, c, { quantityPer: '3000000' });
 
     const result = await explodeBom(READER, rootBom, query({ qty: '1' }));
-    expect(result.nodes[0]?.requiredQty).toBe('0.333333');
-    expect(result.nodes[1]?.requiredQty).toBe('1000000');
-    expect(result.nodes[1]?.requiredQty).not.toBe('999999');
+    expect(result[0]?.requiredQty).toBe('0.333333');
+    expect(result[1]?.requiredQty).toBe('1000000');
+    expect(result[1]?.requiredQty).not.toBe('999999');
   });
 
   it('★★ packQuantity 는 계산에 쓰이지 않는다 — 0.033333 × 30 = 0.99999', async () => {
@@ -335,8 +334,8 @@ describe('★★ TC-BOM-008 — 3단계 전개 (D-18 · D-19)', () => {
 
     const result = await explodeBom(READER, rootBom, query({ qty: '30' }));
     // ⛔ 1 로 재정규화하지 않는다. ⛔ ×30 / ÷30 을 추가하지 않는다.
-    expect(result.nodes[0]?.requiredQty).toBe('0.99999');
-    expect(result.nodes[0]?.quantityPer).toBe('0.033333');
+    expect(result[0]?.requiredQty).toBe('0.99999');
+    expect(result[0]?.quantityPer).toBe('0.033333');
   });
 });
 
@@ -362,16 +361,27 @@ describe('★★ root = 요청한 exact header — asOf 로 바꾸지 않는다 
 
     // ★ 오늘 기준인데도 v1 을 요청하면 v1 이 전개된다.
     const explodedV1 = await explodeBom(READER, v1, query({}));
-    expect(explodedV1.bomId).toBe(v1);
-    expect(explodedV1.nodes.map((node) => node.componentSkuId)).toEqual([oldChild]);
+    expect(explodedV1.map((node) => node.componentSkuId)).toEqual([oldChild]);
 
     // v2 를 요청하면 v2 다 — 대칭 확인.
     const explodedV2 = await explodeBom(READER, v2, query({}));
-    expect(explodedV2.nodes.map((node) => node.componentSkuId)).toEqual([newChild]);
+    expect(explodedV2.map((node) => node.componentSkuId)).toEqual([newChild]);
   });
 
-  it('★★ root 의 status 로 거르지 않는다 — DRAFT·ARCHIVED 도 전개된다', async () => {
-    for (const status of ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'INACTIVE', 'ARCHIVED']) {
+  it('★★ root status 7종 전부 전개된다 — restriction 이 슬그머니 생기면 여기서 깨진다', async () => {
+    // ★ `BomStatus` 전량이다. 나중에 "ACTIVE 만" 같은 제한이 추가되면 이 테스트가
+    //   먼저 실패한다 (D-18 에 status 제한 근거가 없다).
+    const ALL_STATUSES = [
+      'DRAFT',
+      'PENDING_APPROVAL',
+      'REJECTED',
+      'APPROVED',
+      'ACTIVE',
+      'INACTIVE',
+      'ARCHIVED',
+    ];
+    expect(ALL_STATUSES).toHaveLength(7);
+    for (const status of ALL_STATUSES) {
       const [parent, child] = await Promise.all([
         newSku(`st-${status}-p`),
         newSku(`st-${status}-c`),
@@ -380,8 +390,8 @@ describe('★★ root = 요청한 exact header — asOf 로 바꾸지 않는다 
       await newLine(bom, child, { quantityPer: '2' });
 
       const result = await explodeBom(READER, bom, query({ qty: '3' }));
-      expect(result.nodes, status).toHaveLength(1);
-      expect(result.nodes[0]?.requiredQty, status).toBe('6');
+      expect(result, status).toHaveLength(1);
+      expect(result[0]?.requiredQty, status).toBe('6');
     }
   });
 
@@ -395,8 +405,7 @@ describe('★★ root = 요청한 exact header — asOf 로 바꾸지 않는다 
     const parent = await newSku('empty-p');
     const bom = await newHeader(parent, 'EMPTY');
     const result = await explodeBom(READER, bom, query({}));
-    expect(result.nodes).toEqual([]);
-    expect(result.bomId).toBe(bom);
+    expect(result).toEqual([]);
   });
 });
 
@@ -429,26 +438,55 @@ describe('★★ 하위만 resolveEffectiveBom — 반열림 [from, to) (D-22)',
     const { rootBom, viaV1, viaV2 } = await twoVersions();
 
     const before = await explodeBom(READER, rootBom, query({ asOf: '2026-06-30' }));
-    expect(before.nodes.map((node) => node.componentSkuId)).toContain(viaV1);
-    expect(before.nodes.map((node) => node.componentSkuId)).not.toContain(viaV2);
+    expect(before.map((node) => node.componentSkuId)).toContain(viaV1);
+    expect(before.map((node) => node.componentSkuId)).not.toContain(viaV2);
 
     const onBoundary = await explodeBom(READER, rootBom, query({ asOf: '2026-07-01' }));
-    expect(onBoundary.nodes.map((node) => node.componentSkuId)).toContain(viaV2);
-    expect(onBoundary.nodes.map((node) => node.componentSkuId)).not.toContain(viaV1);
+    expect(onBoundary.map((node) => node.componentSkuId)).toContain(viaV2);
+    expect(onBoundary.map((node) => node.componentSkuId)).not.toContain(viaV1);
   });
 
   it('★ from 이전이면 유효 BOM 이 없다 — leaf 다 (오류 아님)', async () => {
     const { rootBom, b } = await twoVersions();
     const result = await explodeBom(READER, rootBom, query({ asOf: '2025-12-31' }));
-    expect(result.nodes).toHaveLength(1);
-    expect(bySku(result.nodes, b)[0]?.isLeaf).toBe(true);
-    expect(bySku(result.nodes, b)[0]?.bomHeaderId).toBeNull();
+    expect(result).toHaveLength(1);
+    expect(bySku(result, b)[0]?.isLeaf).toBe(true);
+    expect(bySku(result, b)[0]?.bomHeaderId).toBeNull();
   });
 
   it('★★ asOf 기본값은 서버 업무일자(Asia/Seoul)다 (D-21)', async () => {
-    const { rootBom } = await twoVersions();
-    const result = await explodeBom(READER, rootBom, query({}));
-    expect(result.asOf).toBe(businessDateOf(new Date()));
+    // ★ 응답에 asOf 가 없으므로(배열이다) **선택된 하위 BOM** 으로 증명한다.
+    //   오늘만 유효한 버전과 어제까지만 유효한 버전을 나란히 두고, 생략 시
+    //   업무일자 버전이 선택되는지 본다.
+    const today = businessDateOf(new Date());
+    const [a, b, past, current] = await Promise.all([
+      newSku('def-a'),
+      newSku('def-b'),
+      newSku('def-past'),
+      newSku('def-now'),
+    ]);
+    const rootBom = await newHeader(a, 'DEF-R');
+    await newLine(rootBom, b);
+    await newHeader(b, 'DEF-B1', { effectiveFrom: '2020-01-01', effectiveTo: today }).then((id) =>
+      newLine(id, past),
+    );
+    await newHeader(b, 'DEF-B2', { effectiveFrom: today }).then((id) => newLine(id, current));
+
+    // 생략 → 업무일자. 반열림 `[from, to)` 이므로 오늘은 **B2** 다.
+    const implicitAsOf = await explodeBom(READER, rootBom, query({}));
+    expect(implicitAsOf.map((node) => node.componentSkuId)).toEqual([b, current]);
+    // 같은 날짜를 명시해도 결과가 같다 — 기본값이 곧 업무일자라는 뜻이다.
+    const explicitAsOf = await explodeBom(READER, rootBom, query({ asOf: today }));
+    expect(explicitAsOf.map((node) => node.componentSkuId)).toEqual([b, current]);
+    // 하루 전이면 B1 이 선택된다 — 기본값이 "아무 날짜나"가 아님을 보인다.
+    const yesterday = new Date(`${today}T00:00:00.000Z`);
+    yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+    const beforeToday = await explodeBom(
+      READER,
+      rootBom,
+      query({ asOf: yesterday.toISOString().slice(0, 10) }),
+    );
+    expect(beforeToday.map((node) => node.componentSkuId)).toEqual([b, past]);
   });
 
   it('★★ 한 요청 안에서 모든 level 이 같은 asOf 를 쓴다', async () => {
@@ -471,8 +509,7 @@ describe('★★ 하위만 resolveEffectiveBom — 반열림 [from, to) (D-22)',
     await newHeader(c, 'SA-C2', { effectiveFrom: '2026-07-01' }).then((id) => newLine(id, viaNew));
 
     const result = await explodeBom(READER, rootBom, query({ asOf: '2026-03-01' }));
-    expect(result.asOf).toBe('2026-03-01');
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual([b, c, viaOld]);
+    expect(result.map((node) => node.componentSkuId)).toEqual([b, c, viaOld]);
   });
 
   it('★★ 하위 유효 ACTIVE 가 2건이면 409 를 그대로 올린다 — 하나를 골라 숨기지 않는다', async () => {
@@ -528,9 +565,9 @@ describe('★★ leaf · 중간 노드 · 구조 라인 (D-18)', () => {
     await newHeader(b, 'MID-B').then((id) => newLine(id, c));
 
     const result = await explodeBom(READER, rootBom, query({}));
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual([b, c]);
-    expect(bySku(result.nodes, b)[0]?.isLeaf).toBe(false);
-    expect(bySku(result.nodes, c)[0]?.isLeaf).toBe(true);
+    expect(result.map((node) => node.componentSkuId)).toEqual([b, c]);
+    expect(bySku(result, b)[0]?.isLeaf).toBe(false);
+    expect(bySku(result, c)[0]?.isLeaf).toBe(true);
   });
 
   it('★★ 라인 속성으로 거르지 않는다 — SERVICE·optional·대체그룹·TURNKEY 전부 남는다', async () => {
@@ -551,8 +588,8 @@ describe('★★ leaf · 중간 노드 · 구조 라인 (D-18)', () => {
     }
 
     const result = await explodeBom(READER, rootBom, query({}));
-    expect(result.nodes).toHaveLength(variants.length);
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual(componentIds);
+    expect(result).toHaveLength(variants.length);
+    expect(result.map((node) => node.componentSkuId)).toEqual(componentIds);
   });
 
   it('★ 같은 구성품이 대체그룹만 달리해 두 라인이면 node 도 2개다', async () => {
@@ -562,8 +599,8 @@ describe('★★ leaf · 중간 노드 · 구조 라인 (D-18)', () => {
     await newLine(rootBom, b, { alternateGroup: 'ALT-B', quantityPer: '5' });
 
     const result = await explodeBom(READER, rootBom, query({}));
-    expect(bySku(result.nodes, b)).toHaveLength(2);
-    expect(bySku(result.nodes, b).map((node) => node.requiredQty)).toEqual(['2', '5']);
+    expect(bySku(result, b)).toHaveLength(2);
+    expect(bySku(result, b).map((node) => node.requiredQty)).toEqual(['2', '5']);
   });
 
   it('★ 결과 정렬 — level asc → lineNo 순 (DB 자연 순서에 의존하지 않는다)', async () => {
@@ -576,7 +613,129 @@ describe('★★ leaf · 중간 노드 · 구조 라인 (D-18)', () => {
     await newLine(rootBom, first, { lineNo: 1 });
 
     const result = await explodeBom(READER, rootBom, query({}));
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual([first, second]);
+    expect(result.map((node) => node.componentSkuId)).toEqual([first, second]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 4-b. deterministic ordering — level 3+ full lineNoPath (R3 · R4)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★★ 확정 ordering — `★ T07-6 explosion deterministic ordering clarification`
+ *
+ * ```
+ *   1. level ASC
+ *   2. 같은 level 안에서는 root → 현재 node 까지의 full lineNoPath 사전순 ASC
+ * ```
+ *
+ * D-18 의 `부모의 lineNo → 자기 lineNo` 를 깊이 N 까지 재귀 확장한 것이다.
+ * level 3 에서는 **서로 다른 branch 의 node 가 같은 `lineNo` 를 가질 수 있어**
+ * "부모의 lineNo" 한 단계만으로는 순서가 정해지지 않는다 — 그래서 전체 경로를 본다.
+ *
+ * ⛔ `lineNoPath` 를 public `ExplodedNode` 에 노출하지 않는다 — 정렬용 내부 개념이다.
+ */
+describe('★★ deterministic ordering — level 3+ full lineNoPath (R3 · R4)', () => {
+  /**
+   * ```
+   *   A ─ line1 → B ─ line1 → D ─ line1 → G     lineNoPath [1,1,1]
+   *     │           │        │ line2 → H                  [1,1,2]
+   *     │           │ line2 → E ─ line1 → I               [1,2,1]
+   *     └ line2 → C ─ line1 → F ─ line1 → J               [2,1,1]
+   * ```
+   * ★ level 3 의 G·H·I·J 는 **부모 lineNo 만으로는 갈리지 않는다**
+   *   (D 의 부모 lineNo 1, E 의 부모 lineNo 2, F 의 부모 lineNo 1 — D 와 F 가 같다).
+   *   full lineNoPath 사전순이라야 `[1,1,1] < [1,1,2] < [1,2,1] < [2,1,1]` 이 된다.
+   */
+  async function branching(label: string, reverseInsertion: boolean) {
+    const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'] as const;
+    const sku: Record<string, string> = {};
+    for (const name of names) sku[name] = await newSku(`${label}-${name}`);
+
+    const headers: Record<string, string> = {};
+    for (const name of ['a', 'b', 'c', 'd', 'e', 'f'] as const) {
+      headers[name] = await newHeader(sku[name] as string, `${label}${name}`.slice(0, 16));
+    }
+
+    // (부모 header, 구성품, lineNo)
+    const edges: [string, string, number][] = [
+      ['a', 'b', 1],
+      ['a', 'c', 2],
+      ['b', 'd', 1],
+      ['b', 'e', 2],
+      ['c', 'f', 1],
+      ['d', 'g', 1],
+      ['d', 'h', 2],
+      ['e', 'i', 1],
+      ['f', 'j', 1],
+    ];
+    // ⚠️ 삽입 순서를 뒤집어도 응답 순서가 같아야 한다 — DB 자연 순서 의존 금지.
+    for (const [parent, child, lineNo] of reverseInsertion ? [...edges].reverse() : edges) {
+      await newLine(headers[parent] as string, sku[child] as string, { lineNo });
+    }
+    return { rootBom: headers['a'] as string, sku };
+  }
+
+  /** 기대 순서 — level ASC, 같은 level 안에서 lineNoPath 사전순. */
+  const EXPECTED = [
+    'b', // level 1  [1]
+    'c', // level 1  [2]
+    'd', // level 2  [1,1]
+    'e', // level 2  [1,2]
+    'f', // level 2  [2,1]
+    'g', // level 3  [1,1,1]
+    'h', // level 3  [1,1,2]
+    'i', // level 3  [1,2,1]
+    'j', // level 3  [2,1,1]
+  ] as const;
+
+  it('★★ level 3 에서 branch 간 순서가 full lineNoPath 사전순이다', async () => {
+    const { rootBom, sku } = await branching('ord3', false);
+    const result = await explodeBom(READER, rootBom, query({}));
+
+    expect(result.map((node) => node.componentSkuId)).toEqual(EXPECTED.map((name) => sku[name]));
+    expect(result.map((node) => node.level)).toEqual([1, 1, 2, 2, 2, 3, 3, 3, 3]);
+    // path.length === level 이 전 node 에서 성립한다.
+    for (const node of result) expect(node.path).toHaveLength(node.level);
+  });
+
+  it('★★ 삽입 순서를 뒤집어도 응답 순서가 같다 — DB 자연 순서에 의존하지 않는다', async () => {
+    const forward = await branching('ordf', false);
+    const reversed = await branching('ordr', true);
+
+    const namesOf = async (fixture: Awaited<ReturnType<typeof branching>>) => {
+      const nodes = await explodeBom(READER, fixture.rootBom, query({}));
+      const byId = new Map(Object.entries(fixture.sku).map(([name, id]) => [id, name]));
+      return nodes.map((node) => byId.get(node.componentSkuId));
+    };
+
+    expect(await namesOf(reversed)).toEqual([...EXPECTED]);
+    expect(await namesOf(reversed)).toEqual(await namesOf(forward));
+  });
+
+  it('★★ 같은 lineNo 를 가진 형제 branch 도 부모 경로로 갈린다', async () => {
+    // D(부모 lineNo 1) 와 F(부모 lineNo 1) 는 **부모 lineNo 가 같다**.
+    // 그 자식 G([1,1,1]) 와 J([2,1,1]) 가 뒤섞이지 않는지가 이 규칙의 핵심이다.
+    const { rootBom, sku } = await branching('ordt', false);
+    const result = await explodeBom(READER, rootBom, query({}));
+    const level3 = result.filter((node) => node.level === 3);
+
+    expect(level3.map((node) => node.componentSkuId)).toEqual(
+      ['g', 'h', 'i', 'j'].map((name) => sku[name]),
+    );
+    // g 는 b 를 거쳐, j 는 c 를 거쳐 왔다 — 경로가 실제로 다르다.
+    expect(level3[0]?.path?.[0]).toBe(sku['a']);
+    expect(level3[0]?.path?.[1]).toBe(sku['b']);
+    expect(level3[3]?.path?.[1]).toBe(sku['c']);
+  });
+
+  it('⛔ public ExplodedNode 에 lineNoPath 를 노출하지 않는다', async () => {
+    const { rootBom } = await branching('ordp', false);
+    const result = await explodeBom(READER, rootBom, query({}));
+    for (const node of result) {
+      expect(Object.keys(node)).not.toContain('lineNoPath');
+      expect(Object.keys(node)).not.toContain('lineNo');
+    }
   });
 });
 
@@ -602,7 +761,7 @@ describe('★★ 다이아몬드는 순환이 아니고 합산도 아니다 (D-1
     const result = await explodeBom(READER, rootBom, query({ qty: '1' }));
 
     // ★ D 가 **2개** 다 — 하나로 합치지 않는다.
-    const ds = bySku(result.nodes, d);
+    const ds = bySku(result, d);
     expect(ds).toHaveLength(2);
     // ★ 경로가 보존된다.
     expect(ds.map((node) => node.path)).toEqual([
@@ -612,7 +771,7 @@ describe('★★ 다이아몬드는 순환이 아니고 합산도 아니다 (D-1
     // ★ 수량은 경로별로 독립 계산된다 — 2×10 = 20, 5×100 = 500.
     expect(ds.map((node) => node.requiredQty)).toEqual(['20', '500']);
     // ⛔ 합산값 520 이 어디에도 없다.
-    expect(result.nodes.map((node) => node.requiredQty)).not.toContain('520');
+    expect(result.map((node) => node.requiredQty)).not.toContain('520');
   });
 
   it('★★ 같은 level 에서 만나는 다이아몬드도 두 번 남는다', async () => {
@@ -630,7 +789,7 @@ describe('★★ 다이아몬드는 순환이 아니고 합산도 아니다 (D-1
     await newHeader(c, 'DL-C').then((id) => newLine(id, d));
 
     const result = await explodeBom(READER, rootBom, query({}));
-    const ds = bySku(result.nodes, d);
+    const ds = bySku(result, d);
     expect(ds).toHaveLength(2);
     expect(ds.map((node) => node.level)).toEqual([2, 2]);
   });
@@ -715,8 +874,8 @@ describe('★★ maxLevel — 초과는 422, 절단 아님 (D-18)', () => {
   it('★ depth 1 · maxLevel 1 — leaf 면 성공한다', async () => {
     const rootBom = await chain('m1', 1);
     const result = await explodeBom(READER, rootBom, query({ maxLevel: '1' }));
-    expect(result.nodes).toHaveLength(1);
-    expect(result.nodes[0]?.isLeaf).toBe(true);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.isLeaf).toBe(true);
   });
 
   it('★★ depth 2 · maxLevel 1 — 422 다 (조용히 1단계만 주지 않는다)', async () => {
@@ -729,15 +888,14 @@ describe('★★ maxLevel — 초과는 422, 절단 아님 (D-18)', () => {
   it('★ depth 2 · maxLevel 2 — 성공한다', async () => {
     const rootBom = await chain('m3', 2);
     const result = await explodeBom(READER, rootBom, query({ maxLevel: '2' }));
-    expect(result.nodes.map((node) => node.level)).toEqual([1, 2]);
+    expect(result.map((node) => node.level)).toEqual([1, 2]);
   });
 
   it('★★ depth = BOM_MAX_LEVEL 은 기본값으로 성공한다', async () => {
     const rootBom = await chain('m4', BOM_MAX_LEVEL);
     const result = await explodeBom(READER, rootBom, query({}));
-    expect(result.maxLevel).toBe(BOM_MAX_LEVEL);
-    expect(result.nodes).toHaveLength(BOM_MAX_LEVEL);
-    expect(result.nodes.at(-1)?.level).toBe(BOM_MAX_LEVEL);
+    expect(result).toHaveLength(BOM_MAX_LEVEL);
+    expect(result.at(-1)?.level).toBe(BOM_MAX_LEVEL);
   });
 
   it('★★ depth = BOM_MAX_LEVEL + 1 은 기본값에서 422 다', async () => {
@@ -755,9 +913,9 @@ describe('★★ maxLevel — 초과는 422, 절단 아님 (D-18)', () => {
     await newHeader(b, 'E0-B'); // 라인 없음
 
     const result = await explodeBom(READER, rootBom, query({ maxLevel: '1' }));
-    expect(result.nodes).toHaveLength(1);
+    expect(result).toHaveLength(1);
     // ★ 유효 BOM 이 있으므로 leaf 는 아니다 — 그래도 level 2 node 가 없어 통과한다.
-    expect(result.nodes[0]?.isLeaf).toBe(false);
+    expect(result[0]?.isLeaf).toBe(false);
   });
 });
 
@@ -772,10 +930,10 @@ describe('★★ 미확정 수량 — null 이지 오류가 아니다 (gap closu
     await newLine(rootBom, b, { quantityPer: null, quantityStatus: 'UNKNOWN' });
 
     const result = await explodeBom(READER, rootBom, query({ qty: '10' }));
-    expect(result.nodes).toHaveLength(1);
-    expect(result.nodes[0]?.requiredQty).toBeNull();
-    expect(result.nodes[0]?.quantityPer).toBeNull();
-    expect(result.nodes[0]?.quantityStatus).toBe('UNKNOWN');
+    expect(result).toHaveLength(1);
+    expect(result[0]?.requiredQty).toBeNull();
+    expect(result[0]?.quantityPer).toBeNull();
+    expect(result[0]?.quantityStatus).toBe('UNKNOWN');
   });
 
   it('★★ CASE N2 — ACTIVE root 의 optional UNKNOWN 도 endpoint 를 실패시키지 않는다', async () => {
@@ -795,9 +953,9 @@ describe('★★ 미확정 수량 — null 이지 오류가 아니다 (gap closu
 
     const result = await explodeBom(READER, rootBom, query({ qty: '3' }));
     // ⛔ BOM_QTY_UNCONFIRMED 422 가 아니다.
-    expect(result.nodes).toHaveLength(2);
-    expect(result.nodes[0]?.requiredQty).toBe('6');
-    expect(result.nodes[1]?.requiredQty).toBeNull();
+    expect(result).toHaveLength(2);
+    expect(result[0]?.requiredQty).toBe('6');
+    expect(result[1]?.requiredQty).toBeNull();
   });
 
   it('★★ CASE N3 — UNKNOWN 중간 노드 아래로도 구조 전개가 계속된다 (E-2 · E-3)', async () => {
@@ -810,14 +968,14 @@ describe('★★ 미확정 수량 — null 이지 오류가 아니다 (gap closu
     const result = await explodeBom(READER, rootBom, query({ qty: '10' }));
 
     // ★ 구조는 온전하다 — B 아래를 잘라내지 않았다.
-    expect(result.nodes.map((node) => node.componentSkuId)).toEqual([b, c]);
+    expect(result.map((node) => node.componentSkuId)).toEqual([b, c]);
     // ★ B 는 미상이지만 leaf 가 아니다 (E-3 — isLeaf 는 수량과 독립).
-    expect(result.nodes[0]?.requiredQty).toBeNull();
-    expect(result.nodes[0]?.isLeaf).toBe(false);
+    expect(result[0]?.requiredQty).toBeNull();
+    expect(result[0]?.isLeaf).toBe(false);
     // ★ C 는 CONFIRMED 인데도 부모가 미상이라 null 이다 (E-2).
-    expect(result.nodes[1]?.quantityStatus).toBe('CONFIRMED');
-    expect(result.nodes[1]?.quantityPer).toBe('4');
-    expect(result.nodes[1]?.requiredQty).toBeNull();
+    expect(result[1]?.quantityStatus).toBe('CONFIRMED');
+    expect(result[1]?.quantityPer).toBe('4');
+    expect(result[1]?.requiredQty).toBeNull();
   });
 
   it('★★ CASE N4 — SUGGESTED 는 정상 계산된다 (E-4)', async () => {
@@ -827,8 +985,8 @@ describe('★★ 미확정 수량 — null 이지 오류가 아니다 (gap closu
 
     const result = await explodeBom(READER, rootBom, query({ qty: '8' }));
     // ⛔ SUGGESTED 라는 이유로 null 처리·422 하지 않는다.
-    expect(result.nodes[0]?.quantityStatus).toBe('SUGGESTED');
-    expect(result.nodes[0]?.requiredQty).toBe('4');
+    expect(result[0]?.quantityStatus).toBe('SUGGESTED');
+    expect(result[0]?.requiredQty).toBe('4');
   });
 
   it('★★ CASE N5 — 손상 정합은 완화하지 않는다 (E-5)', async () => {
@@ -879,7 +1037,7 @@ describe('★ 권한 — bom.read (D-15)', () => {
     await newLine(rootBom, b);
 
     const result = await explodeBom(EXECUTIVE, rootBom, query({}));
-    expect(result.nodes).toHaveLength(1);
+    expect(result).toHaveLength(1);
   });
 
   it('★★ ADMIN role 이어도 permission 데이터가 없으면 403 — bypass 없음', async () => {
@@ -975,7 +1133,7 @@ describe('★★ read-only · batch (D-16 · D-28 · 성능 계약)', () => {
         : never,
     });
 
-    expect(result.nodes).toHaveLength(12);
+    expect(result).toHaveLength(12);
     // root 1회 + (라인 1 + resolver 1) × 1 level = 3회. ⛔ 12 + n 이 아니다.
     expect(calls).toEqual(['bomHeader.findUnique', 'bomLine.findMany', 'bomHeader.findMany']);
   });

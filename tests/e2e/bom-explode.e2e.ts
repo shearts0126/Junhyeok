@@ -54,15 +54,11 @@ interface ExplodedNode {
   quantityStatus: string;
 }
 
-interface ExplodeBody {
-  bomId: string;
-  parentSkuId: string;
-  asOf: string;
-  qty: string;
-  maxLevel: number;
-  nodes: ExplodedNode[];
-  requestId: string;
-}
+/**
+ * ★ 응답 body 는 **`ExplodedNode[]` 그 자체**다 (D-18 응답 행).
+ * ⛔ wrapper object 가 아니다 — 아래 테스트가 그 사실을 직접 단언한다.
+ */
+type ExplodeBody = ExplodedNode[];
 
 async function login(page: Page, user: { email: string; password: string }): Promise<void> {
   const response = await page
@@ -91,6 +87,14 @@ async function activeBomId(request: APIRequestContext): Promise<string> {
   return found!.id;
 }
 
+/**
+ * ⚠️ 이 파일의 **첫 테스트**는 Next.js dev 서버가 `/api/boms/[id]/explode` 를
+ *    처음 컴파일하는 비용(수십 초)을 그대로 뒤집어쓴다. 파일 단독 실행 시
+ *    기본 30초 타임아웃을 넘길 수 있으므로 describe 단위로 넉넉히 준다 —
+ *    ⛔ 테스트를 건너뛰거나 단언을 느슨하게 만들지 않는다.
+ */
+test.describe.configure({ timeout: 90_000 });
+
 test.describe('T07-6 explode API', () => {
   test('★★ 다단계 전개가 실제 HTTP 스택에서 동작한다 (D-18 · D-19)', async ({ page }) => {
     await login(page, ADMIN);
@@ -103,22 +107,20 @@ test.describe('T07-6 explode API', () => {
     ]);
 
     const response = await request.get(`/api/boms/${bomId}/explode?qty=4`);
-    expect(response.status(), await response.text()).toBe(200);
-    const body = (await response.json()) as ExplodeBody;
+    // ⚠️ body 를 **한 번만** 읽는다 — 실패 메시지용으로 다시 읽으면 타임아웃
+    //    직전에 `Response has been disposed` 로 원인이 가려진다.
+    const rawBody = await response.text();
+    expect(response.status(), rawBody).toBe(200);
+    const body = JSON.parse(rawBody) as ExplodeBody;
 
-    // ★ root 는 요청한 그 header 다 — 다른 버전으로 바뀌지 않았다.
-    expect(body.bomId).toBe(bomId);
-    expect(body.parentSkuId).toBe(parentSkuId);
-    expect(body.qty).toBe('4');
-    expect(body.maxLevel).toBe(10);
-    expect(body.asOf).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-    expect(body.requestId).toBeTruthy();
+    // ★★ body 가 **배열 그 자체**다 — wrapper object 가 아니다 (D-18).
+    expect(Array.isArray(body)).toBe(true);
 
     // ★ 평면 배열 4행 — level 1 세 개 + level 2 하나.
-    expect(body.nodes).toHaveLength(4);
-    expect(body.nodes.map((node) => node.level)).toEqual([1, 1, 1, 2]);
+    expect(body).toHaveLength(4);
+    expect(body.map((node) => node.level)).toEqual([1, 1, 1, 2]);
 
-    const [alt1, alt2, semi, viaSemi] = body.nodes as [
+    const [alt1, alt2, semi, viaSemi] = body as [
       ExplodedNode,
       ExplodedNode,
       ExplodedNode,
@@ -159,7 +161,7 @@ test.describe('T07-6 explode API', () => {
     expect(viaSemi.level).toBe(2);
 
     // ★ D-20 — 같은 구성품이 **세 경로**로 각각 남는다. 합산하지 않는다.
-    expect(body.nodes.filter((node) => node.componentSkuId === componentSkuId)).toHaveLength(3);
+    expect(body.filter((node) => node.componentSkuId === componentSkuId)).toHaveLength(3);
   });
 
   test('★★ Decimal 은 전부 문자열이고 requiredQty 는 trailing zero 를 채우지 않는다 (E-6)', async ({
@@ -172,14 +174,14 @@ test.describe('T07-6 explode API', () => {
     const response = await request.get(`/api/boms/${bomId}/explode?qty=4`);
     const body = (await response.json()) as ExplodeBody;
 
-    for (const node of body.nodes) {
+    for (const node of body) {
       for (const key of ['quantityPer', 'lossRate', 'requiredQty'] as const) {
         const value = node[key];
         expect(value === null || typeof value === 'string', `${key}=${String(value)}`).toBe(true);
       }
     }
     // ⛔ "10.000000" 이 아니라 "10" 이다.
-    expect(body.nodes[0]?.requiredQty).toBe('10');
+    expect(body[0]?.requiredQty).toBe('10');
   });
 
   test('★★ ExplodedNode 는 정확히 12 키다 — 원가 필드가 새어 들어오지 않았다', async ({ page }) => {
@@ -190,7 +192,7 @@ test.describe('T07-6 explode API', () => {
     const response = await request.get(`/api/boms/${bomId}/explode`);
     const body = (await response.json()) as ExplodeBody;
 
-    for (const node of body.nodes) {
+    for (const node of body) {
       expect(Object.keys(node).sort()).toEqual([
         'bomHeaderId',
         'componentRole',
@@ -213,16 +215,55 @@ test.describe('T07-6 explode API', () => {
     }
   });
 
+  test('★★ 응답 body 에 wrapper 필드가 하나도 없다 (D-18)', async ({ page }) => {
+    await login(page, ADMIN);
+    const request = page.context().request;
+    const bomId = await activeBomId(request);
+
+    const raw = await (await request.get(`/api/boms/${bomId}/explode`)).text();
+    const body: unknown = JSON.parse(raw);
+
+    // 최상위가 배열이다 — object 가 아니다.
+    expect(Array.isArray(body)).toBe(true);
+    // ⛔ 이전 구현의 wrapper 키가 최상위에도, 각 element 에도 없다.
+    for (const forbidden of ['bomId', 'parentSkuId', 'asOf', 'qty', 'maxLevel', 'nodes']) {
+      expect(Object.keys(body as object), forbidden).not.toContain(forbidden);
+      for (const node of body as ExplodedNode[]) {
+        expect(Object.keys(node), forbidden).not.toContain(forbidden);
+      }
+    }
+    // requestId 는 성공 body 에 넣지 않는다 (오류 응답·서버 로그가 담는다).
+    expect(raw).not.toContain('requestId');
+  });
+
+  test('★★ asOf 는 실존하는 달력 날짜여야 한다 (R5)', async ({ page }) => {
+    await login(page, ADMIN);
+    const request = page.context().request;
+    const bomId = await activeBomId(request);
+
+    for (const asOf of ['2026-01-01', '2026-02-28', '2028-02-29', '2026-04-30']) {
+      const response = await request.get(`/api/boms/${bomId}/explode?asOf=${asOf}`);
+      expect(response.status(), asOf).toBe(200);
+    }
+    for (const asOf of ['2026-02-29', '2026-02-30', '2026-04-31', '2026-13-01', '2026-00-01']) {
+      const response = await request.get(`/api/boms/${bomId}/explode?asOf=${asOf}`);
+      expect(response.status(), asOf).toBe(400);
+      expect(((await response.json()) as { errorCode: string }).errorCode, asOf).toBe(
+        'VALIDATION_ERROR',
+      );
+    }
+  });
+
   test('★ qty 기본값은 "1" 이고 maxLevel 기본값은 10 이다 (D-18)', async ({ page }) => {
     await login(page, ADMIN);
     const request = page.context().request;
     const bomId = await activeBomId(request);
 
     const body = (await (await request.get(`/api/boms/${bomId}/explode`)).json()) as ExplodeBody;
-    expect(body.qty).toBe('1');
-    expect(body.maxLevel).toBe(10);
-    // 2.5 × 1 = 2.5
-    expect(body.nodes[0]?.requiredQty).toBe('2.5');
+    // qty 생략 → 1. 2.5 × 1 = 2.5 (기본값이 응답 body 가 아니라 **계산 결과**로 드러난다)
+    expect(body[0]?.requiredQty).toBe('2.5');
+    // maxLevel 기본 10 — 깊이 2 그래프가 잘리지 않는다.
+    expect(body.map((node) => node.level)).toEqual([1, 1, 1, 2]);
   });
 
   test('★★ strict query — 미지원 파라미터·범위 밖 값은 400 이다', async ({ page }) => {
@@ -265,7 +306,7 @@ test.describe('T07-6 explode API', () => {
       const bomId = await activeBomId(request);
       const response = await request.get(`/api/boms/${bomId}/explode`);
       expect(response.status(), user.email).toBe(200);
-      expect(((await response.json()) as ExplodeBody).nodes.length).toBeGreaterThan(0);
+      expect(((await response.json()) as ExplodeBody).length).toBeGreaterThan(0);
     }
   });
 

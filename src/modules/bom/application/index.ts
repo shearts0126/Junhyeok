@@ -202,4 +202,4 @@ export {
 export { hasBomUsage, type HasBomUsageDependencies } from './has-bom-usage';
 
 // ── T07-6 explode ────────────────────────────────────────────
-export { explodeBom, type ExplodeBomResult } from './explode-bom';
+export { explodeBom } from './explode-bom';

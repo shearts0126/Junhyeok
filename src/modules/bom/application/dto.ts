@@ -238,9 +238,44 @@ export function parseListBomsQuery(searchParams: URLSearchParams): ListBomsQuery
  * ⛔ `qty` 를 `Number()`/`parseFloat()` 로 읽지 않는다 — 문자열로 통과시키고
  *    계산은 `shared/decimal` 이 한다.
  */
+/**
+ * `asOf` — **실존하는 달력 날짜**여야 한다.
+ *
+ * ⚠️ 공용 `dateString` 은 형식(`^\d{4}-\d{2}-\d{2}$`)과 `NaN` 여부만 본다.
+ *    그런데 V8 은 `new Date('2026-02-30T00:00:00.000Z')` 를 **`2026-03-02` 로
+ *    굴려** 유효 Date 로 만든다. 그대로 두면 사용자가 지정한 기준일과 서버가
+ *    조회한 기준일이 **달라진다** — 전개는 asOf 로 하위 BOM 을 고르므로 조용한
+ *    하루 이동이 곧 잘못된 구성표다.
+ *
+ * ★ 그래서 기존 조각만 재사용해 **round-trip 동등성**을 본다:
+ *   `parseDateOnly()` 로 UTC 자정 `Date` 를 만들고 `toDateOnlyString()` 으로
+ *   되돌려 입력과 같은지 확인한다. 롤오버가 일어나면 문자열이 달라져 400 이다.
+ *   ⛔ 새 날짜 헬퍼·윤년 계산기를 만들지 않는다.
+ *
+ * | 입력 | 결과 |
+ * |---|---|
+ * | `2026-02-28` · `2028-02-29`(윤년) | 통과 |
+ * | `2026-02-29`(평년) · `2026-02-30` · `2026-04-31` | **400** |
+ * | `2026-13-01` · `2026-00-01` | **400** (`dateString` 이 먼저 막는다) |
+ *
+ * ⚠️ 전역 `dateString` 은 이번 범위에서 바꾸지 않는다 — 다른 모듈의 계약까지
+ *    건드리게 된다. 여기서 **좁게** 강화한다.
+ */
+const calendarDateString = dateString.refine(
+  (value) => {
+    // ⚠️ zod 는 앞선 refine 이 실패해도 뒤 refine 을 실행한다. 따라서 형식이
+    //    깨진 값이 여기까지 온다 — `toISOString()` 이 Invalid Date 에서 던지므로
+    //    **먼저 유한성을 확인**해야 400 대신 500 이 나가지 않는다.
+    const parsed = parseDateOnly(value);
+    if (Number.isNaN(parsed.getTime())) return false;
+    return toDateOnlyString(parsed) === value;
+  },
+  { error: '존재하지 않는 날짜입니다. (예: 2026-02-30 · 2026-04-31)' },
+);
+
 export const explodeBomQuerySchema = z.strictObject({
   qty: positiveDecimal18_6.default('1'),
-  asOf: dateString.optional(),
+  asOf: calendarDateString.optional(),
   maxLevel: z.coerce.number().int().min(1).max(BOM_MAX_LEVEL).default(BOM_MAX_LEVEL),
 });
 

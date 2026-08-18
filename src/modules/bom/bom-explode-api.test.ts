@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveRoutePermission } from '@/modules/auth/application';
-import { explodeBomQuerySchema, parseExplodeBomQuery } from '@/modules/bom/application/dto';
+import {
+  dateString,
+  explodeBomQuerySchema,
+  parseExplodeBomQuery,
+} from '@/modules/bom/application/dto';
 import {
   computeRawRequiredQty,
   toRequiredQtyString,
@@ -81,18 +85,55 @@ describe('★ explode query — qty · asOf · maxLevel 정확히 3개 (D-18)', 
     );
   });
 
-  it.each([['2026-8-16'], ['20260816'], ['2026-13-01'], ['오늘'], ['']])(
-    '★ asOf %s 는 400 이다',
+  it.each([['2026-8-16'], ['20260816'], ['2026-1-01'], ['01-01-2026'], ['오늘'], ['']])(
+    '★ asOf %s 는 형식 오류로 400 이다',
     (value) => {
       expect(() => parseExplodeBomQuery(q({ asOf: value }))).toThrow(ValidationError);
     },
   );
+});
 
-  it('⚠️ 일(day) 넘침은 공용 `dateString` 이 롤오버로 받는다 — T07-6 범위 밖', () => {
-    // `new Date('2026-02-30T00:00:00.000Z')` 는 V8 에서 03-02 로 굴러가 NaN 이
-    // 아니다. 프로젝트 전역 공용 파서의 기존 동작이므로 explode 만 다르게
-    // 만들지 않는다 (보고서에 관찰 사실로 남긴다).
-    expect(parseExplodeBomQuery(q({ asOf: '2026-02-30' })).asOf).toBe('2026-02-30');
+// ═══════════════════════════════════════════════════════════════
+// 1-b. asOf 는 **실존하는 달력 날짜**여야 한다 (R5)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★★ 형식만 맞는 날짜를 조용히 **굴리지 않는다**.
+ *
+ * 공용 `dateString` 은 `^\d{4}-\d{2}-\d{2}$` + `NaN` 여부만 보는데, V8 은
+ * `new Date('2026-02-30T00:00:00.000Z')` 를 `2026-03-02` 로 굴려 유효 Date 로
+ * 만든다. 전개는 asOf 로 하위 BOM 을 고르므로 **하루가 조용히 밀리면 곧 잘못된
+ * 구성표**가 나온다. explode DTO 는 round-trip 동등성으로 이를 막는다.
+ */
+describe('★★ asOf 달력 유효성 (R5)', () => {
+  it.each([
+    ['2026-01-01'],
+    ['2026-02-28'],
+    ['2028-02-29'], // 윤년
+    ['2026-12-31'],
+    ['2026-04-30'],
+  ])('★ %s 는 실존하는 날짜이므로 통과한다', (value) => {
+    expect(parseExplodeBomQuery(q({ asOf: value })).asOf).toBe(value);
+  });
+
+  it.each([
+    ['2026-02-29'], // 평년에는 없다
+    ['2026-02-30'],
+    ['2026-04-31'],
+    ['2026-06-31'],
+    ['2026-13-01'],
+    ['2026-00-01'],
+    ['2026-01-32'],
+    ['2026-01-00'],
+  ])('★★ %s 는 400 이다 — 롤오버로 받지 않는다', (value) => {
+    expect(() => parseExplodeBomQuery(q({ asOf: value }))).toThrow(ValidationError);
+  });
+
+  it('★★ 2026-02-30 이 2026-03-02 로 정규화되지 않는다', () => {
+    // ⚠️ 전역 `dateString` 은 여전히 이 값을 통과시킨다(다른 모듈의 계약이라
+    //    이번 범위에서 바꾸지 않는다). explode 만 좁게 막는다.
+    expect(dateString.safeParse('2026-02-30').success).toBe(true);
+    expect(() => parseExplodeBomQuery(q({ asOf: '2026-02-30' }))).toThrow(ValidationError);
   });
 });
 
