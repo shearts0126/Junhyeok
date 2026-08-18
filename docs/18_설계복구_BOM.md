@@ -413,6 +413,10 @@ UI 는 직전 버전 문자열을 **placeholder 로만** 보여줄 수 있다(�
 | `ACTIVE` | `INACTIVE` | `…/deactivate` | `bom.approve` | `{effectiveTo, reason}` 필수 |
 | `DRAFT`·`REJECTED` | `ARCHIVED` | `…/archive` | `bom.approve` | ★ **신규 endpoint** |
 
+> ⚠️ **CLARIFIED BY ★ T07-5 workflow gap closure** — `archive` 의 body(`{reason}`
+> 필수)와 `deactivate` 의 **기간 변경 규칙**(단축·동일만 허용 · 미래 종료 금지 ·
+> successor 경계)은 이 표에 없었다. W-1 · W-3 이 확정한다.
+
 **문서에 없어 여기서 확정한 4건**
 
 1. **`REJECTED → DRAFT` 는 만들지 않는다.** 대신 `REJECTED` 에서 편집을
@@ -496,6 +500,75 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 | 4. predecessor 의 historical period 보존 | `effectiveFrom` 을 건드리지 않고 `effectiveTo` 만 닫는다 |
 | 5. race 안전 | 부모 SKU FOR UPDATE 직렬화 + EXCLUDE 이중 방어 |
 
+#### ★ `effectiveFrom` 불변의 **범위** — CLARIFIED BY T07-5 workflow gap closure (R1)
+
+> 위 4번의 "`effectiveFrom` 을 건드리지 않고" 와 알고리즘 3단계
+> "`target.effectiveFrom := T`" 는 **문장만 보면 충돌처럼 보인다.** 아래가
+> 확정된 범위이며, 두 문장 모두 그대로 유효하다.
+
+**여기서 "불변" 은 이미 `ACTIVE` chain 에 포함된 predecessor·successor 의
+start boundary 를 activation 이 재작성하지 않는다는 뜻이다.** activate 대상인
+`APPROVED` candidate 는 endpoint 의 `effectiveFrom` override 가 있을 경우
+`ACTIVE` 전환 직전에 `T` 로 확정할 수 있다.
+
+| 행 | `effectiveFrom` | `effectiveTo` | `status` |
+|---|---|---|---|
+| **candidate** (activate 대상) | **`T`** — override 가 있으면 갱신, 생략하면 기존값 유지 | `successor?.effectiveFrom ?? null` | `ACTIVE` (+ `activatedAt := now()`) |
+| **predecessor** | ⛔ **절대 변경하지 않는다** | 필요 시 `T` 로 마감 (5단계 조건) | ⛔ **`ACTIVE` 유지** |
+| **successor** | ⛔ 변경하지 않는다 | ⛔ 변경하지 않는다 | ⛔ 변경하지 않는다 |
+
+즉 activate 의 `effectiveFrom` override 는 **candidate 의 `ACTIVE` interval
+start boundary 를 확정하는 명시적 예외**이며, 그 외 어떤 행의 시작일도
+activation 이 다시 쓰지 않는다. 이 해석이 "미래 `T` 라도 predecessor 가
+`[…, T)` 까지 살아 있다" 는 D-7 요구 3번과 정확히 일관된다.
+
+##### cycle evaluationDate 와 저장값은 **다른 개념**이다
+
+T07-2 계약 그대로 **`evaluationDate = T`** 로 candidate graph 를 재검사한다
+(D-13 검사표). 이는 "graph 를 어느 날짜 기준으로 평가하는가" 의 문제이고,
+위 표의 `candidate.effectiveFrom := T` 는 "무엇을 저장하는가" 의 문제다.
+**둘 다 수행하며 서로를 대체하지 않는다.**
+
+⛔ cycle validator 안에서 `header.effectiveFrom` 을 다시 읽어 caller 가 준
+`T` 를 덮어쓰지 않는다.
+
+##### 예시 3종 (R2)
+
+**A. override 생략**
+
+```
+candidate.effectiveFrom = 2027-06-01
+POST …/activate  {}
+
+→ T = 2027-06-01
+→ candidate.effectiveFrom = 2027-06-01   (그대로)
+```
+
+**B. override 지정**
+
+```
+candidate.effectiveFrom = 2027-06-01
+POST …/activate  { effectiveFrom: "2027-07-01" }
+
+→ T = 2027-07-01
+→ candidate.effectiveFrom = 2027-07-01   ★ 갱신된다
+
+predecessor 가 있으면:
+   predecessor.effectiveTo   = 2027-07-01
+   predecessor.effectiveFrom = ⛔ 변경 없음
+   predecessor.status        = ACTIVE 유지
+```
+
+**C. successor 존재**
+
+```
+successor.effectiveFrom = 2027-10-01
+candidate T             = 2027-07-01
+
+→ candidate = [2027-07-01, 2027-10-01)
+→ successor.effectiveFrom = ⛔ 변경 없음
+```
+
 #### edge case 확정
 
 | case | 처리 |
@@ -508,6 +581,46 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 | successor 없음 | `target.effectiveTo := null` (무기한) |
 | ACTIVE 가 하나도 없음 | predecessor·successor 모두 없음 → 그대로 activate |
 | 반복 activate (이미 ACTIVE) | **200 no-op** — write 0 · audit 0. T06-3 repeat approve 와 같다 |
+
+#### ★ 구현 근거 — "동일일" 은 **두 개의 서로 다른 사건**이다 (T07-5 구현 시 확인)
+
+> ⚠️ 설계 결정은 **변경 없다.** 위 표의 두 행이 각각 무엇을 말하는지 헷갈리기
+> 쉬워, 실제 구현이 어느 경로로 그 결론에 도달하는지를 근거로 남긴다.
+
+| | 사전 상태 (같은 parent 의 `ACTIVE`) | `T` | 결과 | 위 표의 어느 행인가 |
+|---|---|---|---|---|
+| **CASE A** — half-open 경계 교체 | predecessor `[2026-01-01, null)` | `2026-08-01` | ✅ **성공.** predecessor `[2026-01-01, 2026-08-01)` · candidate `[2026-08-01, null)` | D-5 의 `same-day 교체 = 허용` 행 |
+| **CASE B** — 동일 `effectiveFrom` 중복 | ACTIVE `effectiveFrom = 2026-08-01` | `2026-08-01` | ⛔ **409 `BOM_PERIOD_OVERLAP`** · 전체 rollback | 위 edge case 표의 `T 가 predecessor.effectiveFrom 과 같음` 행 |
+
+**CASE A 가 성공하는 이유** — EXCLUDE 는
+`daterange("effective_from", "effective_to", '[)')` 로 판정하며 상한이
+**미포함**이다. 따라서 `[2026-01-01, 2026-08-01)` 과 `[2026-08-01, ∞)` 은
+`2026-08-01` 을 공유하지 않는다(`&&` = false). 즉
+**`predecessor.effectiveTo == candidate.effectiveFrom` 은 정상 chain** 이며
+알고리즘 5·6단계가 만들어 내려는 바로 그 모양이다. D-5 의 `same-day 교체 =
+허용` 이 이 경우를 가리킨다.
+
+**CASE B 가 409 인 이유** — 4단계의 predecessor(`effectiveFrom < T`)·
+successor(`effectiveFrom > T`) 가 **둘 다 strict 부등호**라, 시작일이 `T` 와
+같은 형제는 어느 쪽으로도 집히지 않는다. 그래서 5단계로 마감되지도, 6단계의
+상한으로 쓰이지도 않은 채 candidate 가 그 형제와 같은 날 시작하게 되고,
+8단계 EXCLUDE 가 backstop 으로 `23P01` → **409 `BOM_PERIOD_OVERLAP`** 을 낸다.
+
+> ⚠️ 정정(근거 보강) — 위 edge case 표의 해당 행은 결론(409
+> `BOM_PERIOD_OVERLAP`)은 그대로 맞지만, 괄호 안 설명의 "5단계에서
+> `effectiveTo := T = effectiveFrom` 이 되어 CHECK(`to > from`) 위반" 은
+> 실제 경로가 아니다. strict 부등호 때문에 5단계 자체가 실행되지 않으며,
+> 실제 오류원은 **CHECK(`23514`)가 아니라 EXCLUDE(`23P01`)** 다. D-29 상
+> `23514` 는 500 이고 `23P01` 만 409 이므로, 이 구분이 곧 **표에 적힌 409 가
+> 실제로 나오는 이유**다. ⛔ 원문은 삭제하지 않는다.
+
+요약하면 — **경계 equality(`predecessor.effectiveTo == candidate.effectiveFrom`)
+는 허용이고, 동일 `effectiveFrom` 을 가진 `ACTIVE` sibling 은 overlap 이다.**
+
+구현 근거: `src/modules/bom/application/activation.ts`(4·5·6·8단계) ·
+`prisma/migrations/20260813010000_add_bom/migration.sql`
+(`bom_header_active_period_excl`) · `tests/db/bom-workflow-api.test.ts`
+§`★★ activate temporal 경계 — CASE A(성공) vs CASE B(409)` 6종.
 
 #### superseded
 
@@ -541,6 +654,348 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 (`03v2` 20필드에 없음) 신설하지 않는다. `createdBy` 가 `NULL` 이면(마이그레이션
 유입분) 자가승인 검사를 **통과**시킨다 — 비교 대상이 없으므로 같은 사람일 수
 없다. (T06-3 의 `createdBy` 취급과 동일.)
+
+### ★ T07-5 workflow gap closure (확정)
+
+> T07-5 착수 전 hard gate 조사에서 **D-6·D-7·D-8·D-14·D-16·D-17 이 확정하지
+> **않은** 계약 3건**(archive body · deactivate 기간 규칙 · clone copy/reset
+> matrix)이 드러났다. 이 절이 그 3건과 응답·멱등 계약을 authoritative 로
+> 확정한다. **기존 결정을 뒤집지 않으며**, 충돌하는 문장이 있으면 원문을
+> 남긴 채 `CLARIFIED BY` 로 표시한다.
+>
+> 이 절은 T07-4 의 `bulk-confirm gap closure` 와 같은 성격이다.
+
+#### W-1 — `POST /api/boms/{id}/archive` body (D-6 표 `archive` 행 CLARIFIED)
+
+D-6 전이표의 archive 행 `비고` 는 `★ 신규 endpoint` 만 적고 body 를 말하지
+않았다. 아래로 확정한다.
+
+```
+{ reason: string }        // 필수
+```
+
+| 항목 | 확정 |
+|---|---|
+| `reason` | **필수**. `strictObject` · trim · trim 후 blank 면 **400** |
+| unknown field | **400** |
+| 저장 위치 | **`AuditLog.reason`**. ⛔ `BomHeader` 에 `archiveReason`·`reason` 컬럼을 신설하지 않는다 |
+| 대상 status | `DRAFT` · `REJECTED` 만 (D-6 그대로). 그 밖은 invalid |
+| `ARCHIVED` 반복 | **200 no-op** · write 0 · audit 0 |
+| permission | `bom.approve` (D-15 예약 그대로) |
+
+`reason` 을 필수로 두는 근거: archive 는 목록에서 감추는 **종결 행위**이며,
+같은 성격의 `reject`(`{reason}` 필수) · `deactivate`(`{effectiveTo, reason}`
+필수)와 계약을 맞춘다. `{note?}` 는 상태를 앞으로 미는 `submit`·`approve`
+쪽 어휘이므로 쓰지 않는다.
+
+#### W-2 — `POST /api/boms/{id}/activate` (변경 없음)
+
+D-7 chain 알고리즘과 edge case 표, D-8 의 approve/activate 분리를 **그대로
+유지한다.** 이 gap closure 는 activate 를 재설계하지 않는다.
+
+재확인 사항(원문 그대로):
+
+- `T := body.effectiveFrom ?? target.effectiveFrom`
+- 3단계 `target.effectiveFrom := T` — 요청이 값을 주면 **저장값이 바뀐다**
+- predecessor 는 `effectiveTo := T` 로 닫고 **`status` 는 `ACTIVE` 유지**
+- `target.effectiveTo := successor?.effectiveFrom ?? null`
+- 최종 `T` 기준 cycle 재검사 (D-13 검사표 — approve 통과 재사용 금지)
+- 반복 activate → **200 no-op**
+- 자가승인 검사 **없음** (D-8)
+
+#### W-3 — `POST /api/boms/{id}/deactivate` 기간 규칙 (D-6 표 `deactivate` 행 CLARIFIED)
+
+D-6 은 body `{effectiveTo, reason}` 필수까지만 정했다. **기간 변경 규칙**을
+아래로 확정한다.
+
+##### ★ deactivate 는 "미래 예약 종료"가 아니다
+
+`resolveEffectiveBom` 은 **`status = 'ACTIVE'` 인 행만** 후보로 고른다
+(`resolve-effective-bom.ts`). 그런데 deactivate 는 **즉시** `ACTIVE →
+INACTIVE` 로 전이한다. 따라서 오늘 요청하면서 `effectiveTo` 를 미래로 주면
+**DB 기간은 다음 달까지라고 적혀 있는데 resolver 에서는 오늘 즉시 사라지는
+모순**이 생긴다.
+
+이 gap closure 는 **T07-2 resolver 를 바꾸지 않는다.** 대신 `deactivate` 를
+**즉시·소급 explicit withdrawal(명시적 사용중지)** 로 정의해 모순을 없앤다.
+
+##### 규칙
+
+```
+effectiveFrom < requestedEffectiveTo <= businessDateOf(now)
+```
+
+★ **이 master rule 에는 예외가 없다.** 현재 저장된 `effectiveTo` 와 값이
+같다는 이유만으로 상한 `<= businessDateOf(now)` 를 우회하지 않는다.
+equality 자체는 허용하지만 **그 equal 값도 반드시 오늘 이하**여야 한다.
+
+##### ★ `businessDateOf(now)` 의 시간대 — 확정 (R3)
+
+```
+businessDateOf(now) = Asia/Seoul 기준 현재 calendar date (YYYY-MM-DD)
+```
+
+⛔ **UTC calendar date 를 그대로 쓰지 않는다.**
+⛔ 서버 머신의 local timezone 에 의존하지 않는다.
+
+자정 전후에 하루가 어긋나는 것을 막기 위해 반드시 명시한다:
+
+```
+instant            : 2026-08-18T15:30:00Z
+Asia/Seoul         : 2026-08-19 00:30
+businessDateOf(now): 2026-08-19        ← 이 값과 비교한다
+```
+
+**canonical helper 가 이미 존재한다** — `src/shared/business-date.ts`:
+
+- `BUSINESS_TIME_ZONE = 'Asia/Seoul'` (`03 §공통 규약` 근거)
+- `businessDateOf(instant, timeZone = BUSINESS_TIME_ZONE)` — `Intl.DateTimeFormat('en-CA')`
+  로 `YYYY-MM-DD` 를 만든다. 주석이 `toISOString().slice(0,10)` 을 쓰지 않는
+  이유(UTC 기준이라 KST 자정 직후 전날로 밀린다)까지 이미 적고 있다.
+
+⛔ 새 date helper 를 만들지 않는다 — 위 함수를 **그대로 재사용**한다.
+⚠️ `dateOnlyOf` 와 혼동하지 않는다. `@db.Date` 컬럼값(UTC 자정 저장)을 문자열로
+바꿀 때는 `dateOnlyOf` 가 맞고, **"오늘"을 구할 때는 `businessDateOf`** 다.
+
+| 조건 | 판정 |
+|---|---|
+| `requestedEffectiveTo` 가 **과거** | ✅ 허용 |
+| `requestedEffectiveTo` 가 **오늘** | ✅ 허용 |
+| `requestedEffectiveTo` 가 **미래** | ⛔ **금지** |
+| `requestedEffectiveTo <= effectiveFrom` | ⛔ 금지 (DB CHECK 와 동일 방향) |
+| 현재 `effectiveTo == null` | `requestedEffectiveTo` 저장 |
+| 현재 `effectiveTo != null` 이고 `requested < 현재` | ✅ **단축 허용** |
+| 현재 `effectiveTo != null` 이고 `requested == 현재` **이며 오늘 이하** | ✅ 허용. 기간 write 는 no-change 여도 **`ACTIVE → INACTIVE` 전이는 수행** |
+| 현재 `effectiveTo != null` 이고 `requested == 현재` **이지만 미래** | ⛔ **금지** — equality 는 상한을 면제하지 않는다 (CASE C) |
+| 현재 `effectiveTo != null` 이고 `requested > 현재` | ⛔ **금지** — 기간 연장·reopen 없음 |
+| nearest successor `ACTIVE` 존재 | `requestedEffectiveTo <= successor.effectiveFrom` 이어야 한다 |
+
+"기간은 줄어들 뿐 늘어나지 않는다" 는 D-7 이 predecessor 를 **닫기만** 하고
+늘리지 않는 것과 같은 방향이다.
+
+successor 경계는 **서비스가 먼저 막는다.** DB EXCLUDE 는 최종 backstop 일
+뿐이며 정상 validation 을 대체하지 않는다 (409 만 나오면 사용자가 원인을
+알 수 없다).
+
+##### 최종 validation 술어
+
+```
+effectiveFrom < requestedEffectiveTo
+AND requestedEffectiveTo <= businessDateOf(now)
+AND ( currentEffectiveTo == null
+      OR requestedEffectiveTo <= currentEffectiveTo )
+AND ( successor == null
+      OR requestedEffectiveTo <= successor.effectiveFrom )
+```
+
+네 조건을 **모두** 만족해야 한다. DB EXCLUDE 는 backstop 이며 이 서비스
+validation 을 생략하지 않는다.
+
+##### 경계 예시 (R4)
+
+`businessDateOf(now) = 2026-08-18` 인 시점을 기준으로 한다.
+
+**① 무기한 ACTIVE — `effectiveFrom = 2026-01-01`, `effectiveTo = null`**
+
+| `requestedEffectiveTo` | 판정 |
+|---|---|
+| `2026-08-17` (과거) | ✅ 허용 |
+| `2026-08-18` (오늘) | ✅ 허용 |
+| `2026-08-19` (미래) | ⛔ **400 `VALIDATION_ERROR`** |
+| `2026-01-01` (= `effectiveFrom`) | ⛔ 400 (`> effectiveFrom` 위반) |
+
+**② 유한 ACTIVE — CASE A ~ F**
+
+| CASE | 현재 `effectiveTo` | `requestedEffectiveTo` | 결과 |
+|---|---|---|---|
+| **A** | `2026-09-01` | `2026-08-01` | ✅ 허용 → `effectiveTo = 2026-08-01` · `ACTIVE → INACTIVE` (소급 단축) |
+| **B** | `2026-09-01` | `2026-08-18` | ✅ 허용 → `effectiveTo = 2026-08-18` · `ACTIVE → INACTIVE` (오늘로 단축) |
+| **C** | `2026-09-01` | `2026-09-01` | ⛔ **400 `VALIDATION_ERROR`** — 현재값과 같아도 **미래**다 |
+| **D** | `2026-08-18` | `2026-08-18` | ✅ 허용 → 기간 no-change · **`ACTIVE → INACTIVE` 전이 수행** |
+| **E** | `2026-08-10` | `2026-08-10` | ✅ 허용 → 기간 no-change · **`ACTIVE → INACTIVE` 전이 수행** |
+| **F** | `2026-08-10` | `2026-08-11` | ⛔ **400** — 기존 기간 연장 금지 |
+
+★ **CASE C 가 이 규칙의 핵심**이다. "기간을 새로 쓰지 않으니 통과" 라는
+예외를 **만들지 않는다.**
+
+##### ★ 왜 미래 종료를 허용하지 않는가
+
+`deactivate` 는 호출 **즉시** `ACTIVE → INACTIVE` 가 된다. 그런데 저장된
+`effectiveTo` 를 오늘 이후로 남겨 두면
+
+> **status 는 지금 `INACTIVE` 인데 기간은 미래까지 열려 있는**
+
+이중 의미가 만들어진다. `ACTIVE` 의 실제 유효성은 status 와 `[from, to)` 를
+**함께** 읽어 판정하므로, 두 축이 서로 다른 말을 하게 두면 안 된다.
+
+미래 시점에 자동으로 종료하고 싶다면 그것은 **scheduled deactivation** 이라는
+별도 기능·상태 머신이 필요하다. ⛔ T07-5 에는 그런 기능을 추가하지 않는다.
+
+##### 오류코드
+
+기간 semantic 위반은 **새 BOM 오류코드를 만들지 않는다.** T07-3 의 적용기간
+검증 선례(`assertPeriodOrder`)와 동일하게 공통 **`VALIDATION_ERROR` / 400**
+을 쓴다. ⛔ D-29 의 15종을 늘리지 않는다.
+
+##### 결과
+
+| 항목 | 확정 |
+|---|---|
+| status | `ACTIVE → INACTIVE` |
+| `reason` | `AuditLog.reason` 에 저장. ⛔ 컬럼 신설 금지 |
+| Audit | `BomHeader` `DEACTIVATE` 1건 |
+| `INACTIVE` 반복 | **200 no-op** · write 0 · audit 0 |
+
+##### ★ semantic consequence — 명시한다
+
+**`INACTIVE` 가 된 행은 `ACTIVE`-only resolver 의 후보가 아니다.** 따라서
+`effectiveTo` 이전의 **과거 `asOf` 에서도 선택되지 않는다.**
+
+이것은 새 변경이 아니라 **현재 승인된 status/resolver 계약의 귀결**이다.
+즉 `deactivate` 는 단순한 "기간 만료"가 아니라 **operational withdrawal** 이다.
+
+> "deactivate 후에도 종료일 이전의 과거 `asOf` 에서는 계속 선택돼야 한다" 를
+> 원한다면 **T07-2 `resolveEffectiveBom` predicate 자체를 재설계**해야 한다.
+> ⛔ 이번 gap closure 에서는 하지 않는다.
+
+#### W-4 — `POST /api/boms/{id}/clone` source eligibility (재확인)
+
+D-6 의 `clone 은 **모든 status 에서** 가능하다` 를 **그대로 유지**한다
+(원본을 읽기만 하기 때문). ⛔ 별도 status 제한을 발명하지 않는다.
+
+#### W-5 — clone `BomHeader` copy/reset matrix (신규 확정)
+
+D-2 의 header scalar 19개 전부를 확정한다.
+
+| `BomHeader` 필드 | clone 결과 |
+|---|---|
+| `id` | **NEW** |
+| `parentSkuId` | COPY |
+| `bomType` | COPY |
+| `version` | **`request.newVersion`** |
+| `status` | **`DRAFT`** |
+| `outputQty` | COPY |
+| `outputUom` | COPY |
+| `effectiveFrom` | **`request.effectiveFrom`** |
+| `effectiveTo` | **`null` RESET** |
+| `productionPartnerId` | COPY |
+| `destinationWarehouseId` | COPY |
+| `overallLossRate` | COPY |
+| `description` | COPY |
+| `changeReason` | **`request.changeReason`** |
+| `createdAt` | **server now** |
+| `createdBy` | **clone 실행 actor 의 `userId`** |
+| `approvedAt` | **`null` RESET** |
+| `approvedBy` | **`null` RESET** |
+| `activatedAt` | **`null` RESET** |
+
+⛔ **source 의 승인·활성 metadata 를 절대 승계하지 않는다.** 승계하면
+"승인된 적 없는 `DRAFT` 인데 `approvedBy` 가 있는 행" 이 생겨 승인 이력이
+오염된다.
+
+⛔ **`effectiveTo` 를 승계하지 않는다.** source 의 종료일은 **source
+temporal chain 의 결과**이지 새 버전의 기간 상한이 아니다. 새 candidate 의
+상한은 이후 activation chain(D-7 6단계)이 다시 결정한다.
+
+#### W-6 — clone `BomLine` copy/reset matrix (신규 확정)
+
+> ⚠️ **정정** — `legacyBomCode` · `legacyCommonBomCode` 는 `BomHeader` 가
+> 아니라 **`BomLine` scalar** 다 (`prisma/schema.prisma` `model BomLine`).
+
+source line 마다 새 row 를 만든다.
+
+| `BomLine` 필드 | clone 결과 |
+|---|---|
+| `id` | **NEW** |
+| `bomHeaderId` | **새 header 의 id** |
+| `lineNo` | COPY |
+| `componentSkuId` | COPY |
+| `quantityPer` | COPY |
+| `quantityStatus` | COPY |
+| `uom` | COPY |
+| `lossRate` | COPY |
+| `componentRole` | COPY |
+| `supplyType` | COPY |
+| `alternateGroup` | COPY |
+| `isRequired` | COPY |
+| `issueWarehouseId` | COPY |
+| `packQuantity` | COPY |
+| `specification` | COPY |
+| `note` | COPY |
+| `legacyBomCode` | **`null` RESET** |
+| `legacyCommonBomCode` | **`null` RESET** |
+
+★ **집계 — `NEW 2 + COPY 14 + RESET 2 = 18`.** (T07-5 구현 시 확인. 위 표의
+행 수와 같으며 설계 변경이 아니다.) `BomLine` 의 scalar 는 정확히 18개이므로
+셋의 합이 18 이 아니면 어느 컬럼이 clone 에서 빠졌다는 뜻이다.
+`tests/db/bom-workflow-api.test.ts` §`★★ Line 18 scalar — NEW 2 + COPY 14 +
+RESET 2` 가 `Object.keys(row)` 를 이 세 배열의 합집합과 대조해 고정한다.
+
+⛔ `quantityPer`·`quantityStatus` 를 초기화하거나 **자동 `CONFIRMED` 로
+만들지 않는다** (D-10 자동 1 금지와 같은 방향).
+⛔ `lineNo` 를 새로 채번하지 않는다 — source line 의 순서·identity 의미를
+보존한다.
+
+`legacy*` 두 필드는 **migration source row 를 가리키는 추적자**다. 새
+application-created 버전이 같은 legacy source 인 것처럼 남으면 안 되므로
+reset 한다. clone 의 계보는 아래 `sourceBomId` Audit 으로 추적한다.
+
+#### W-7 — clone Audit granularity (D-16 CLARIFIED)
+
+`CLONE` action 문자열을 만들지 않는다 (D-16 그대로).
+
+성공한 clone 이 남기는 Audit:
+
+| entityType | action | 건수 | 내용 |
+|---|---|---|---|
+| `BomHeader` | `CREATE` | **1** | `afterValue` 에 원본 **`sourceBomId`**, `reason` 은 `request.changeReason` |
+| `BomLine` | `CREATE` | **N** (복제된 라인 수) | `beforeValue = null`, `afterValue = ` 새 line view |
+
+즉 라인 N개면 **header `CREATE` 1 + line `CREATE` N** 이다.
+
+> ⚠️ **CLARIFIED** — D-16 의 "**`bulk-confirm-qty` 는 라인마다 audit 을
+> 만들지 않는다**" 는 **그 endpoint 전용 압축 예외**다. clone 으로 확장하지
+> 않는다. clone 은 라인을 **새로 만드는** 행위이고, D-16 표가 이미
+> `BomLine` `CREATE` 를 "라인 개별 변경" 으로 정의했다. 라인별 Audit 이
+> 있어야 **source 가 나중에 수정되더라도 clone 당시 새 버전이 어떤 라인
+> 상태로 생성됐는지** Audit 만으로 독립 복원할 수 있다.
+
+| 상황 | Audit |
+|---|---|
+| clone 성공 | header 1 + line N |
+| clone **멱등 replay** | **0** |
+| clone 실패·rollback (cycle·version 중복 등) | **0** |
+
+#### W-8 — workflow 응답 · HTTP status (신규 확정)
+
+| endpoint | 최초 실행 | replay |
+|---|---|---|
+| `submit` · `approve` · `reject` · `activate` · `deactivate` · `archive` | **200** `{bom, requestId}` | — (멱등 키 없음) |
+| `clone` | **201** `{bom, requestId}` | **200** `{bom, requestId}` |
+
+근거는 **기존 코드 convention** 이다:
+
+- `src/app/api/skus/[id]/submit/route.ts` — workflow 응답이
+  `{sku, …, requestId}` + 기본 200
+- `src/app/api/boms/route.ts` · `…/lines/route.ts` — create + 멱등이
+  `status: replayed ? 200 : 201`
+
+⛔ 별도 workflow result DTO 를 만들지 않는다 — T07-3 의 `BomHeaderView` /
+`BomDetailView` projection helper 를 재사용한다. Decimal 문자열 · `YYYY-MM-DD`
+날짜 계약도 그대로다.
+
+#### W-9 — clone 멱등 scope (재확인)
+
+D-17 표 그대로 **`bom:{bomId}:clone`** 이다 (`bomId` = **source** BOM).
+
+| 상황 | 결과 |
+|---|---|
+| 같은 키 + 같은 payload | 저장된 snapshot **replay** (200) |
+| 같은 키 + 다른 payload | **409 `IDEMPOTENCY_KEY_REUSED`** |
+| 최초 실행 | **201** |
+
+⛔ workflow 6종(submit·approve·reject·activate·deactivate·archive)에는
+멱등 키가 없다 (D-17). 자연 멱등이며 반복은 200 no-op 이다.
 
 ### D-9 — line schema 필드별 계약
 
@@ -1205,6 +1660,10 @@ enum 변경이 필요 없다.
 `afterValue` 에 `{confirmedLineCount, lineIds}` 요약을 담는다.
 (일반 line PATCH 는 개별 audit 을 유지한다 — 사람이 한 건씩 고치는 행위다.)
 
+> ⚠️ **CLARIFIED BY ★ T07-5 workflow gap closure (W-7)** — 이 압축은
+> **`bulk-confirm-qty` 전용 예외**다. **`clone` 으로 확장하지 않는다** — clone 은
+> 라인을 새로 만드는 행위이므로 `BomLine` `CREATE` 를 라인마다 남긴다.
+
 audit write 는 **business write 와 같은 트랜잭션**이다(기존 규약).
 SKU 변경이력 화면의 `SKU_HISTORY_ENTITY_TYPES` 는 **이번에 바꾸지 않는다** —
 BOM 이력은 BOM 상세의 `변경이력` 탭(D-31)이 담당한다.
@@ -1219,7 +1678,7 @@ BOM 이력은 BOM 상세의 `변경이력` 탭(D-31)이 담당한다.
 | `POST /api/boms` | `bom:create` | 저장된 snapshot 재반환 |
 | `POST /api/boms/{id}/lines` | `bom:{bomId}:line:create` | 저장된 snapshot 재반환 |
 | `POST /api/boms/{id}/lines/bulk-confirm-qty` | `bom:{bomId}:line:bulk-confirm` | 저장된 snapshot 재반환 |
-| `POST /api/boms/{id}/clone` | `bom:{bomId}:clone` | 저장된 snapshot 재반환 |
+| `POST /api/boms/{id}/clone` | `bom:{bomId}:clone` | 저장된 snapshot 재반환 (최초 **201** / replay **200** — W-8·W-9) |
 | `POST /api/boms/import` | (T07-8 유예) | — |
 
 scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포함한 것과 동일)

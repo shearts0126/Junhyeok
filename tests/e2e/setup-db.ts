@@ -351,6 +351,24 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ── workflow E2E 전용 (T07-5) ────────────────────────────
+      //
+      // ⚠️ **BOM 을 하나도 갖지 않는 ACTIVE SKU** 다. workflow E2E 는 BOM 을
+      //    만들고 활성화·사용종료까지 하므로, 위 `ZZS-E2E-020` 처럼 이미
+      //    ACTIVE BOM 이 붙은 SKU 를 쓰면 그 픽스처의 기간이 마감되어
+      //    `bom-tab.e2e.ts` 단언을 깨뜨린다.
+      // ★ 테스트마다 **다른 parent** 를 쓴다 — 같은 parent 에 여러 번
+      //   activate 하면 서로의 temporal chain 을 건드린다.
+      //   `ZZS-E2E-030` 은 구성품 전용이고 031~035 가 상위다.
+      ...Array.from({ length: 6 }, (_, index) => ({
+        skuCode: `ZZS-E2E-03${index}`,
+        skuName: `E2E 워크플로 ${index === 0 ? '구성품' : `상위 ${index}`}`,
+        itemType: 'FINISHED_GOOD' as const,
+        status: 'ACTIVE' as const,
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      })),
     ],
   });
 

@@ -157,4 +157,43 @@ export {
 } from './bulk-confirm-qty';
 export { deleteBomLine } from './delete-line';
 export { listBomWhereUsed, type WhereUsedResult } from './where-used';
+
+// ── T07-5 workflow ───────────────────────────────────────────
+export {
+  BOM_TRANSITIONS,
+  BOM_WORKFLOW_ACTIONS,
+  bomInvalidTransition,
+  resolveBomTransition,
+  shouldPerformBomTransition,
+  type BomTransitionOutcome,
+  type BomWorkflowAction,
+} from './transitions';
+export {
+  approveBom,
+  archiveBom,
+  loadBomDetailInTransaction,
+  rejectBom,
+  submitBom,
+  BOM_WORKFLOW_ENTITY_TYPE,
+  type BomWorkflowResult,
+} from './workflow';
+export { activateBom, deactivateBom } from './activation';
+export { bomCloneRouteScope, cloneBom, parseCloneSnapshot, type CloneBomResult } from './clone-bom';
+export {
+  parseActivateBomInput,
+  parseApproveBomInput,
+  parseArchiveBomInput,
+  parseCloneBomInput,
+  parseDeactivateBomInput,
+  parseRejectBomInput,
+  parseSubmitBomInput,
+  BOM_WORKFLOW_TEXT_MAX,
+  type ActivateBomInput,
+  type ApproveBomInput,
+  type ArchiveBomInput,
+  type CloneBomInput,
+  type DeactivateBomInput,
+  type RejectBomInput,
+  type SubmitBomInput,
+} from './workflow-dto';
 export { hasBomUsage, type HasBomUsageDependencies } from './has-bom-usage';
