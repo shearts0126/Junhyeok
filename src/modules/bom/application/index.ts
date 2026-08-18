@@ -5,8 +5,7 @@
  *
  * ⚠️ 이 barrel 은 Prisma 런타임을 끌고 온다 — **클라이언트 번들에서 import 하지
  *    않는다** (T06 `supplier/application` 과 같은 경계).
- * ⛔ workflow(submit·approve·reject·activate·deactivate·archive·clone·import)
- *    ·explode·cost 는 여기 없다 — T07-4 이후의 몫이다.
+ * ⛔ cost·import 는 여기 없다 — T07-7 이후의 몫이다.
  */
 
 // ── T07-2 domain services ────────────────────────────────────
@@ -63,6 +62,7 @@ export {
   parseCreateBomInput,
   parseCreateLineInput,
   parseDateOnly,
+  parseExplodeBomQuery,
   parseListBomsQuery,
   parseSkuRefId,
   parseUpdateBomInput,
@@ -81,6 +81,7 @@ export {
   type BulkConfirmQtyItem,
   type CreateBomInput,
   type CreateLineInput,
+  type ExplodeBomQuery,
   type ListBomsQuery,
   type UpdateBomInput,
   type UpdateLineInput,
@@ -95,12 +96,14 @@ export {
   toWhereUsedView,
   BOM_HEADER_VIEW_INCLUDE,
   BOM_LINE_VIEW_INCLUDE,
+  EXPLODE_LINE_INCLUDE,
   WHERE_USED_INCLUDE,
   type BomDetailView,
   type BomHeaderView,
   type BomLineView,
   type BomWhereUsedView,
   type ComponentSkuRefView,
+  type ExplodedNodeView,
   type SkuRefView,
   type SupplierRefView,
 } from './views';
@@ -197,3 +200,6 @@ export {
   type SubmitBomInput,
 } from './workflow-dto';
 export { hasBomUsage, type HasBomUsageDependencies } from './has-bom-usage';
+
+// ── T07-6 explode ────────────────────────────────────────────
+export { explodeBom, type ExplodeBomResult } from './explode-bom';

@@ -572,18 +572,20 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     );
   });
 
-  it('★ route 목록 — T07-5 workflow 7종이 들어왔다 (예상된 회귀)', async () => {
+  it('★ route 목록 — T07-6 explode 가 들어왔다 (예상된 회귀)', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
     expect(readdirSync(bomsDir).sort()).toEqual(['[id]', 'route.ts']);
-    // ✏️ T07-5 가 workflow 7종을 추가했다. `lines` 아래 `bulk-confirm-qty` 는 T07-4.
+    // ✏️ T07-5 가 workflow 7종을, T07-6 이 `explode` 를 추가했다.
+    //    `lines` 아래 `bulk-confirm-qty` 는 T07-4.
     expect(readdirSync(`${bomsDir}/[id]`).sort()).toEqual([
       'activate',
       'approve',
       'archive',
       'clone',
       'deactivate',
+      'explode',
       'lines',
       'reject',
       'route.ts',
@@ -596,7 +598,7 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     ]);
   });
 
-  it('★ T07-6·T07-7·import route 는 여전히 0개다', async () => {
+  it('★ T07-7·T07-8·import route 는 여전히 0개다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
@@ -605,7 +607,8 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
       ...readdirSync(`${bomsDir}/[id]`),
       ...readdirSync(`${bomsDir}/[id]/lines`),
     ];
-    for (const forbidden of ['import', 'explode', 'cost', 'max-assembly-qty', 'status']) {
+    // ✏️ `explode` 는 T07-6 이 추가했으므로 이 목록에서 뺀다.
+    for (const forbidden of ['import', 'cost', 'max-assembly-qty', 'status']) {
       expect(all, forbidden).not.toContain(forbidden);
     }
   });

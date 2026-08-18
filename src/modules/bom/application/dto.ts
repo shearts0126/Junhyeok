@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { ValidationError } from '@/shared/errors';
 
+import { BOM_MAX_LEVEL } from '../domain/constants';
+
 /**
  * BOM API DTO (T07-3).
  *
@@ -210,6 +212,62 @@ export function parseListBomsQuery(searchParams: URLSearchParams): ListBomsQuery
   const result = listBomsQuerySchema.safeParse(raw);
   if (!result.success) {
     throw toValidationError(result.error.issues, 'BOM 목록 쿼리가 올바르지 않습니다.');
+  }
+  return result.data;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GET /api/boms/{id}/explode — 전개 쿼리 (D-18 · D-21 · T07-6)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 쿼리는 정확히 **3개** — `qty` · `asOf` · `maxLevel` (D-18).
+ * 그 밖의 키는 **400** — 조용히 무시하지 않는다.
+ *
+ * | key | 계약 |
+ * |---|---|
+ * | `qty` | Decimal(18,6) 문자열 `> 0`. 생략 시 **`"1"`** (D-18) |
+ * | `asOf` | `YYYY-MM-DD`. 생략 시 **서버 업무일자**(Asia/Seoul, D-21) |
+ * | `maxLevel` | 정수 `1..BOM_MAX_LEVEL`. 생략 시 `BOM_MAX_LEVEL` (D-18) |
+ *
+ * ⚠️ `maxLevel` 의 **범위 밖 400** 과, 실제 graph 깊이가 요청 `maxLevel` 을
+ *    넘는 **422 `BOM_MAX_LEVEL_EXCEEDED`** 는 서로 다른 사건이다.
+ *    전자는 요청 형식 오류, 후자는 데이터 사실이다.
+ *
+ * ⛔ 숫자 `10` 을 여기 다시 적지 않는다 — `BOM_MAX_LEVEL` 상수를 쓴다.
+ * ⛔ `qty` 를 `Number()`/`parseFloat()` 로 읽지 않는다 — 문자열로 통과시키고
+ *    계산은 `shared/decimal` 이 한다.
+ */
+export const explodeBomQuerySchema = z.strictObject({
+  qty: positiveDecimal18_6.default('1'),
+  asOf: dateString.optional(),
+  maxLevel: z.coerce.number().int().min(1).max(BOM_MAX_LEVEL).default(BOM_MAX_LEVEL),
+});
+
+export type ExplodeBomQuery = z.infer<typeof explodeBomQuerySchema>;
+
+export function parseExplodeBomQuery(searchParams: URLSearchParams): ExplodeBomQuery {
+  const allowed = new Set(Object.keys(explodeBomQuerySchema.shape));
+  const unknownKeys = [...new Set([...searchParams.keys()])].filter((key) => !allowed.has(key));
+  if (unknownKeys.length > 0) {
+    throw new ValidationError(
+      unknownKeys.map((key) => ({
+        path: key,
+        message: '지원하지 않는 파라미터입니다. (qty · asOf · maxLevel 만 받습니다)',
+      })),
+      { message: '지원하지 않는 전개 파라미터가 있습니다.' },
+    );
+  }
+
+  const raw: Record<string, string> = {};
+  for (const key of allowed) {
+    const value = searchParams.get(key);
+    if (value !== null) raw[key] = value;
+  }
+
+  const result = explodeBomQuerySchema.safeParse(raw);
+  if (!result.success) {
+    throw toValidationError(result.error.issues, 'BOM 전개 쿼리가 올바르지 않습니다.');
   }
   return result.data;
 }
