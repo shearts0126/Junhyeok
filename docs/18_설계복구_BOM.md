@@ -413,6 +413,10 @@ UI 는 직전 버전 문자열을 **placeholder 로만** 보여줄 수 있다(�
 | `ACTIVE` | `INACTIVE` | `…/deactivate` | `bom.approve` | `{effectiveTo, reason}` 필수 |
 | `DRAFT`·`REJECTED` | `ARCHIVED` | `…/archive` | `bom.approve` | ★ **신규 endpoint** |
 
+> ⚠️ **CLARIFIED BY ★ T07-5 workflow gap closure** — `archive` 의 body(`{reason}`
+> 필수)와 `deactivate` 의 **기간 변경 규칙**(단축·동일만 허용 · 미래 종료 금지 ·
+> successor 경계)은 이 표에 없었다. W-1 · W-3 이 확정한다.
+
 **문서에 없어 여기서 확정한 4건**
 
 1. **`REJECTED → DRAFT` 는 만들지 않는다.** 대신 `REJECTED` 에서 편집을
@@ -541,6 +545,255 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 (`03v2` 20필드에 없음) 신설하지 않는다. `createdBy` 가 `NULL` 이면(마이그레이션
 유입분) 자가승인 검사를 **통과**시킨다 — 비교 대상이 없으므로 같은 사람일 수
 없다. (T06-3 의 `createdBy` 취급과 동일.)
+
+### ★ T07-5 workflow gap closure (확정)
+
+> T07-5 착수 전 hard gate 조사에서 **D-6·D-7·D-8·D-14·D-16·D-17 이 확정하지
+> **않은** 계약 3건**(archive body · deactivate 기간 규칙 · clone copy/reset
+> matrix)이 드러났다. 이 절이 그 3건과 응답·멱등 계약을 authoritative 로
+> 확정한다. **기존 결정을 뒤집지 않으며**, 충돌하는 문장이 있으면 원문을
+> 남긴 채 `CLARIFIED BY` 로 표시한다.
+>
+> 이 절은 T07-4 의 `bulk-confirm gap closure` 와 같은 성격이다.
+
+#### W-1 — `POST /api/boms/{id}/archive` body (D-6 표 `archive` 행 CLARIFIED)
+
+D-6 전이표의 archive 행 `비고` 는 `★ 신규 endpoint` 만 적고 body 를 말하지
+않았다. 아래로 확정한다.
+
+```
+{ reason: string }        // 필수
+```
+
+| 항목 | 확정 |
+|---|---|
+| `reason` | **필수**. `strictObject` · trim · trim 후 blank 면 **400** |
+| unknown field | **400** |
+| 저장 위치 | **`AuditLog.reason`**. ⛔ `BomHeader` 에 `archiveReason`·`reason` 컬럼을 신설하지 않는다 |
+| 대상 status | `DRAFT` · `REJECTED` 만 (D-6 그대로). 그 밖은 invalid |
+| `ARCHIVED` 반복 | **200 no-op** · write 0 · audit 0 |
+| permission | `bom.approve` (D-15 예약 그대로) |
+
+`reason` 을 필수로 두는 근거: archive 는 목록에서 감추는 **종결 행위**이며,
+같은 성격의 `reject`(`{reason}` 필수) · `deactivate`(`{effectiveTo, reason}`
+필수)와 계약을 맞춘다. `{note?}` 는 상태를 앞으로 미는 `submit`·`approve`
+쪽 어휘이므로 쓰지 않는다.
+
+#### W-2 — `POST /api/boms/{id}/activate` (변경 없음)
+
+D-7 chain 알고리즘과 edge case 표, D-8 의 approve/activate 분리를 **그대로
+유지한다.** 이 gap closure 는 activate 를 재설계하지 않는다.
+
+재확인 사항(원문 그대로):
+
+- `T := body.effectiveFrom ?? target.effectiveFrom`
+- 3단계 `target.effectiveFrom := T` — 요청이 값을 주면 **저장값이 바뀐다**
+- predecessor 는 `effectiveTo := T` 로 닫고 **`status` 는 `ACTIVE` 유지**
+- `target.effectiveTo := successor?.effectiveFrom ?? null`
+- 최종 `T` 기준 cycle 재검사 (D-13 검사표 — approve 통과 재사용 금지)
+- 반복 activate → **200 no-op**
+- 자가승인 검사 **없음** (D-8)
+
+#### W-3 — `POST /api/boms/{id}/deactivate` 기간 규칙 (D-6 표 `deactivate` 행 CLARIFIED)
+
+D-6 은 body `{effectiveTo, reason}` 필수까지만 정했다. **기간 변경 규칙**을
+아래로 확정한다.
+
+##### ★ deactivate 는 "미래 예약 종료"가 아니다
+
+`resolveEffectiveBom` 은 **`status = 'ACTIVE'` 인 행만** 후보로 고른다
+(`resolve-effective-bom.ts`). 그런데 deactivate 는 **즉시** `ACTIVE →
+INACTIVE` 로 전이한다. 따라서 오늘 요청하면서 `effectiveTo` 를 미래로 주면
+**DB 기간은 다음 달까지라고 적혀 있는데 resolver 에서는 오늘 즉시 사라지는
+모순**이 생긴다.
+
+이 gap closure 는 **T07-2 resolver 를 바꾸지 않는다.** 대신 `deactivate` 를
+**즉시·소급 explicit withdrawal(명시적 사용중지)** 로 정의해 모순을 없앤다.
+
+##### 규칙
+
+```
+effectiveFrom < requestedEffectiveTo <= businessDateOf(now)
+```
+
+| 조건 | 판정 |
+|---|---|
+| `requestedEffectiveTo` 가 **과거** | ✅ 허용 |
+| `requestedEffectiveTo` 가 **오늘** | ✅ 허용 |
+| `requestedEffectiveTo` 가 **미래** | ⛔ **금지** |
+| `requestedEffectiveTo <= effectiveFrom` | ⛔ 금지 (DB CHECK 와 동일 방향) |
+| 현재 `effectiveTo == null` | `requestedEffectiveTo` 저장 |
+| 현재 `effectiveTo != null` 이고 `requested < 현재` | ✅ **단축 허용** |
+| 현재 `effectiveTo != null` 이고 `requested == 현재` | ✅ 허용. 기간 write 는 no-change 여도 **`ACTIVE → INACTIVE` 전이는 수행** |
+| 현재 `effectiveTo != null` 이고 `requested > 현재` | ⛔ **금지** — 기간 연장·reopen 없음 |
+| nearest successor `ACTIVE` 존재 | `requestedEffectiveTo <= successor.effectiveFrom` 이어야 한다 |
+
+"기간은 줄어들 뿐 늘어나지 않는다" 는 D-7 이 predecessor 를 **닫기만** 하고
+늘리지 않는 것과 같은 방향이다.
+
+successor 경계는 **서비스가 먼저 막는다.** DB EXCLUDE 는 최종 backstop 일
+뿐이며 정상 validation 을 대체하지 않는다 (409 만 나오면 사용자가 원인을
+알 수 없다).
+
+##### 오류코드
+
+기간 semantic 위반은 **새 BOM 오류코드를 만들지 않는다.** T07-3 의 적용기간
+검증 선례(`assertPeriodOrder`)와 동일하게 공통 **`VALIDATION_ERROR` / 400**
+을 쓴다. ⛔ D-29 의 15종을 늘리지 않는다.
+
+##### 결과
+
+| 항목 | 확정 |
+|---|---|
+| status | `ACTIVE → INACTIVE` |
+| `reason` | `AuditLog.reason` 에 저장. ⛔ 컬럼 신설 금지 |
+| Audit | `BomHeader` `DEACTIVATE` 1건 |
+| `INACTIVE` 반복 | **200 no-op** · write 0 · audit 0 |
+
+##### ★ semantic consequence — 명시한다
+
+**`INACTIVE` 가 된 행은 `ACTIVE`-only resolver 의 후보가 아니다.** 따라서
+`effectiveTo` 이전의 **과거 `asOf` 에서도 선택되지 않는다.**
+
+이것은 새 변경이 아니라 **현재 승인된 status/resolver 계약의 귀결**이다.
+즉 `deactivate` 는 단순한 "기간 만료"가 아니라 **operational withdrawal** 이다.
+
+> "deactivate 후에도 종료일 이전의 과거 `asOf` 에서는 계속 선택돼야 한다" 를
+> 원한다면 **T07-2 `resolveEffectiveBom` predicate 자체를 재설계**해야 한다.
+> ⛔ 이번 gap closure 에서는 하지 않는다.
+
+#### W-4 — `POST /api/boms/{id}/clone` source eligibility (재확인)
+
+D-6 의 `clone 은 **모든 status 에서** 가능하다` 를 **그대로 유지**한다
+(원본을 읽기만 하기 때문). ⛔ 별도 status 제한을 발명하지 않는다.
+
+#### W-5 — clone `BomHeader` copy/reset matrix (신규 확정)
+
+D-2 의 header scalar 19개 전부를 확정한다.
+
+| `BomHeader` 필드 | clone 결과 |
+|---|---|
+| `id` | **NEW** |
+| `parentSkuId` | COPY |
+| `bomType` | COPY |
+| `version` | **`request.newVersion`** |
+| `status` | **`DRAFT`** |
+| `outputQty` | COPY |
+| `outputUom` | COPY |
+| `effectiveFrom` | **`request.effectiveFrom`** |
+| `effectiveTo` | **`null` RESET** |
+| `productionPartnerId` | COPY |
+| `destinationWarehouseId` | COPY |
+| `overallLossRate` | COPY |
+| `description` | COPY |
+| `changeReason` | **`request.changeReason`** |
+| `createdAt` | **server now** |
+| `createdBy` | **clone 실행 actor 의 `userId`** |
+| `approvedAt` | **`null` RESET** |
+| `approvedBy` | **`null` RESET** |
+| `activatedAt` | **`null` RESET** |
+
+⛔ **source 의 승인·활성 metadata 를 절대 승계하지 않는다.** 승계하면
+"승인된 적 없는 `DRAFT` 인데 `approvedBy` 가 있는 행" 이 생겨 승인 이력이
+오염된다.
+
+⛔ **`effectiveTo` 를 승계하지 않는다.** source 의 종료일은 **source
+temporal chain 의 결과**이지 새 버전의 기간 상한이 아니다. 새 candidate 의
+상한은 이후 activation chain(D-7 6단계)이 다시 결정한다.
+
+#### W-6 — clone `BomLine` copy/reset matrix (신규 확정)
+
+> ⚠️ **정정** — `legacyBomCode` · `legacyCommonBomCode` 는 `BomHeader` 가
+> 아니라 **`BomLine` scalar** 다 (`prisma/schema.prisma` `model BomLine`).
+
+source line 마다 새 row 를 만든다.
+
+| `BomLine` 필드 | clone 결과 |
+|---|---|
+| `id` | **NEW** |
+| `bomHeaderId` | **새 header 의 id** |
+| `lineNo` | COPY |
+| `componentSkuId` | COPY |
+| `quantityPer` | COPY |
+| `quantityStatus` | COPY |
+| `uom` | COPY |
+| `lossRate` | COPY |
+| `componentRole` | COPY |
+| `supplyType` | COPY |
+| `alternateGroup` | COPY |
+| `isRequired` | COPY |
+| `issueWarehouseId` | COPY |
+| `packQuantity` | COPY |
+| `specification` | COPY |
+| `note` | COPY |
+| `legacyBomCode` | **`null` RESET** |
+| `legacyCommonBomCode` | **`null` RESET** |
+
+⛔ `quantityPer`·`quantityStatus` 를 초기화하거나 **자동 `CONFIRMED` 로
+만들지 않는다** (D-10 자동 1 금지와 같은 방향).
+⛔ `lineNo` 를 새로 채번하지 않는다 — source line 의 순서·identity 의미를
+보존한다.
+
+`legacy*` 두 필드는 **migration source row 를 가리키는 추적자**다. 새
+application-created 버전이 같은 legacy source 인 것처럼 남으면 안 되므로
+reset 한다. clone 의 계보는 아래 `sourceBomId` Audit 으로 추적한다.
+
+#### W-7 — clone Audit granularity (D-16 CLARIFIED)
+
+`CLONE` action 문자열을 만들지 않는다 (D-16 그대로).
+
+성공한 clone 이 남기는 Audit:
+
+| entityType | action | 건수 | 내용 |
+|---|---|---|---|
+| `BomHeader` | `CREATE` | **1** | `afterValue` 에 원본 **`sourceBomId`**, `reason` 은 `request.changeReason` |
+| `BomLine` | `CREATE` | **N** (복제된 라인 수) | `beforeValue = null`, `afterValue = ` 새 line view |
+
+즉 라인 N개면 **header `CREATE` 1 + line `CREATE` N** 이다.
+
+> ⚠️ **CLARIFIED** — D-16 의 "**`bulk-confirm-qty` 는 라인마다 audit 을
+> 만들지 않는다**" 는 **그 endpoint 전용 압축 예외**다. clone 으로 확장하지
+> 않는다. clone 은 라인을 **새로 만드는** 행위이고, D-16 표가 이미
+> `BomLine` `CREATE` 를 "라인 개별 변경" 으로 정의했다. 라인별 Audit 이
+> 있어야 **source 가 나중에 수정되더라도 clone 당시 새 버전이 어떤 라인
+> 상태로 생성됐는지** Audit 만으로 독립 복원할 수 있다.
+
+| 상황 | Audit |
+|---|---|
+| clone 성공 | header 1 + line N |
+| clone **멱등 replay** | **0** |
+| clone 실패·rollback (cycle·version 중복 등) | **0** |
+
+#### W-8 — workflow 응답 · HTTP status (신규 확정)
+
+| endpoint | 최초 실행 | replay |
+|---|---|---|
+| `submit` · `approve` · `reject` · `activate` · `deactivate` · `archive` | **200** `{bom, requestId}` | — (멱등 키 없음) |
+| `clone` | **201** `{bom, requestId}` | **200** `{bom, requestId}` |
+
+근거는 **기존 코드 convention** 이다:
+
+- `src/app/api/skus/[id]/submit/route.ts` — workflow 응답이
+  `{sku, …, requestId}` + 기본 200
+- `src/app/api/boms/route.ts` · `…/lines/route.ts` — create + 멱등이
+  `status: replayed ? 200 : 201`
+
+⛔ 별도 workflow result DTO 를 만들지 않는다 — T07-3 의 `BomHeaderView` /
+`BomDetailView` projection helper 를 재사용한다. Decimal 문자열 · `YYYY-MM-DD`
+날짜 계약도 그대로다.
+
+#### W-9 — clone 멱등 scope (재확인)
+
+D-17 표 그대로 **`bom:{bomId}:clone`** 이다 (`bomId` = **source** BOM).
+
+| 상황 | 결과 |
+|---|---|
+| 같은 키 + 같은 payload | 저장된 snapshot **replay** (200) |
+| 같은 키 + 다른 payload | **409 `IDEMPOTENCY_KEY_REUSED`** |
+| 최초 실행 | **201** |
+
+⛔ workflow 6종(submit·approve·reject·activate·deactivate·archive)에는
+멱등 키가 없다 (D-17). 자연 멱등이며 반복은 200 no-op 이다.
 
 ### D-9 — line schema 필드별 계약
 
@@ -1205,6 +1458,10 @@ enum 변경이 필요 없다.
 `afterValue` 에 `{confirmedLineCount, lineIds}` 요약을 담는다.
 (일반 line PATCH 는 개별 audit 을 유지한다 — 사람이 한 건씩 고치는 행위다.)
 
+> ⚠️ **CLARIFIED BY ★ T07-5 workflow gap closure (W-7)** — 이 압축은
+> **`bulk-confirm-qty` 전용 예외**다. **`clone` 으로 확장하지 않는다** — clone 은
+> 라인을 새로 만드는 행위이므로 `BomLine` `CREATE` 를 라인마다 남긴다.
+
 audit write 는 **business write 와 같은 트랜잭션**이다(기존 규약).
 SKU 변경이력 화면의 `SKU_HISTORY_ENTITY_TYPES` 는 **이번에 바꾸지 않는다** —
 BOM 이력은 BOM 상세의 `변경이력` 탭(D-31)이 담당한다.
@@ -1219,7 +1476,7 @@ BOM 이력은 BOM 상세의 `변경이력` 탭(D-31)이 담당한다.
 | `POST /api/boms` | `bom:create` | 저장된 snapshot 재반환 |
 | `POST /api/boms/{id}/lines` | `bom:{bomId}:line:create` | 저장된 snapshot 재반환 |
 | `POST /api/boms/{id}/lines/bulk-confirm-qty` | `bom:{bomId}:line:bulk-confirm` | 저장된 snapshot 재반환 |
-| `POST /api/boms/{id}/clone` | `bom:{bomId}:clone` | 저장된 snapshot 재반환 |
+| `POST /api/boms/{id}/clone` | `bom:{bomId}:clone` | 저장된 snapshot 재반환 (최초 **201** / replay **200** — W-8·W-9) |
 | `POST /api/boms/import` | (T07-8 유예) | — |
 
 scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포함한 것과 동일)
