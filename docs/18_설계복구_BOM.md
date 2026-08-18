@@ -500,6 +500,75 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 | 4. predecessor 의 historical period 보존 | `effectiveFrom` 을 건드리지 않고 `effectiveTo` 만 닫는다 |
 | 5. race 안전 | 부모 SKU FOR UPDATE 직렬화 + EXCLUDE 이중 방어 |
 
+#### ★ `effectiveFrom` 불변의 **범위** — CLARIFIED BY T07-5 workflow gap closure (R1)
+
+> 위 4번의 "`effectiveFrom` 을 건드리지 않고" 와 알고리즘 3단계
+> "`target.effectiveFrom := T`" 는 **문장만 보면 충돌처럼 보인다.** 아래가
+> 확정된 범위이며, 두 문장 모두 그대로 유효하다.
+
+**여기서 "불변" 은 이미 `ACTIVE` chain 에 포함된 predecessor·successor 의
+start boundary 를 activation 이 재작성하지 않는다는 뜻이다.** activate 대상인
+`APPROVED` candidate 는 endpoint 의 `effectiveFrom` override 가 있을 경우
+`ACTIVE` 전환 직전에 `T` 로 확정할 수 있다.
+
+| 행 | `effectiveFrom` | `effectiveTo` | `status` |
+|---|---|---|---|
+| **candidate** (activate 대상) | **`T`** — override 가 있으면 갱신, 생략하면 기존값 유지 | `successor?.effectiveFrom ?? null` | `ACTIVE` (+ `activatedAt := now()`) |
+| **predecessor** | ⛔ **절대 변경하지 않는다** | 필요 시 `T` 로 마감 (5단계 조건) | ⛔ **`ACTIVE` 유지** |
+| **successor** | ⛔ 변경하지 않는다 | ⛔ 변경하지 않는다 | ⛔ 변경하지 않는다 |
+
+즉 activate 의 `effectiveFrom` override 는 **candidate 의 `ACTIVE` interval
+start boundary 를 확정하는 명시적 예외**이며, 그 외 어떤 행의 시작일도
+activation 이 다시 쓰지 않는다. 이 해석이 "미래 `T` 라도 predecessor 가
+`[…, T)` 까지 살아 있다" 는 D-7 요구 3번과 정확히 일관된다.
+
+##### cycle evaluationDate 와 저장값은 **다른 개념**이다
+
+T07-2 계약 그대로 **`evaluationDate = T`** 로 candidate graph 를 재검사한다
+(D-13 검사표). 이는 "graph 를 어느 날짜 기준으로 평가하는가" 의 문제이고,
+위 표의 `candidate.effectiveFrom := T` 는 "무엇을 저장하는가" 의 문제다.
+**둘 다 수행하며 서로를 대체하지 않는다.**
+
+⛔ cycle validator 안에서 `header.effectiveFrom` 을 다시 읽어 caller 가 준
+`T` 를 덮어쓰지 않는다.
+
+##### 예시 3종 (R2)
+
+**A. override 생략**
+
+```
+candidate.effectiveFrom = 2027-06-01
+POST …/activate  {}
+
+→ T = 2027-06-01
+→ candidate.effectiveFrom = 2027-06-01   (그대로)
+```
+
+**B. override 지정**
+
+```
+candidate.effectiveFrom = 2027-06-01
+POST …/activate  { effectiveFrom: "2027-07-01" }
+
+→ T = 2027-07-01
+→ candidate.effectiveFrom = 2027-07-01   ★ 갱신된다
+
+predecessor 가 있으면:
+   predecessor.effectiveTo   = 2027-07-01
+   predecessor.effectiveFrom = ⛔ 변경 없음
+   predecessor.status        = ACTIVE 유지
+```
+
+**C. successor 존재**
+
+```
+successor.effectiveFrom = 2027-10-01
+candidate T             = 2027-07-01
+
+→ candidate = [2027-07-01, 2027-10-01)
+→ successor.effectiveFrom = ⛔ 변경 없음
+```
+
 #### edge case 확정
 
 | case | 처리 |
@@ -616,6 +685,39 @@ INACTIVE` 로 전이한다. 따라서 오늘 요청하면서 `effectiveTo` 를 �
 effectiveFrom < requestedEffectiveTo <= businessDateOf(now)
 ```
 
+★ 상한 `<= businessDateOf(now)` 는 **새로 저장하는 값**에 적용한다.
+`requestedEffectiveTo` 가 현재 저장된 `effectiveTo` 와 **완전히 같으면**
+기간을 새로 쓰지 않으므로 이 상한을 적용하지 않고 통과시킨다(아래 표
+"`requested == 현재`" 행 · R4 예시 ②). 하한 `effectiveFrom <` 는 언제나 본다.
+
+##### ★ `businessDateOf(now)` 의 시간대 — 확정 (R3)
+
+```
+businessDateOf(now) = Asia/Seoul 기준 현재 calendar date (YYYY-MM-DD)
+```
+
+⛔ **UTC calendar date 를 그대로 쓰지 않는다.**
+⛔ 서버 머신의 local timezone 에 의존하지 않는다.
+
+자정 전후에 하루가 어긋나는 것을 막기 위해 반드시 명시한다:
+
+```
+instant            : 2026-08-18T15:30:00Z
+Asia/Seoul         : 2026-08-19 00:30
+businessDateOf(now): 2026-08-19        ← 이 값과 비교한다
+```
+
+**canonical helper 가 이미 존재한다** — `src/shared/business-date.ts`:
+
+- `BUSINESS_TIME_ZONE = 'Asia/Seoul'` (`03 §공통 규약` 근거)
+- `businessDateOf(instant, timeZone = BUSINESS_TIME_ZONE)` — `Intl.DateTimeFormat('en-CA')`
+  로 `YYYY-MM-DD` 를 만든다. 주석이 `toISOString().slice(0,10)` 을 쓰지 않는
+  이유(UTC 기준이라 KST 자정 직후 전날로 밀린다)까지 이미 적고 있다.
+
+⛔ 새 date helper 를 만들지 않는다 — 위 함수를 **그대로 재사용**한다.
+⚠️ `dateOnlyOf` 와 혼동하지 않는다. `@db.Date` 컬럼값(UTC 자정 저장)을 문자열로
+바꿀 때는 `dateOnlyOf` 가 맞고, **"오늘"을 구할 때는 `businessDateOf`** 다.
+
 | 조건 | 판정 |
 |---|---|
 | `requestedEffectiveTo` 가 **과거** | ✅ 허용 |
@@ -634,6 +736,31 @@ effectiveFrom < requestedEffectiveTo <= businessDateOf(now)
 successor 경계는 **서비스가 먼저 막는다.** DB EXCLUDE 는 최종 backstop 일
 뿐이며 정상 validation 을 대체하지 않는다 (409 만 나오면 사용자가 원인을
 알 수 없다).
+
+##### 경계 예시 (R4)
+
+`businessDateOf(now) = 2026-08-18` 인 시점을 기준으로 한다.
+
+**① 무기한 ACTIVE — `effectiveFrom = 2026-01-01`, `effectiveTo = null`**
+
+| `requestedEffectiveTo` | 판정 |
+|---|---|
+| `2026-08-17` (과거) | ✅ 허용 |
+| `2026-08-18` (오늘) | ✅ 허용 |
+| `2026-08-19` (미래) | ⛔ **400 `VALIDATION_ERROR`** |
+| `2026-01-01` (= `effectiveFrom`) | ⛔ 400 (`> effectiveFrom` 위반) |
+
+**② 이미 마감된 ACTIVE — `effectiveTo = 2026-09-01`**
+
+| `requestedEffectiveTo` | 판정 |
+|---|---|
+| `2026-08-01` | ✅ **단축 허용** |
+| `2026-09-01` (동일) | ✅ 허용. 기간은 no-change 이지만 **`ACTIVE → INACTIVE` 전이는 수행** |
+| `2026-10-01` | ⛔ **연장 금지 → 400 `VALIDATION_ERROR`** |
+
+⚠️ ②의 `2026-09-01` 은 오늘(`2026-08-18`)보다 미래지만, **현재 저장된
+`effectiveTo` 와 같은 값**이다. 이 경우는 기간을 새로 쓰지 않으므로 미래 종료
+금지 규칙에 걸리지 않는다 — 새로 **저장할** 값이 미래일 때만 400 이다.
 
 ##### 오류코드
 
