@@ -25,6 +25,7 @@ import {
 } from '../sku-ui';
 
 import { BarcodeTab } from './barcode-tab';
+import { BomTab } from './bom-tab';
 import { resolveActiveSkuDetailTab, visibleSkuDetailTabs } from './detail-tabs';
 import { ExternalMappingTab } from './external-mapping-tab';
 import { HistoryTab } from './history-tab';
@@ -456,6 +457,9 @@ export function SkuDetailClient({ skuId }: { skuId: string }) {
       ) : activeTab === 'supplier' ? (
         // ★ read-only summary — mutation 은 전부 `/master/suppliers` 가 담당한다.
         <SupplierTab skuId={skuId} />
+      ) : activeTab === 'bom' ? (
+        // ★ read-only summary — mutation 은 전부 T07-8 `/master/boms` 가 담당한다.
+        <BomTab skuId={skuId} />
       ) : activeTab === 'history' ? (
         // ★ 변경이력은 `sku.read` 만 요구한다 — 상세 화면 진입 조건과 같으므로
         //   별도 cross-module permission 필터가 없다 (`docs/16` §30).

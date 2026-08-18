@@ -84,6 +84,19 @@ async function main(): Promise<void> {
 
   // ⚠️ SKU 픽스처를 **먼저** 지운다 — SKU 가 참조 중인 공통코드는 FK RESTRICT 로
   //    삭제되지 않기 때문이다.
+  // ⚠️ BOM 은 SKU 를 FK RESTRICT 로 붙들고 있으므로 **SKU 정리보다 먼저** 지운다
+  //    (T1-6B5). 라인 → 헤더 순서도 지켜야 한다.
+  await prisma.bomLine.deleteMany({
+    where: {
+      OR: [
+        { bomHeader: { parentSku: { skuCode: { startsWith: 'ZZS-' } } } },
+        { componentSku: { skuCode: { startsWith: 'ZZS-' } } },
+      ],
+    },
+  });
+  await prisma.bomHeader.deleteMany({
+    where: { parentSku: { skuCode: { startsWith: 'ZZS-' } } },
+  });
   await prisma.sku.deleteMany({ where: { skuCode: { startsWith: 'ZZS-' } } });
 
   // 이전 실행 잔여물 정리 — E2E 가 만든 코드는 전부 ZZE_ 접두사를 쓴다.
@@ -304,6 +317,37 @@ async function main(): Promise<void> {
         skuName: 'E2E 공급조건 가격손상',
         itemType: 'FINISHED_GOOD',
         status: 'ACTIVE',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      // ⑦ BOM 탭 (T1-6B5) — 상위/구성품 두 방향을 한 화면에서 보기 위한 3종.
+      //   ZZS-E2E-020  완제품   : 상위 BOM 2건(ACTIVE·DRAFT) 보유
+      //   ZZS-E2E-021  구성품   : 020 의 BOM 에 **두 번**(대체그룹 다름) 들어간다
+      //   ZZS-E2E-022  반제품   : 020 의 구성품이면서 자신도 상위 BOM 을 갖는다
+      {
+        skuCode: 'ZZS-E2E-020',
+        skuName: 'E2E BOM 완제품',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-021',
+        skuName: 'E2E BOM 구성품',
+        itemType: 'RAW_MATERIAL',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-022',
+        skuName: 'E2E BOM 반제품',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
@@ -764,6 +808,117 @@ async function main(): Promise<void> {
         approvedBy: leaderUser.id,
       },
     ],
+  });
+
+  // ── ⑦ BOM 픽스처 (T1-6B5) ────────────────────────────────────
+  //
+  // 화면이 확인해야 하는 것:
+  //   ① 상위 BOM 2건 — 상태(ACTIVE/DRAFT)·적용기간·확정 진행률이 서로 다르다
+  //   ② where-used 에서 **같은 BOM 이 두 행**으로 나온다(대체그룹만 다름)
+  //   ③ `quantityStatus=UNKNOWN` 행은 소요량이 `—` 다 (0 이 아니다)
+  //   ④ `SUGGESTED` 는 미확정에 포함된다 — 진행률이 "확정 1 / 전체 3"
+  //
+  // ⚠️ 감사로그·멱등 레코드를 만들지 않는 순수 데이터 픽스처다.
+  const bomParent = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-020' } });
+  const bomComponent = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-021' } });
+  const bomSemi = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-022' } });
+
+  // ① ACTIVE 버전 — 라인 3개(CONFIRMED 1 · SUGGESTED 1 · UNKNOWN 1) → 확정 1/3
+  const activeBom = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: bomParent.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-1.0',
+      status: 'ACTIVE',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  await prisma.bomLine.createMany({
+    data: [
+      {
+        bomHeaderId: activeBom.id,
+        lineNo: 1,
+        componentSkuId: bomComponent.id,
+        quantityPer: '2.500000',
+        quantityStatus: 'CONFIRMED',
+        uom: 'EA',
+        componentRole: 'MATERIAL',
+        alternateGroup: 'ZZG-A',
+        isRequired: true,
+      },
+      // ★ 같은 구성품이 **대체그룹만 달리해** 한 번 더 들어간다 →
+      //   where-used 에서 같은 header 가 두 행으로 나와야 한다(dedup 금지).
+      {
+        bomHeaderId: activeBom.id,
+        lineNo: 2,
+        componentSkuId: bomComponent.id,
+        quantityPer: '0.033333',
+        quantityStatus: 'SUGGESTED',
+        uom: 'EA',
+        componentRole: 'MATERIAL',
+        alternateGroup: 'ZZG-B',
+        isRequired: false,
+      },
+      // ★ UNKNOWN — quantityPer 이 null 이라 화면에서 `—` 여야 한다.
+      {
+        bomHeaderId: activeBom.id,
+        lineNo: 3,
+        componentSkuId: bomSemi.id,
+        quantityPer: null,
+        quantityStatus: 'UNKNOWN',
+        uom: 'EA',
+        componentRole: 'SERVICE',
+        alternateGroup: null,
+        isRequired: true,
+      },
+    ],
+  });
+
+  // ② DRAFT 버전 — 라인 0건. 미래 시작 + 종료일 있음(적용기간 표기 확인용).
+  await prisma.bomHeader.create({
+    data: {
+      parentSkuId: bomParent.id,
+      bomType: 'KIT',
+      version: 'ZZB-2.0',
+      status: 'DRAFT',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2030-01-01T00:00:00.000Z'),
+      effectiveTo: new Date('2031-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+  });
+
+  // ③ 반제품도 자신의 상위 BOM 을 갖는다 — "상위/구성품은 다른 질문"을 보여준다.
+  const semiBom = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: bomSemi.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-SEMI-1.0',
+      status: 'ACTIVE',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  await prisma.bomLine.create({
+    data: {
+      bomHeaderId: semiBom.id,
+      lineNo: 1,
+      componentSkuId: bomComponent.id,
+      quantityPer: '1',
+      quantityStatus: 'CONFIRMED',
+      uom: 'EA',
+      componentRole: 'MATERIAL',
+      isRequired: true,
+    },
   });
 
   await disconnectPrisma();
