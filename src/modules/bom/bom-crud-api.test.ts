@@ -577,7 +577,39 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     expect(readdirSync(bomsDir).sort()).toEqual(['[id]', 'route.ts']);
     // 상세 하위에는 `lines` 와 route.ts 뿐 — submit/approve/clone 등이 없다.
     expect(readdirSync(`${bomsDir}/[id]`).sort()).toEqual(['lines', 'route.ts']);
-    expect(readdirSync(`${bomsDir}/[id]/lines`).sort()).toEqual(['[lineId]', 'route.ts']);
+    // ✏️ T07-4 가 `bulk-confirm-qty` 를 추가했다 — **예상된 회귀**다.
+    //    이 테스트의 의도(workflow route handler 0개)는 그대로 유지된다:
+    //    submit·approve·reject·activate·deactivate·archive·clone·import 없음.
+    expect(readdirSync(`${bomsDir}/[id]/lines`).sort()).toEqual([
+      '[lineId]',
+      'bulk-confirm-qty',
+      'route.ts',
+    ]);
+  });
+
+  it('★ T07-5 workflow route handler 는 여전히 0개다 (T07-4 가 만들지 않았다)', async () => {
+    const { readdirSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
+    const all = [
+      ...readdirSync(bomsDir),
+      ...readdirSync(`${bomsDir}/[id]`),
+      ...readdirSync(`${bomsDir}/[id]/lines`),
+    ];
+    for (const forbidden of [
+      'submit',
+      'approve',
+      'reject',
+      'activate',
+      'deactivate',
+      'archive',
+      'clone',
+      'import',
+      'explode',
+      'cost',
+    ]) {
+      expect(all, forbidden).not.toContain(forbidden);
+    }
   });
 
   it('★ T07-4 의 bulk-confirm-qty 는 contains:/lines 로 bom.update 에 잡힌다', () => {

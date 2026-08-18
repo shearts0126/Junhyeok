@@ -371,6 +371,73 @@ export function parseUpdateLineInput(body: unknown): UpdateLineInput {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// POST …/lines/bulk-confirm-qty — BulkConfirmQtyDto (D-10 · T07-4 gap closure)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 소요량 일괄 확정 요청 (T07-4).
+ *
+ * ⚠️ 근거: `docs/18_설계복구_BOM.md` §D-10 + "T07-4 bulk-confirm gap closure".
+ *
+ * ## body 는 **최상위 배열**이다
+ *
+ * D-10 이 `[{lineId, quantityPer}]` 라고 적었다. 감싸는 key 이름이 문서에
+ * 없으므로 **만들지 않는다** — `{items: […]}` 같은 wrapper 는 발명이다.
+ * D-14 의 `strictObject` 규칙은 **각 원소**에 그대로 적용해 unknown key 를
+ * 400 으로 막는다(최상위에는 key 자체가 없다).
+ *
+ * ## 세 가지 400 (gap closure B1·B2)
+ *
+ * | 입력 | 결과 |
+ * |---|---|
+ * | 배열이 아님 | 400 |
+ * | **빈 배열** | **400** — ⛔ 조용한 200 no-op 으로 처리하지 않는다 |
+ * | **`lineId` 중복** | **400** — 수량이 같든 다르든 거부 |
+ *
+ * `lineId` 가 중복되면 어느 값을 쓸지 요청 자체가 정하지 못한 상태다.
+ * ⛔ silent dedupe · first-wins · last-wins 를 하지 않는다.
+ *
+ * ## `quantityPer` 는 형식만 본다
+ *
+ * `> 0` 판정은 T07-2 도메인(`assertQuantityConsistency`)이 **422** 로 한다 —
+ * 400/422 경계를 다른 line DTO 와 똑같이 유지한다. `null` 은 애초에 받지
+ * 않는다(확정은 값을 요구한다 — D-10).
+ */
+export const bulkConfirmQtyItemSchema = z.strictObject({
+  lineId: z.uuid(),
+  quantityPer: quantityDecimalShape,
+});
+
+export const bulkConfirmQtySchema = z
+  .array(bulkConfirmQtyItemSchema)
+  .min(1, { error: '확정할 라인을 1건 이상 지정해야 합니다.' })
+  .superRefine((items, ctx) => {
+    const seen = new Set<string>();
+    items.forEach((item, index) => {
+      if (seen.has(item.lineId)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [index, 'lineId'],
+          message: '같은 라인을 두 번 지정할 수 없습니다.',
+        });
+        return;
+      }
+      seen.add(item.lineId);
+    });
+  });
+
+export type BulkConfirmQtyItem = z.infer<typeof bulkConfirmQtyItemSchema>;
+export type BulkConfirmQtyInput = z.infer<typeof bulkConfirmQtySchema>;
+
+export function parseBulkConfirmQtyInput(body: unknown): BulkConfirmQtyInput {
+  const result = bulkConfirmQtySchema.safeParse(body);
+  if (!result.success) {
+    throw toValidationError(result.error.issues, '소요량 일괄 확정 요청이 올바르지 않습니다.');
+  }
+  return result.data;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 적용기간 순서 (D-5 CHECK 와 같은 규칙)
 // ═══════════════════════════════════════════════════════════════
 

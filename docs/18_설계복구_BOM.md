@@ -603,6 +603,83 @@ T := body.effectiveFrom ?? target.effectiveFrom      -- D-7.1
 전량 검증 후 **한 트랜잭션에서 전부 반영**하며 부분 성공을 만들지 않는다.
 라인 하나라도 `<= 0` 이면 전체 422.
 
+> ★ 요청/응답 세부 계약은 아래 **"T07-4 bulk-confirm gap closure"** 절이
+> authoritative 다.
+
+#### ★ T07-4 bulk-confirm gap closure
+
+⚠️ 위 D-10 문단과 D-16·D-17·D-28 이 확정하지 **않은** 4가지를 여기서 확정한다.
+D-14 의 `GET /api/boms` 쿼리 계약과 같은 방식의 gap closure 이며, 기존 확정
+사항을 뒤집지 않는다.
+
+##### B1 — 빈 대상 배열
+
+| 입력 | 결과 |
+|---|---|
+| `[]` | **400 `VALIDATION_ERROR`** · write 0 · Audit 0 · 성공 snapshot 저장 0 |
+
+⛔ 조용한 `200 no-op` 으로 처리하지 않는다. 확정할 라인을 지정하지 않은 요청은
+업무적으로 의미가 없고, 프로젝트 전역의 "빈 PATCH body 400" 규약과 같은 성격이다.
+
+##### B2 — 같은 요청 안의 `lineId` 중복
+
+| 입력 | 결과 |
+|---|---|
+| 같은 `lineId` 2회, **`quantityPer` 동일** | **400 `VALIDATION_ERROR`** |
+| 같은 `lineId` 2회, **`quantityPer` 상이** | **400 `VALIDATION_ERROR`** |
+
+⛔ silent dedupe · first-wins · last-wins 금지. 중복은 요청이 스스로 어느 값을
+쓸지 정하지 못한 상태이므로 형식 오류(400)로 막는다.
+
+##### B3 — 성공 응답
+
+```
+HTTP 200
+{ bom: BomDetail, requestId }
+```
+
+최초 실행도 **200**, 멱등 replay 도 **200** 이다. ⛔ `201`(생성 아님)·`204`
+(확정 직후 `unconfirmedCount` 를 보여줘야 한다) 를 쓰지 않는다.
+⛔ 별도 public result DTO 를 만들지 않는다 — `BomDetail`(D-14)을 재사용한다.
+
+##### B4 — business no-op 과 mixed request
+
+대상이 **이미 `CONFIRMED` 이고 `quantityPer` 가 요청값과 같은** 라인뿐이면:
+
+| 항목 | 결과 |
+|---|---|
+| HTTP | **200** + 현재 `BomDetail` |
+| `BomLine` write | **0** |
+| Audit | **0** |
+| idempotency snapshot | **저장한다** (새 키에 대한 정상 성공 command 이므로) |
+
+⚠️ **idempotency replay 와 business no-op 은 다른 것이다.** 전자는 같은 키가
+다시 온 것이고, 후자는 새 키로 온 정상 요청인데 바꿀 것이 없는 것이다.
+
+`CONFIRMED` 라도 `quantityPer` 가 달라지면 **실변경**이다:
+
+```
+현재 CONFIRMED / qty=2  +  요청 qty=3
+  → qty=3 으로 UPDATE · status 는 CONFIRMED 유지 · changed line 으로 센다
+```
+
+수량 비교는 **Decimal 비교**다 — `"2"` 와 `"2.000000"` 은 같은 값이므로
+실변경이 아니다. ⛔ 문자열 동등 비교·`Number()` 변환을 쓰지 않는다.
+
+mixed request(일부만 변경)에서는 **실제로 바뀌는 라인만 UPDATE** 하고,
+unchanged 대상에는 write 를 하지 않는다. 트랜잭션 전체는 여전히 atomic 이다.
+
+##### Audit (D-16 보강)
+
+| 조건 | Audit |
+|---|---|
+| 실변경 `> 0` | `BomHeader` `UPDATE` **정확히 1건** |
+| 실변경 `== 0` | **0건** |
+
+`afterValue` 는 `{confirmedLineCount, lineIds}` 이며 **둘 다 실제로 변경된
+라인만** 기준으로 한다. ⛔ unchanged 라인을 `lineIds` 에 넣지 않는다.
+`lineIds` 는 **id 오름차순**으로 결정적이다.
+
 ### D-11 — UOM
 
 **확정 계약**
