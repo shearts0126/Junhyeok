@@ -46,7 +46,9 @@ import { seedRolesAndPermissions } from '../../prisma/seed/roles';
  *    §D-29 · §D-32 test matrix + `★ T07-5 workflow gap closure` W-1 ~ W-9.
  *
  * 대역으로 재현할 수 없는 것을 본다:
- *   - **D-7 chain 전량** — 미래 / 과거 / gap / 동일일 / 반복
+ *   - **D-7 chain 전량** — 미래 / 과거 / gap / 반복
+ *   - **temporal 경계 regression** — half-open 경계 교체(CASE A)와 동일
+ *     `effectiveFrom` 중복(CASE B)을 **서로 다른 사건으로** 분리해 고정한다
  *   - predecessor 가 **`ACTIVE` 를 유지**하고 `effectiveFrom` 이 안 바뀌는 것
  *   - **activate 최종 `T` 기준 cycle 재검사** (approve 통과 재사용 금지)
  *   - 자가승인 — 트랜잭션 안에서 최신 `SystemSetting` 을 읽는지
@@ -171,6 +173,38 @@ async function approved(label: string, overrides: Partial<CreateBomInput> = {}):
   await submitBom(AUTHOR, fixture.bomId, parseSubmitBomInput({}));
   await approveBom(APPROVER, fixture.bomId, {});
   return fixture;
+}
+
+/**
+ * 같은 parent·구성품 위에 **여러 버전**을 찍어내는 factory.
+ *
+ * temporal chain 시나리오는 전부 "같은 `parentSkuId` 의 형제 버전들" 이라
+ * 매 테스트마다 SKU 2개 + `make(version, from)` 이 필요하다.
+ */
+async function chain(label: string): Promise<{
+  readonly parentSkuId: string;
+  readonly componentSkuId: string;
+  readonly make: (version: string, from: string) => Promise<string>;
+}> {
+  const parentSkuId = await newSku(`${label}-p`, { status: 'ACTIVE' });
+  const componentSkuId = await newSku(`${label}-c`, { status: 'ACTIVE' });
+  const make = async (version: string, from: string): Promise<string> => {
+    const created = await createBom(AUTHOR, {
+      parentSkuId,
+      bomType: 'MANUFACTURING',
+      version,
+      effectiveFrom: from,
+    });
+    await createBomLine(
+      AUTHOR,
+      created.bom.id,
+      lineInput(componentSkuId, { quantityStatus: 'CONFIRMED', quantityPer: '1' }),
+    );
+    await submitBom(AUTHOR, created.bom.id, {});
+    await approveBom(APPROVER, created.bom.id, {});
+    return created.bom.id;
+  };
+  return { parentSkuId, componentSkuId, make };
 }
 
 async function headerRow(bomId: string) {
@@ -530,7 +564,7 @@ describe('★ reject — reason 은 AuditLog 에만 남는다', () => {
 // 3. activate — D-7 chain 전량
 // ═══════════════════════════════════════════════════════════════
 
-describe('★★ activate — D-7 chain (미래·과거·gap·동일일·반복)', () => {
+describe('★★ activate — D-7 chain (미래·과거·gap·반복)', () => {
   it('★ ACTIVE 가 하나도 없으면 그대로 활성화된다 (무기한)', async () => {
     const { bomId } = await approved('act-first', { effectiveFrom: '2026-03-01' });
     const result = await activateBom(APPROVER, bomId, {});
@@ -685,36 +719,6 @@ describe('★★ activate — D-7 chain (미래·과거·gap·동일일·반복)
     expect(await headerRow(successor)).toEqual(succBefore);
   });
 
-  it('★★ 동일일 activate 는 409 `BOM_PERIOD_OVERLAP` 이다', async () => {
-    const parentSkuId = await newSku('act-same-p', { status: 'ACTIVE' });
-    const componentSkuId = await newSku('act-same-c', { status: 'ACTIVE' });
-    const make = async (version: string, from: string): Promise<string> => {
-      const created = await createBom(AUTHOR, {
-        parentSkuId,
-        bomType: 'MANUFACTURING',
-        version,
-        effectiveFrom: from,
-      });
-      await createBomLine(
-        AUTHOR,
-        created.bom.id,
-        lineInput(componentSkuId, { quantityStatus: 'CONFIRMED', quantityPer: '1' }),
-      );
-      await submitBom(AUTHOR, created.bom.id, {});
-      await approveBom(APPROVER, created.bom.id, {});
-      return created.bom.id;
-    };
-
-    const first = await make(CODE('Q1'), '2028-01-01');
-    await activateBom(APPROVER, first, {});
-    const second = await make(CODE('Q2'), '2028-01-01');
-
-    expect(await codeOf(activateBom(APPROVER, second, {}))).toBe(ERROR_CODES.BOM_PERIOD_OVERLAP);
-    // 전체 rollback — predecessor 도 그대로다.
-    expect((await headerRow(second)).status).toBe('APPROVED');
-    expect((await headerRow(first)).effectiveTo).toBeNull();
-  });
-
   it('★★ 반복 activate 는 no-op — activatedAt 을 덮어쓰지 않는다', async () => {
     const { bomId } = await approved('act-repeat', { effectiveFrom: '2026-05-01' });
     await activateBom(APPROVER, bomId, {});
@@ -766,6 +770,226 @@ describe('★★ activate — D-7 chain (미래·과거·gap·동일일·반복)
       (row) => row.action === 'UPDATE',
     );
     expect(predUpdates).toHaveLength(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 3-b. activate temporal 경계 regression — CASE A / CASE B 분리
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★★ **"동일일" 은 하나의 사건이 아니다** — 두 개의 서로 다른 사건이다.
+ *
+ * | | 사전 상태 (같은 parent 의 ACTIVE) | `T` | 결과 |
+ * |---|---|---|---|
+ * | **CASE A** half-open 경계 교체 | predecessor `[2026-01-01, null)` | `2026-08-01` | ✅ predecessor `[2026-01-01, 2026-08-01)` · candidate `[2026-08-01, null)` |
+ * | **CASE B** 동일 `effectiveFrom` 중복 | ACTIVE `effectiveFrom = 2026-08-01` | `2026-08-01` | ⛔ 409 `BOM_PERIOD_OVERLAP` |
+ *
+ * ## 왜 CASE A 는 겹치지 않는가
+ *
+ * EXCLUDE 는 `daterange("effective_from", "effective_to", '[)')` 로 판정한다.
+ * 상한이 **미포함**이므로 `[2026-01-01, 2026-08-01)` 과 `[2026-08-01, ∞)` 은
+ * `2026-08-01` 을 공유하지 않는다 — `&&` 가 false 다. 즉
+ * **`predecessor.effectiveTo == candidate.effectiveFrom` 은 정상 chain** 이고
+ * D-7 5·6단계가 만들어 내려는 바로 그 모양이다.
+ *
+ * CASE B 는 다르다. 두 행의 **시작일이 같으므로** 상한을 무엇으로 주든
+ * (`[2026-08-01, X)` ∩ `[2026-08-01, Y)` ∋ `2026-08-01`) 반드시 겹친다.
+ * D-7 4단계의 predecessor(`effectiveFrom < T`)·successor(`effectiveFrom > T`)
+ * 는 **둘 다 strict 부등호**라 동일 시작일 형제를 어느 쪽으로도 집지 않는다 —
+ * 그래서 마감되지도, 상한으로 쓰이지도 않고 8단계 EXCLUDE 가 backstop 으로
+ * 409 를 낸다. 이것이 **의도된 설계**다.
+ *
+ * ⛔ "same-day" 라는 이름만으로는 둘을 구분하지 못한다 — 아래 두 테스트는
+ *    이름에서부터 갈라 둔다.
+ */
+describe('★★ activate temporal 경계 — CASE A(성공) vs CASE B(409) (D-7 · R1 · R3)', () => {
+  /** `[from, to)` 를 사람이 읽는 튜플로. */
+  const period = (row: {
+    effectiveFrom: Date;
+    effectiveTo: Date | null;
+  }): [string, string | null] => [dateStr(row.effectiveFrom) as string, dateStr(row.effectiveTo)];
+
+  // ── R3-(1) · CASE A ──────────────────────────────────────────
+  it('★★ same-day half-open boundary replacement succeeds — predecessor `[from,T)` + candidate `[T,null)`', async () => {
+    const { make } = await chain('bnd-a');
+
+    // predecessor: `[2026-01-01, null)` — 무기한 ACTIVE.
+    const predecessor = await make(CODE('A1'), '2026-01-01');
+    await activateBom(APPROVER, predecessor, {});
+    const predBefore = await headerRow(predecessor);
+    expect(period(predBefore)).toEqual(['2026-01-01', null]);
+
+    // candidate: T = 2026-08-01 — predecessor 의 마감일과 **같은 날** 시작한다.
+    const candidate = await make(CODE('A2'), '2026-08-01');
+    // ★ 던지지 않는다. 여기서 409 가 나면 temporal 알고리즘이 틀린 것이다.
+    const result = await activateBom(APPROVER, candidate, {});
+    expect(result.bom.status).toBe('ACTIVE');
+
+    // ★ 경계가 정확히 맞물린다 — predecessor.effectiveTo == candidate.effectiveFrom.
+    const pred = await headerRow(predecessor);
+    const cand = await headerRow(candidate);
+    expect(period(pred)).toEqual(['2026-01-01', '2026-08-01']);
+    expect(period(cand)).toEqual(['2026-08-01', null]);
+    expect(pred.effectiveTo).toEqual(cand.effectiveFrom);
+
+    // ⛔ predecessor 는 여전히 ACTIVE 이고 시작일도 그대로다 (W-2 표).
+    expect(pred.status).toBe('ACTIVE');
+    expect(pred.effectiveFrom).toEqual(predBefore.effectiveFrom);
+
+    // ★ EXCLUDE 가 실제로 통과했다 — 두 행 모두 ACTIVE 로 공존한다.
+    const actives = await getPrismaClient().bomHeader.count({
+      where: { id: { in: [predecessor, candidate] }, status: 'ACTIVE' },
+    });
+    expect(actives).toBe(2);
+  });
+
+  // ── R3-(3) · CASE B ──────────────────────────────────────────
+  it('★★ duplicate ACTIVE effectiveFrom is rejected — 409 `BOM_PERIOD_OVERLAP`', async () => {
+    const { make } = await chain('bnd-b');
+
+    // 이미 ACTIVE 인 행이 2026-08-01 에 **시작**한다.
+    const existing = await make(CODE('B1'), '2026-08-01');
+    await activateBom(APPROVER, existing, {});
+    const existingBefore = await headerRow(existing);
+
+    // candidate 의 T 가 그 시작일과 같다 — 경계 접촉이 아니라 **중복**이다.
+    const candidate = await make(CODE('B2'), '2026-08-01');
+    expect(await codeOf(activateBom(APPROVER, candidate, {}))).toBe(ERROR_CODES.BOM_PERIOD_OVERLAP);
+
+    // 전체 rollback — candidate 는 ACTIVE 가 되지 않았고 기존 행도 그대로다.
+    const cand = await headerRow(candidate);
+    expect(cand.status).toBe('APPROVED');
+    expect(cand.activatedAt).toBeNull();
+    expect(await headerRow(existing)).toEqual(existingBefore);
+    // ⛔ Audit 0 — 실패한 activate 는 흔적을 남기지 않는다.
+    expect(
+      (await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, candidate)).filter(
+        (row) => row.action === 'ACTIVATE',
+      ),
+    ).toHaveLength(0);
+  });
+
+  // ── R3-(2) successor 경계 ────────────────────────────────────
+  it('★★ successor 가 있으면 candidate 는 `[T, successor.effectiveFrom)` 로 닫힌다', async () => {
+    const { make } = await chain('bnd-succ');
+
+    const successor = await make(CODE('C2'), '2027-10-01');
+    await activateBom(APPROVER, successor, {});
+    const succBefore = await headerRow(successor);
+
+    const candidate = await make(CODE('C1'), '2027-07-01');
+    await activateBom(APPROVER, candidate, {});
+
+    expect(period(await headerRow(candidate))).toEqual(['2027-07-01', '2027-10-01']);
+    // ⛔ successor 는 어느 필드도 바뀌지 않는다 — 상한으로 **읽히기만** 한다.
+    expect(await headerRow(successor)).toEqual(succBefore);
+  });
+
+  // ── R3-(4) 과거 삽입 — 양쪽 경계가 동시에 맞물린다 ───────────
+  it('★★ historical insertion — predecessor·successor 경계가 **동시에** 맞물린다', async () => {
+    const { make } = await chain('bnd-hist');
+
+    const first = await make(CODE('D1'), '2026-01-01');
+    await activateBom(APPROVER, first, {});
+    const third = await make(CODE('D3'), '2028-01-01');
+    await activateBom(APPROVER, third, {});
+
+    // 사이에 끼워 넣는다 — predecessor 마감과 successor 상한이 한 번에 걸린다.
+    const second = await make(CODE('D2'), '2027-01-01');
+    await activateBom(APPROVER, second, {});
+
+    // ★ 세 구간이 **틈도 겹침도 없이** 이어진다.
+    expect(period(await headerRow(first))).toEqual(['2026-01-01', '2027-01-01']);
+    expect(period(await headerRow(second))).toEqual(['2027-01-01', '2028-01-01']);
+    expect(period(await headerRow(third))).toEqual(['2028-01-01', null]);
+    // 셋 다 ACTIVE 로 공존한다 — EXCLUDE 를 통과했다는 뜻이다.
+    expect(
+      await getPrismaClient().bomHeader.count({
+        where: { id: { in: [first, second, third] }, status: 'ACTIVE' },
+      }),
+    ).toBe(3);
+  });
+
+  // ── R3-(5) 미래 활성화 경계 ──────────────────────────────────
+  it('★★ future activation boundary — 미래 T 로 override 해도 경계가 맞물리고 오늘은 predecessor 다', async () => {
+    const { parentSkuId, make } = await chain('bnd-fut');
+
+    const predecessor = await make(CODE('E1'), '2020-01-01');
+    await activateBom(APPROVER, predecessor, {});
+
+    // ★ approve 시점 시작일(2026-01-01)이 아니라 **override 한 T** 가 경계다.
+    const candidate = await make(CODE('E2'), '2026-01-01');
+    await activateBom(APPROVER, candidate, parseActivateBomInput({ effectiveFrom: '2099-01-01' }));
+
+    expect(period(await headerRow(predecessor))).toEqual(['2020-01-01', '2099-01-01']);
+    expect(period(await headerRow(candidate))).toEqual(['2099-01-01', null]);
+
+    // 오늘 유효한 것은 여전히 predecessor 다 — ACTIVE ≠ "지금 적용중".
+    const client = getPrismaClient();
+    expect(
+      (
+        await resolveEffectiveBom(client, {
+          parentSkuId,
+          asOf: parseDateOnly(businessDateOf(new Date())),
+        })
+      )?.id,
+    ).toBe(predecessor);
+    expect(
+      (await resolveEffectiveBom(client, { parentSkuId, asOf: parseDateOnly('2099-06-01') }))?.id,
+    ).toBe(candidate);
+  });
+
+  // ── R3-(6) 409 rollback 의 범위 ──────────────────────────────
+  it('★★ duplicate-start 409 rollback — candidate·predecessor·successor·Audit 전부 무변경', async () => {
+    const { make } = await chain('bnd-roll');
+
+    // [2020-01-01, 2026-08-01) · [2026-08-01, 2027-01-01) · [2027-01-01, null)
+    const successor = await make(CODE('F3'), '2027-01-01');
+    await activateBom(APPROVER, successor, {});
+    const predecessor = await make(CODE('F1'), '2020-01-01');
+    await activateBom(APPROVER, predecessor, {});
+    const duplicate = await make(CODE('F2'), '2026-08-01');
+    await activateBom(APPROVER, duplicate, {});
+
+    const before = {
+      predecessor: await headerRow(predecessor),
+      duplicate: await headerRow(duplicate),
+      successor: await headerRow(successor),
+    };
+    const auditsBefore = {
+      predecessor: (await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, predecessor)).length,
+      duplicate: (await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, duplicate)).length,
+      successor: (await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, successor)).length,
+    };
+    expect(period(before.predecessor)).toEqual(['2020-01-01', '2026-08-01']);
+    expect(period(before.duplicate)).toEqual(['2026-08-01', '2027-01-01']);
+
+    // candidate 가 duplicate 와 **같은 날** 시작하려 한다.
+    const candidate = await make(CODE('F4'), '2026-08-01');
+    const candBefore = await headerRow(candidate);
+    expect(await codeOf(activateBom(APPROVER, candidate, {}))).toBe(ERROR_CODES.BOM_PERIOD_OVERLAP);
+
+    // ★ 트랜잭션 전체가 되감긴다 — 네 행 모두 byte 단위로 그대로다.
+    expect(await headerRow(candidate)).toEqual(candBefore);
+    expect(await headerRow(predecessor)).toEqual(before.predecessor);
+    expect(await headerRow(duplicate)).toEqual(before.duplicate);
+    expect(await headerRow(successor)).toEqual(before.successor);
+    // ⛔ predecessor UPDATE audit 도 남지 않는다.
+    expect((await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, predecessor)).length).toBe(
+      auditsBefore.predecessor,
+    );
+    expect((await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, duplicate)).length).toBe(
+      auditsBefore.duplicate,
+    );
+    expect((await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, successor)).length).toBe(
+      auditsBefore.successor,
+    );
+    expect(
+      (await auditsOf(BOM_WORKFLOW_ENTITY_TYPE, candidate)).filter(
+        (row) => row.action === 'ACTIVATE',
+      ),
+    ).toHaveLength(0);
   });
 });
 
@@ -1061,7 +1285,41 @@ describe('★★ clone — Header/Line matrix (W-5 · W-6)', () => {
     expect(clone.id).not.toBe(created.bom.id);
   });
 
-  it('★★ Line 18 scalar — legacy 2개만 RESET, 나머지 COPY', async () => {
+  /**
+   * ★★ `BomLine` scalar **18개** 의 partition — `NEW 2 + COPY 14 + RESET 2`.
+   *
+   * ⚠️ COPY 는 **14** 다 (16 이 아니다): 18 − NEW 2 − RESET 2 = 14.
+   *   아래 세 배열이 실제 `Object.keys(row)` 와 정확히 일치하는지까지 본다.
+   *   그래서 스키마에 scalar 가 늘면 이 테스트가 **먼저 깨진다** — clone 이
+   *   조용히 새 컬럼을 흘리고 지나가지 못한다.
+   */
+  const LINE_SCALARS_NEW = ['id', 'bomHeaderId'] as const;
+  const LINE_SCALARS_COPY = [
+    'lineNo',
+    'componentSkuId',
+    'quantityPer',
+    'quantityStatus',
+    'uom',
+    'lossRate',
+    'componentRole',
+    'supplyType',
+    'alternateGroup',
+    'isRequired',
+    'issueWarehouseId',
+    'packQuantity',
+    'specification',
+    'note',
+  ] as const;
+  const LINE_SCALARS_RESET = ['legacyBomCode', 'legacyCommonBomCode'] as const;
+
+  it('★★ Line 18 scalar — NEW 2 + COPY 14 + RESET 2 (W-6)', async () => {
+    // ★ 합계가 18 임을 **먼저** 고정한다 — 보고 문구와 production 주석이
+    //   같은 숫자를 말하는지 여기서 갈린다.
+    expect(LINE_SCALARS_NEW).toHaveLength(2);
+    expect(LINE_SCALARS_COPY).toHaveLength(14);
+    expect(LINE_SCALARS_RESET).toHaveLength(2);
+    expect(LINE_SCALARS_NEW.length + LINE_SCALARS_COPY.length + LINE_SCALARS_RESET.length).toBe(18);
+
     const parentSkuId = await newSku('clone-line-p', { status: 'ACTIVE' });
     const componentSkuId = await newSku('clone-line-c', { status: 'ACTIVE' });
     const created = await createBom(AUTHOR, bomInput(parentSkuId));
@@ -1082,11 +1340,18 @@ describe('★★ clone — Header/Line matrix (W-5 · W-6)', () => {
         note: '비고',
       }),
     );
-    // legacy 는 server-owned 라 DTO 로 못 넣는다 — 마이그레이션 유입분을 흉내낸다.
-    await getPrismaClient().bomLine.update({
+    // legacy·issueWarehouseId 는 server-owned/staged 라 DTO 로 못 넣는다 —
+    // 마이그레이션 유입분과 T08-1 staged 값을 흉내낸다.
+    const client = getPrismaClient();
+    await client.bomLine.update({
       where: { id: line.line.id },
-      data: { legacyBomCode: 'LEG-1', legacyCommonBomCode: 'LEG-C' },
+      data: {
+        legacyBomCode: 'LEG-1',
+        legacyCommonBomCode: 'LEG-C',
+        issueWarehouseId: 'fff00000-0000-4000-8000-0000000f7101',
+      },
     });
+    const source = await client.bomLine.findUniqueOrThrow({ where: { id: line.line.id } });
 
     const result = await cloneBom(STAFF, created.bom.id, {
       newVersion: CODE('LV2'),
@@ -1094,28 +1359,38 @@ describe('★★ clone — Header/Line matrix (W-5 · W-6)', () => {
       changeReason: 'r',
     });
 
-    const cloned = await getPrismaClient().bomLine.findFirstOrThrow({
+    const cloned = await client.bomLine.findFirstOrThrow({
       where: { bomHeaderId: result.bom.id },
     });
-    // COPY — 특히 수량·상태·순번이 보존된다.
+
+    // ★ scalar 집합 자체가 셋의 합집합과 **정확히** 같다 — 누락도 초과도 없다.
+    expect(Object.keys(cloned).sort()).toEqual(
+      [...LINE_SCALARS_NEW, ...LINE_SCALARS_COPY, ...LINE_SCALARS_RESET].sort(),
+    );
+
+    // COPY 14 — 값이 source 와 동일하다 (Decimal·enum·null 포함).
+    for (const key of LINE_SCALARS_COPY) {
+      expect(cloned[key], `COPY 실패: ${key}`).toEqual(source[key]);
+    }
+    // 값이 실제로 "기본값이 아닌" 것들인지도 본다 — 전부 null 이면 COPY 증명이 아니다.
     expect(cloned.lineNo).toBe(7);
-    expect(cloned.componentSkuId).toBe(componentSkuId);
     expect(cloned.quantityPer?.toFixed()).toBe('0.033333');
     expect(cloned.quantityStatus).toBe('SUGGESTED'); // ⛔ 자동 CONFIRMED 아님
     expect(cloned.lossRate?.toFixed()).toBe('0.02');
-    expect(cloned.componentRole).toBe('SERVICE');
-    expect(cloned.supplyType).toBe('TURNKEY');
-    expect(cloned.alternateGroup).toBe('ALT-A');
-    expect(cloned.isRequired).toBe(false);
+    expect(cloned.uom).toBe(source.uom);
+    expect(cloned.issueWarehouseId).toBe('fff00000-0000-4000-8000-0000000f7101');
     expect(cloned.packQuantity?.toFixed()).toBe('30');
-    expect(cloned.specification).toBe('규격');
-    expect(cloned.note).toBe('비고');
-    // NEW
-    expect(cloned.id).not.toBe(line.line.id);
+
+    // NEW 2 — 둘 다 source 와 다르다.
+    expect(cloned.id).not.toBe(source.id);
+    expect(cloned.bomHeaderId).not.toBe(source.bomHeaderId);
     expect(cloned.bomHeaderId).toBe(result.bom.id);
-    // ★ RESET — legacy 는 BomLine scalar 이며 승계하지 않는다.
-    expect(cloned.legacyBomCode).toBeNull();
-    expect(cloned.legacyCommonBomCode).toBeNull();
+
+    // RESET 2 — source 에 값이 있었는데도 null 이다.
+    for (const key of LINE_SCALARS_RESET) {
+      expect(source[key], `RESET 전제 실패: ${key}`).not.toBeNull();
+      expect(cloned[key], `RESET 실패: ${key}`).toBeNull();
+    }
   });
 
   it('★★ clone audit — Header CREATE 1건(sourceBomId) + Line CREATE N건 (W-7)', async () => {

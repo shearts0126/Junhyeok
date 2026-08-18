@@ -582,6 +582,46 @@ candidate T             = 2027-07-01
 | ACTIVE 가 하나도 없음 | predecessor·successor 모두 없음 → 그대로 activate |
 | 반복 activate (이미 ACTIVE) | **200 no-op** — write 0 · audit 0. T06-3 repeat approve 와 같다 |
 
+#### ★ 구현 근거 — "동일일" 은 **두 개의 서로 다른 사건**이다 (T07-5 구현 시 확인)
+
+> ⚠️ 설계 결정은 **변경 없다.** 위 표의 두 행이 각각 무엇을 말하는지 헷갈리기
+> 쉬워, 실제 구현이 어느 경로로 그 결론에 도달하는지를 근거로 남긴다.
+
+| | 사전 상태 (같은 parent 의 `ACTIVE`) | `T` | 결과 | 위 표의 어느 행인가 |
+|---|---|---|---|---|
+| **CASE A** — half-open 경계 교체 | predecessor `[2026-01-01, null)` | `2026-08-01` | ✅ **성공.** predecessor `[2026-01-01, 2026-08-01)` · candidate `[2026-08-01, null)` | D-5 의 `same-day 교체 = 허용` 행 |
+| **CASE B** — 동일 `effectiveFrom` 중복 | ACTIVE `effectiveFrom = 2026-08-01` | `2026-08-01` | ⛔ **409 `BOM_PERIOD_OVERLAP`** · 전체 rollback | 위 edge case 표의 `T 가 predecessor.effectiveFrom 과 같음` 행 |
+
+**CASE A 가 성공하는 이유** — EXCLUDE 는
+`daterange("effective_from", "effective_to", '[)')` 로 판정하며 상한이
+**미포함**이다. 따라서 `[2026-01-01, 2026-08-01)` 과 `[2026-08-01, ∞)` 은
+`2026-08-01` 을 공유하지 않는다(`&&` = false). 즉
+**`predecessor.effectiveTo == candidate.effectiveFrom` 은 정상 chain** 이며
+알고리즘 5·6단계가 만들어 내려는 바로 그 모양이다. D-5 의 `same-day 교체 =
+허용` 이 이 경우를 가리킨다.
+
+**CASE B 가 409 인 이유** — 4단계의 predecessor(`effectiveFrom < T`)·
+successor(`effectiveFrom > T`) 가 **둘 다 strict 부등호**라, 시작일이 `T` 와
+같은 형제는 어느 쪽으로도 집히지 않는다. 그래서 5단계로 마감되지도, 6단계의
+상한으로 쓰이지도 않은 채 candidate 가 그 형제와 같은 날 시작하게 되고,
+8단계 EXCLUDE 가 backstop 으로 `23P01` → **409 `BOM_PERIOD_OVERLAP`** 을 낸다.
+
+> ⚠️ 정정(근거 보강) — 위 edge case 표의 해당 행은 결론(409
+> `BOM_PERIOD_OVERLAP`)은 그대로 맞지만, 괄호 안 설명의 "5단계에서
+> `effectiveTo := T = effectiveFrom` 이 되어 CHECK(`to > from`) 위반" 은
+> 실제 경로가 아니다. strict 부등호 때문에 5단계 자체가 실행되지 않으며,
+> 실제 오류원은 **CHECK(`23514`)가 아니라 EXCLUDE(`23P01`)** 다. D-29 상
+> `23514` 는 500 이고 `23P01` 만 409 이므로, 이 구분이 곧 **표에 적힌 409 가
+> 실제로 나오는 이유**다. ⛔ 원문은 삭제하지 않는다.
+
+요약하면 — **경계 equality(`predecessor.effectiveTo == candidate.effectiveFrom`)
+는 허용이고, 동일 `effectiveFrom` 을 가진 `ACTIVE` sibling 은 overlap 이다.**
+
+구현 근거: `src/modules/bom/application/activation.ts`(4·5·6·8단계) ·
+`prisma/migrations/20260813010000_add_bom/migration.sql`
+(`bom_header_active_period_excl`) · `tests/db/bom-workflow-api.test.ts`
+§`★★ activate temporal 경계 — CASE A(성공) vs CASE B(409)` 6종.
+
 #### superseded
 
 `05:129`(v0.1) / `05v2:158`(v0.2) 의 **`기존 ACTIVE 자동 INACTIVE`** 는
@@ -884,6 +924,12 @@ source line 마다 새 row 를 만든다.
 | `note` | COPY |
 | `legacyBomCode` | **`null` RESET** |
 | `legacyCommonBomCode` | **`null` RESET** |
+
+★ **집계 — `NEW 2 + COPY 14 + RESET 2 = 18`.** (T07-5 구현 시 확인. 위 표의
+행 수와 같으며 설계 변경이 아니다.) `BomLine` 의 scalar 는 정확히 18개이므로
+셋의 합이 18 이 아니면 어느 컬럼이 clone 에서 빠졌다는 뜻이다.
+`tests/db/bom-workflow-api.test.ts` §`★★ Line 18 scalar — NEW 2 + COPY 14 +
+RESET 2` 가 `Object.keys(row)` 를 이 세 배열의 합집합과 대조해 고정한다.
 
 ⛔ `quantityPer`·`quantityStatus` 를 초기화하거나 **자동 `CONFIRMED` 로
 만들지 않는다** (D-10 자동 1 금지와 같은 방향).

@@ -165,9 +165,15 @@ async function performClone(
 
   // ── W-6 line matrix — 18 scalar 전부 ────────────────────────────
   //
-  //   NEW    id · bomHeaderId
-  //   COPY   나머지 16개 전부
-  //   RESET  legacyBomCode · legacyCommonBomCode
+  //   NEW    2  id · bomHeaderId
+  //   COPY  14  lineNo · componentSkuId · quantityPer · quantityStatus · uom ·
+  //             lossRate · componentRole · supplyType · alternateGroup ·
+  //             isRequired · issueWarehouseId · packQuantity · specification · note
+  //   RESET  2  legacyBomCode · legacyCommonBomCode
+  //   ─────────────────────────────────────────────────────────────
+  //   합계  18  (⚠️ 2 + 14 + 2 = 18. COPY 는 16 이 아니다 — 아래 create 의
+  //             필드 수와 `tests/db/bom-workflow-api.test.ts` 의 partition
+  //             assertion 이 이 셋을 동시에 고정한다.)
   //
   // ⛔ `quantityPer`·`quantityStatus` 를 초기화하거나 자동 `CONFIRMED` 로
   //    만들지 않는다 (D-10 자동 1 금지와 같은 방향).
