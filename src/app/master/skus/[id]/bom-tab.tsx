@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ErrorBanner, readApiError, type UiError } from '../sku-ui';
 
 import {
+  bomManageLinkPath,
   bomStatusLabel,
   bomTypeLabel,
   componentRoleLabel,
@@ -17,9 +18,13 @@ import {
   requiredLabel,
   skuParentBomsApiPath,
   skuWhereUsedApiPath,
+  BOM_TAB_MANAGE_LINK_ENABLED,
+  BOM_TAB_MANAGE_LINK_LABEL,
+  BOM_TAB_PARENT_COLUMNS,
   BOM_TAB_PARENT_EMPTY_MESSAGE,
   BOM_TAB_PARENT_LOADING_MESSAGE,
   BOM_TAB_PARENT_SECTION_LABEL,
+  BOM_TAB_WHERE_USED_COLUMNS,
   BOM_TAB_WHERE_USED_EMPTY_MESSAGE,
   BOM_TAB_WHERE_USED_LOADING_MESSAGE,
   BOM_TAB_WHERE_USED_SECTION_LABEL,
@@ -64,6 +69,48 @@ function networkError(message: string): UiError {
 }
 
 type SectionState = 'loading' | 'ready' | 'forbidden' | 'error';
+
+/**
+ * ★ 표 머리글 — `bom-view` 의 라벨 배열을 **그대로** 렌더한다.
+ *
+ * 화면 문구와 단위 테스트가 같은 상수를 보므로, 표시 필드와 무관한 열 이름
+ * (예: 존재하지 않는 "BOM 코드")이 슬며시 생길 수 없다 (remediation R2).
+ */
+function TableHead({ columns }: { readonly columns: readonly string[] }) {
+  return (
+    <thead className="bg-muted/50 text-muted-foreground text-xs">
+      <tr>
+        {columns.map((column) => (
+          <th key={column} className="px-3 py-2 text-left">
+            {column}
+          </th>
+        ))}
+        {/* ★ D-30 항목 3 — T07-8 착지 전까지 열 자체를 만들지 않는다 (R4). */}
+        {BOM_TAB_MANAGE_LINK_ENABLED && <th className="px-3 py-2 text-left">관리</th>}
+      </tr>
+    </thead>
+  );
+}
+
+/**
+ * D-30 항목 3 의 행 navigation. `BOM_TAB_MANAGE_LINK_ENABLED` 가 `false` 인
+ * 동안은 **아무것도 렌더하지 않는다** — 없는 화면(`/master/boms/{id}`, T07-8)
+ * 으로 보내는 404 링크를 만들지 않기 위해서다.
+ */
+function ManageLinkCell({ bomHeaderId }: { readonly bomHeaderId: string }) {
+  if (!BOM_TAB_MANAGE_LINK_ENABLED) return null;
+  return (
+    <td className="px-3 py-2">
+      <a
+        href={bomManageLinkPath(bomHeaderId)}
+        className="underline"
+        data-testid="bom-tab-manage-link"
+      >
+        {BOM_TAB_MANAGE_LINK_LABEL}
+      </a>
+    </td>
+  );
+}
 
 function StatusBadge({ status }: { readonly status: string }) {
   return (
@@ -152,16 +199,7 @@ function ParentBomSection({ skuId }: { readonly skuId: string }) {
         ) : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm" data-testid="bom-tab-parent-table">
-              <thead className="bg-muted/50 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-3 py-2 text-left">버전</th>
-                  <th className="px-3 py-2 text-left">유형</th>
-                  <th className="px-3 py-2 text-left">상태</th>
-                  <th className="px-3 py-2 text-left">적용기간</th>
-                  <th className="px-3 py-2 text-left">구성품 수</th>
-                  <th className="px-3 py-2 text-left">소요량 확정</th>
-                </tr>
-              </thead>
+              <TableHead columns={BOM_TAB_PARENT_COLUMNS} />
               <tbody>
                 {rows.map((row) => (
                   <tr key={row.id} className="border-t" data-testid="bom-tab-parent-row">
@@ -191,6 +229,7 @@ function ParentBomSection({ skuId }: { readonly skuId: string }) {
                         {formatQuantityProgress(row.lineCount, row.unconfirmedCount)}
                       </span>
                     </td>
+                    <ManageLinkCell bomHeaderId={row.id} />
                   </tr>
                 ))}
               </tbody>
@@ -294,20 +333,7 @@ function WhereUsedSection({ skuId }: { readonly skuId: string }) {
         ) : (
           <div className="overflow-x-auto rounded-md border">
             <table className="w-full text-sm" data-testid="bom-tab-where-used-table">
-              <thead className="bg-muted/50 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-3 py-2 text-left">상위 SKU</th>
-                  <th className="px-3 py-2 text-left">버전</th>
-                  <th className="px-3 py-2 text-left">상태</th>
-                  <th className="px-3 py-2 text-left">적용기간</th>
-                  <th className="px-3 py-2 text-left">순번</th>
-                  <th className="px-3 py-2 text-left">소요량</th>
-                  <th className="px-3 py-2 text-left">소요량 상태</th>
-                  <th className="px-3 py-2 text-left">구성품 유형</th>
-                  <th className="px-3 py-2 text-left">필수</th>
-                  <th className="px-3 py-2 text-left">대체그룹</th>
-                </tr>
-              </thead>
+              <TableHead columns={BOM_TAB_WHERE_USED_COLUMNS} />
               <tbody>
                 {/* ★ key 는 `lineId` — 같은 header 가 여러 행으로 나올 수 있다. */}
                 {rows.map((row) => (
@@ -338,6 +364,7 @@ function WhereUsedSection({ skuId }: { readonly skuId: string }) {
                     <td className="px-3 py-2" data-testid="bom-tab-alternate-group">
                       {orDash(row.alternateGroup)}
                     </td>
+                    <ManageLinkCell bomHeaderId={row.bomHeaderId} />
                   </tr>
                 ))}
               </tbody>

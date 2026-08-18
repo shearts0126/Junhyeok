@@ -813,10 +813,11 @@ async function main(): Promise<void> {
   // ── ⑦ BOM 픽스처 (T1-6B5) ────────────────────────────────────
   //
   // 화면이 확인해야 하는 것:
-  //   ① 상위 BOM 2건 — 상태(ACTIVE/DRAFT)·적용기간·확정 진행률이 서로 다르다
+  //   ① 상위 BOM 7건 — `BomStatus` **7종이 모두** 한 SKU 에서 렌더된다
   //   ② where-used 에서 **같은 BOM 이 두 행**으로 나온다(대체그룹만 다름)
   //   ③ `quantityStatus=UNKNOWN` 행은 소요량이 `—` 다 (0 이 아니다)
   //   ④ `SUGGESTED` 는 미확정에 포함된다 — 진행률이 "확정 1 / 전체 3"
+  //   ⑤ ★ `ARCHIVED` header 가 where-used 에 그대로 나온다 (필터 없음)
   //
   // ⚠️ 감사로그·멱등 레코드를 만들지 않는 순수 데이터 픽스처다.
   const bomParent = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-020' } });
@@ -894,7 +895,91 @@ async function main(): Promise<void> {
     },
   });
 
-  // ③ 반제품도 자신의 상위 BOM 을 갖는다 — "상위/구성품은 다른 질문"을 보여준다.
+  // ③ ★ 나머지 status 5종 — `BomStatus` 7종이 **전부 화면에 도달**해야 한다
+  //    (T1-6B5 remediation R1). 특히:
+  //      · `PENDING_APPROVAL` — 축약형 `PENDING` 이 아니다
+  //      · `APPROVED` — 승인 완료지만 아직 발효 전이라 `ACTIVE` 와 다른 값이다
+  //      · `ARCHIVED` — where-used 는 status 필터가 **없으므로**(`where-used.ts`)
+  //        보관된 BOM 의 라인도 사용처에 그대로 나온다
+  //
+  //    ⚠️ EXCLUDE(`bom_header_active_period_excl`)는 **ACTIVE 에만** 걸린다.
+  //       아래 5건은 ACTIVE 가 아니므로 기간이 겹쳐도 충돌하지 않지만,
+  //       읽기 쉬운 정렬을 위해 `effectiveFrom` 을 서로 다르게 둔다.
+  const archivedBom = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: bomParent.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-0.9',
+      status: 'ARCHIVED',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2019-01-01T00:00:00.000Z'),
+      effectiveTo: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  // ★ 보관된 BOM 의 구성품 — 반제품 사용처에 `ARCHIVED` header 가 나타난다.
+  await prisma.bomLine.create({
+    data: {
+      bomHeaderId: archivedBom.id,
+      lineNo: 1,
+      componentSkuId: bomSemi.id,
+      quantityPer: '4',
+      quantityStatus: 'CONFIRMED',
+      uom: 'EA',
+      componentRole: 'MATERIAL',
+      isRequired: true,
+    },
+  });
+
+  await prisma.bomHeader.createMany({
+    data: [
+      {
+        parentSkuId: bomParent.id,
+        bomType: 'MANUFACTURING',
+        version: 'ZZB-3.0',
+        status: 'APPROVED',
+        outputQty: '1',
+        outputUom: 'EA',
+        effectiveFrom: new Date('2032-01-01T00:00:00.000Z'),
+        createdBy: staffUser.id,
+      },
+      {
+        parentSkuId: bomParent.id,
+        bomType: 'KIT',
+        version: 'ZZB-4.0',
+        status: 'PENDING_APPROVAL',
+        outputQty: '1',
+        outputUom: 'EA',
+        effectiveFrom: new Date('2033-01-01T00:00:00.000Z'),
+        createdBy: staffUser.id,
+      },
+      {
+        parentSkuId: bomParent.id,
+        bomType: 'REPACK',
+        version: 'ZZB-5.0',
+        status: 'REJECTED',
+        outputQty: '1',
+        outputUom: 'EA',
+        effectiveFrom: new Date('2034-01-01T00:00:00.000Z'),
+        createdBy: staffUser.id,
+      },
+      {
+        parentSkuId: bomParent.id,
+        bomType: 'MANUFACTURING',
+        version: 'ZZB-0.8',
+        status: 'INACTIVE',
+        outputQty: '1',
+        outputUom: 'EA',
+        effectiveFrom: new Date('2018-01-01T00:00:00.000Z'),
+        effectiveTo: new Date('2019-01-01T00:00:00.000Z'),
+        createdBy: staffUser.id,
+      },
+    ],
+  });
+
+  // ④ 반제품도 자신의 상위 BOM 을 갖는다 — "상위/구성품은 다른 질문"을 보여준다.
   const semiBom = await prisma.bomHeader.create({
     data: {
       parentSkuId: bomSemi.id,

@@ -119,18 +119,28 @@ export function orDash(value: string | null | undefined): string {
 }
 
 /**
- * `BomStatus` 7종 라벨 (`docs/18` §D-6).
+ * `BomStatus` **7종** 라벨 (`docs/18` §D-6, `prisma/schema.prisma` `enum BomStatus`).
  *
- * ⛔ 상태를 합치지 않는다 — 7개 값이 각각 다른 의미다.
+ * authoritative key 는 정확히 이 7개다 — 축약형을 쓰지 않는다:
+ *
+ * ```
+ *   DRAFT · PENDING_APPROVAL · REJECTED · APPROVED · ACTIVE · INACTIVE · ARCHIVED
+ * ```
+ *
+ * ⛔ `PENDING` 은 **key 가 아니다** — 실제 enum key 는 `PENDING_APPROVAL` 이다.
+ * ⛔ `APPROVED`(승인 완료, 아직 미발효)와 `ACTIVE`(발효 중)를 합치지 않는다.
+ * ⛔ `INACTIVE`(사용종료)와 `ARCHIVED`(보관)를 합치지 않는다.
+ * ⛔ 상태를 숨기지 않는다 — where-used 는 status 필터가 **없어서**
+ *    `ARCHIVED` header 가 실제로 화면에 도달한다(`where-used.ts` 참조).
  */
 export const BOM_STATUS_LABELS: Readonly<Record<string, string>> = {
   DRAFT: '작성중',
   PENDING_APPROVAL: '승인대기',
+  REJECTED: '반려',
   APPROVED: '승인됨',
   ACTIVE: '활성',
   INACTIVE: '사용종료',
   ARCHIVED: '보관',
-  REJECTED: '반려',
 };
 
 /** 미지의 status 는 원문 그대로 보여준다 — 조용히 숨기지 않는다. */
@@ -231,13 +241,67 @@ export const BOM_TAB_PARENT_SECTION_LABEL = '이 SKU 의 BOM';
 export const BOM_TAB_WHERE_USED_SECTION_LABEL = '구성품으로 사용된 BOM';
 
 /**
- * ⚠️ **T07-8 미착수로 인한 계약 미충족 — 완료 보고 deviation 참조.**
+ * ★ 표 머리글 — **표시하는 필드의 실제 이름으로만** 쓴다 (T1-6B5 remediation R2).
+ *
+ * ## `BomHeader` 에는 `bomCode` 가 없다
+ *
+ * T07-1 이 확정한 `BomHeader` scalar 19 개(`docs/18` §D-2)에 **BOM 코드 필드는
+ * 없다**. BOM 의 identity 는 `id`(uuid) 와 `(parentSkuId, version)` UNIQUE 다.
+ *
+ * ⛔ 따라서 "BOM 코드" 라는 열을 만들지 않는다.
+ * ⛔ `${skuCode}-${version}` 같은 **합성 식별자**를 만들지 않는다 — 저장된 값이
+ *    아닌 것을 코드처럼 보여주면 사용자가 검색·대조할 수 있는 값으로 오인한다.
+ * ⛔ `BomHeader.id`(uuid) 를 "코드" 로 표시하지 않는다.
+ *
+ * 섹션 A 는 **이미 그 SKU 의 상세 화면 안**이므로 상위 SKU 를 반복하지 않고
+ * `version` 으로 각 BOM 을 구분한다. 섹션 B 는 상위가 매번 다르므로
+ * `parentSku.skuCode` / `parentSku.skuName` 을 **"상위 SKU"** 로 표시한다.
+ *
+ * 컴포넌트가 이 배열을 그대로 렌더하므로, 이 상수가 곧 화면 머리글이다.
+ */
+export const BOM_TAB_PARENT_COLUMNS = [
+  '버전',
+  '유형',
+  '상태',
+  '적용기간',
+  '구성품 수',
+  '소요량 확정',
+] as const;
+
+export const BOM_TAB_WHERE_USED_COLUMNS = [
+  '상위 SKU',
+  '버전',
+  '상태',
+  '적용기간',
+  '순번',
+  '소요량',
+  '소요량 상태',
+  '구성품 유형',
+  '필수',
+  '대체그룹',
+] as const;
+
+/**
+ * ★ D-30 항목 3 navigation 의 **deferred rendering 토글** (`docs/18` §D-30 부록).
  *
  * `docs/18` §D-30 ⑦탭 "최소" 항목 3 은 각 행에서 `/master/boms/{id}` 로 가는
- * 링크를 요구하지만, 그 route 는 **T07-8 이 만들며 아직 존재하지 않는다**
- * (§D-31 · §5 구현 순서에서 T1-6B5 는 T07-8 보다 6단계 앞이다).
+ * 링크를 요구한다. 그 route 의 owner 는 **T07-8** 이며 아직 착지하지 않았다
+ * (§5 구현 순서에서 T1-6B5 는 T07-8 보다 앞이다). 없는 화면으로 보내는 활성
+ * 링크는 사용자에게 404 를 주므로 **T07-8 착지 전까지 렌더하지 않는다.**
  *
- * 존재하지 않는 화면으로 보내는 활성 링크를 만들면 사용자가 404 를 받으므로
- * **링크를 렌더하지 않는다.** T07-8 이 route 를 만들 때 함께 활성화한다.
+ * ⚠️ 이것은 D-30 기능의 **삭제가 아니라 task-order dependency 에 따른 연기**다.
+ *
+ * ## 이 상수는 dead marker 가 아니다
+ *
+ * `bom-tab.tsx` 의 두 표가 실제로 이 값을 조건으로 링크 열을 렌더한다.
+ * T07-8 이 `/master/boms/{id}` 를 만들면 **이 한 줄을 `true` 로 바꾸는 것**이
+ * 활성화 절차의 전부이며, 경로 계약은 아래 `bomManageLinkPath` 가 고정한다.
  */
 export const BOM_TAB_MANAGE_LINK_ENABLED = false;
+
+/** T07-8 standalone BOM 상세 경로. ⛔ 토글이 켜지기 전에는 렌더되지 않는다. */
+export function bomManageLinkPath(bomHeaderId: string): string {
+  return `/master/boms/${bomHeaderId}`;
+}
+
+export const BOM_TAB_MANAGE_LINK_LABEL = 'BOM 관리에서 보기';

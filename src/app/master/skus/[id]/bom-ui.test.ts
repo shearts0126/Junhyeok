@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import { resolveRoutePermission } from '@/modules/auth/application/route-policy';
@@ -7,6 +9,7 @@ import { SKU_CREATE_TABS, SKU_DETAIL_TABS } from '../sku-form-fields';
 
 import * as bomView from './bom-view';
 import {
+  bomManageLinkPath,
   bomStatusLabel,
   bomTypeLabel,
   componentRoleLabel,
@@ -22,7 +25,9 @@ import {
   BOM_STATUS_LABELS,
   BOM_TAB_MANAGE_LINK_ENABLED,
   BOM_TAB_PAGE_SIZE,
+  BOM_TAB_PARENT_COLUMNS,
   BOM_TAB_PARENT_QUERY_KEYS,
+  BOM_TAB_WHERE_USED_COLUMNS,
   type ParentBomRow,
 } from './bom-view';
 import { resolveActiveSkuDetailTab, visibleSkuDetailTabs } from './detail-tabs';
@@ -44,6 +49,18 @@ import { resolveActiveSkuDetailTab, visibleSkuDetailTabs } from './detail-tabs';
 
 const SKU_ID = '11111111-1111-4111-8111-111111111111';
 const BOM_ID = '22222222-2222-4222-8222-222222222222';
+
+/**
+ * ★ 주석을 걷어낸 **실행 코드**만 남긴다.
+ *
+ * 아래 R2·R4 검사는 "화면에 이런 문자열이 나오는가 / 코드가 이런 값을
+ * 조립하는가"를 본다. 설명 주석에 `bomCode`·"BOM 코드"·`/master/boms` 가
+ * 등장하는 것은 **금지 대상이 아니다** — 오히려 왜 만들지 않는지를 적어둔
+ * 문장이다. 주석까지 걸면 그 설명을 지워야만 통과하게 되어 의도가 뒤집힌다.
+ */
+function codeOnly(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+}
 
 function parentRow(overrides: Partial<ParentBomRow> = {}): ParentBomRow {
   return {
@@ -181,6 +198,50 @@ describe('★ 권한 상실 fallback (T1-6B4 와 같은 계약)', () => {
     const visible = visibleSkuDetailTabs({ permissions: null });
     expect(resolveActiveSkuDetailTab('bom', visible)).toBe('basic');
   });
+
+  // ── remediation R3 — 4단계 계약을 한 곳에 고정한다 ─────────────
+  it('★★ ① 있음 → 보임 · ② 없음 → 숨김 · ③ 선택 중 상실 → basic', () => {
+    const withRead = visibleSkuDetailTabs({ permissions: ['sku.read', 'bom.read'] });
+    // ① 보인다.
+    expect(withRead.map((tab) => tab.key)).toContain('bom');
+    // ③ 선택 상태가 보존된다.
+    expect(resolveActiveSkuDetailTab('bom', withRead)).toBe('bom');
+
+    const withoutRead = visibleSkuDetailTabs({ permissions: ['sku.read'] });
+    // ② 숨는다 — 다른 권한이 대신 열어주지 않는다.
+    expect(withoutRead.map((tab) => tab.key)).not.toContain('bom');
+    // ③ 선택 중이던 탭이 basic 으로 되돌아간다.
+    expect(resolveActiveSkuDetailTab('bom', withoutRead)).toBe('basic');
+  });
+
+  it('★★ ④ 권한이 없으면 `BomTab` 자체가 마운트되지 않는다 → 자식 fetch 0', () => {
+    // 렌더 분기는 `activeTab === 'bom'` 하나뿐이다. 위 ③ 에서 activeTab 이
+    // 'basic' 으로 확정되므로 `BomTab` 이 마운트되지 않고, 따라서 그 안의
+    // 두 `useEffect` fetch(`/api/boms`·`/where-used`)도 발생하지 않는다.
+    const client = codeOnly(
+      readFileSync(new URL('./sku-detail-client.tsx', import.meta.url), 'utf8'),
+    );
+    expect(client).toContain("activeTab === 'bom'");
+    // ⛔ 탭 선택과 무관하게 항상 렌더되는 자리에 BomTab 이 없다.
+    expect(client.match(/<BomTab\b/g) ?? []).toHaveLength(1);
+    // activeTab 은 반드시 fallback 을 거친 값이다 — 원본 `tab` 을 직접 쓰지 않는다.
+    expect(client).toContain('resolveActiveSkuDetailTab(tab, visibleTabs)');
+
+    // 두 fetch 는 BomTab 컴포넌트 안에만 있다 — 상위에서 미리 부르지 않는다.
+    const tabSource = codeOnly(readFileSync(new URL('./bom-tab.tsx', import.meta.url), 'utf8'));
+    expect(tabSource.match(/fetch\(/g) ?? []).toHaveLength(2);
+    expect(client).not.toContain('/api/boms');
+    expect(client).not.toContain('where-used');
+  });
+
+  it('★ 판정에 role 이름을 쓰지 않는다 — permission key 로만 본다', () => {
+    const source = codeOnly(readFileSync(new URL('./detail-tabs.ts', import.meta.url), 'utf8'));
+    const logic = source.slice(source.indexOf('export function visibleSkuDetailTabs'));
+    for (const role of ['ADMIN', 'SCM_LEADER', 'SCM_STAFF', 'FINANCE', 'EXECUTIVE']) {
+      expect(logic, role).not.toContain(`'${role}'`);
+    }
+    expect(logic).toContain("'bom.read'");
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -317,6 +378,53 @@ describe('★ status 라벨 — 7종을 합치지 않는다 (D-6)', () => {
     expect(Object.keys(BOM_STATUS_LABELS).sort()).toEqual([...BOM_STATUSES].sort());
   });
 
+  // ── remediation R1 — exact key coverage ──────────────────────
+  //
+  // 위 테스트는 `BOM_STATUSES`(DTO) 와의 **정합**만 본다. DTO 자체가 틀리면
+  // 둘이 나란히 틀린 채 통과하므로, authoritative 7종을 **리터럴로 한 번 더**
+  // 못 박는다. 근거는 `prisma/schema.prisma` `enum BomStatus` 다.
+  it('★★ authoritative 7종 exact key — DTO 도 함께 검증한다', () => {
+    const AUTHORITATIVE = [
+      'DRAFT',
+      'PENDING_APPROVAL',
+      'REJECTED',
+      'APPROVED',
+      'ACTIVE',
+      'INACTIVE',
+      'ARCHIVED',
+    ];
+    expect([...BOM_STATUSES].sort()).toEqual([...AUTHORITATIVE].sort());
+    expect(Object.keys(BOM_STATUS_LABELS).sort()).toEqual([...AUTHORITATIVE].sort());
+    expect(Object.keys(BOM_STATUS_LABELS)).toHaveLength(7);
+  });
+
+  it('★★ `PENDING` 은 key 가 아니다 — exact key 는 `PENDING_APPROVAL` 이다', () => {
+    expect(Object.keys(BOM_STATUS_LABELS)).toContain('PENDING_APPROVAL');
+    expect(Object.keys(BOM_STATUS_LABELS)).not.toContain('PENDING');
+    expect(bomStatusLabel('PENDING_APPROVAL')).toBe('승인대기');
+    // 축약형은 미지의 값이므로 라벨이 붙지 않고 원문이 나온다.
+    expect(bomStatusLabel('PENDING')).toBe('PENDING');
+  });
+
+  it('★★ `APPROVED` 는 누락되지 않으며 `ACTIVE` 와 다른 값이다', () => {
+    expect(bomStatusLabel('APPROVED')).toBe('승인됨');
+    expect(bomStatusLabel('APPROVED')).not.toBe(bomStatusLabel('ACTIVE'));
+    // 승인 완료(APPROVED) ≠ 발효 중(ACTIVE) — 두 사실을 합치지 않는다.
+    expect(bomStatusLabel('APPROVED')).not.toContain('활성');
+  });
+
+  it('★★ `ARCHIVED` 는 누락되지 않으며 `INACTIVE` 와 다른 값이다', () => {
+    expect(bomStatusLabel('ARCHIVED')).toBe('보관');
+    expect(bomStatusLabel('ARCHIVED')).not.toBe(bomStatusLabel('INACTIVE'));
+  });
+
+  it('★★ 7종 중 어느 것도 fallback(원문 노출)으로 새지 않는다', () => {
+    for (const status of BOM_STATUSES) {
+      // 라벨이 붙었다면 결과가 enum key 원문과 달라야 한다.
+      expect(bomStatusLabel(status), status).not.toBe(status);
+    }
+  });
+
   it('★ 라벨이 서로 겹치지 않는다', () => {
     const labels = Object.values(BOM_STATUS_LABELS);
     expect(new Set(labels).size).toBe(labels.length);
@@ -403,11 +511,90 @@ describe('★★ read-only — mutation helper 가 하나도 없다', () => {
     }
   });
 
-  it('★ T07-8 이 없으므로 관리 링크를 렌더하지 않는다 (deviation — 완료 보고 참조)', () => {
+  it('★ T07-8 이 없으므로 관리 링크를 렌더하지 않는다 (R4 — deferred rendering)', () => {
     // `/master/boms/{id}` 는 T07-8 소관이라 아직 404 다. 활성 링크를 만들면
     // 사용자를 없는 화면으로 보내므로, route 가 생길 때 함께 켠다.
     expect(BOM_TAB_MANAGE_LINK_ENABLED).toBe(false);
+  });
+
+  it('★ 토글은 dead marker 가 아니다 — 컴포넌트가 실제로 조건으로 쓴다 (R4)', () => {
+    const source = codeOnly(readFileSync(new URL('./bom-tab.tsx', import.meta.url), 'utf8'));
+    // 머리글 열과 셀 렌더 두 곳 모두 이 상수를 조건으로 본다.
+    expect(source).toContain('BOM_TAB_MANAGE_LINK_ENABLED &&');
+    expect(source).toContain('if (!BOM_TAB_MANAGE_LINK_ENABLED) return null;');
+    // 경로 계약은 helper 가 고정한다 — T07-8 은 토글만 켜면 된다.
+    expect(bomManageLinkPath(BOM_ID)).toBe(`/master/boms/${BOM_ID}`);
+    // ⛔ 토글이 꺼진 동안 helper 를 우회해 경로를 직접 조립하지 않는다.
+    expect(source).not.toContain("'/master/boms");
+    expect(source).not.toContain('`/master/boms');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// R2 — 표시 식별자 계약: `BomHeader` 에 `bomCode` 는 없다
+// ═══════════════════════════════════════════════════════════════
+
+describe('★★ 표 열 이름은 실제 표시 필드와 일치한다 (R2)', () => {
+  const PARENT_SOURCE = codeOnly(readFileSync(new URL('./bom-tab.tsx', import.meta.url), 'utf8'));
+
+  it('★ 섹션 A 열 — 버전·유형·상태·적용기간·구성품 수·소요량 확정', () => {
+    expect([...BOM_TAB_PARENT_COLUMNS]).toEqual([
+      '버전',
+      '유형',
+      '상태',
+      '적용기간',
+      '구성품 수',
+      '소요량 확정',
+    ]);
+  });
+
+  it('★ 섹션 B 열 — 첫 열은 `상위 SKU` 다 (`parentSku.skuCode`/`skuName`)', () => {
+    expect(BOM_TAB_WHERE_USED_COLUMNS[0]).toBe('상위 SKU');
+    expect([...BOM_TAB_WHERE_USED_COLUMNS]).toEqual([
+      '상위 SKU',
+      '버전',
+      '상태',
+      '적용기간',
+      '순번',
+      '소요량',
+      '소요량 상태',
+      '구성품 유형',
+      '필수',
+      '대체그룹',
+    ]);
+  });
+
+  it('★★ "BOM 코드" 라는 열이 없다 — `BomHeader` 에 그 필드가 없기 때문이다', () => {
+    // T07-1 `BomHeader` scalar 19 개(docs/18 §D-2)에 bomCode 는 없다.
+    for (const column of [...BOM_TAB_PARENT_COLUMNS, ...BOM_TAB_WHERE_USED_COLUMNS]) {
+      expect(column, column).not.toBe('BOM 코드');
+      expect(column, column).not.toBe('BOM코드');
+    }
+    expect(PARENT_SOURCE).not.toContain('BOM 코드');
+    expect(PARENT_SOURCE).not.toContain('BOM코드');
+  });
+
+  it('★★ 합성 BOM 식별자를 만들지 않는다 — `${skuCode}-${version}` 조립 없음', () => {
     const names = Object.keys(bomView).join(' ');
-    expect(names).not.toContain('Href');
+    // view 모듈에 bomCode 계열 helper·상수가 존재하지 않는다.
+    expect(names.toLowerCase()).not.toContain('bomcode');
+    expect(PARENT_SOURCE.toLowerCase()).not.toContain('bomcode');
+    // 코드와 버전을 한 문자열로 잇는 조립이 없다.
+    expect(PARENT_SOURCE).not.toMatch(/skuCode\}\s*[-/]\s*\$\{/);
+    expect(PARENT_SOURCE).not.toMatch(/\$\{[^}]*version\}[-/]/);
+  });
+
+  it('★★ `BomHeader.id`(uuid) 를 코드처럼 표시하지 않는다', () => {
+    // uuid 는 key·`data-bom-header-id`·관리 링크 경로에만 쓰인다.
+    expect(PARENT_SOURCE).toContain('key={row.id}');
+    expect(PARENT_SOURCE).toContain('data-bom-header-id={row.bomHeaderId}');
+    // 셀 본문으로 uuid 를 그리는 곳이 없다.
+    expect(PARENT_SOURCE).not.toMatch(/>\s*\{row\.id\}\s*</);
+    expect(PARENT_SOURCE).not.toMatch(/>\s*\{row\.bomHeaderId\}\s*</);
+  });
+
+  it('★ 응답 타입에도 bomCode 가 없다 — API contract 를 발명하지 않는다', () => {
+    const viewSource = codeOnly(readFileSync(new URL('./bom-view.ts', import.meta.url), 'utf8'));
+    expect(viewSource.toLowerCase()).not.toContain('bomcode');
   });
 });
