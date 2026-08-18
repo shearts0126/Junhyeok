@@ -292,11 +292,14 @@ describe('★ 공급조건 탭 노출 — 두 permission 을 모두 요구한다
   });
 
   it('탭 순서는 SKU_DETAIL_TABS 선언 순서 그대로다', () => {
+    // ✏️ T1-6B5 에서 ⑦ BOM(`bom.read`)이 추가됐다 — 전체 노출에 필요한 권한이
+    //    하나 늘었을 뿐, 선언 순서와의 일치 계약은 그대로다.
     const all = tabKeys([
       'barcode.read',
       'external_mapping.read',
       'supplier.read',
       'supplier_price.read',
+      'bom.read',
     ]);
     expect(all).toEqual(SKU_DETAIL_TABS.map((entry) => entry.key));
   });

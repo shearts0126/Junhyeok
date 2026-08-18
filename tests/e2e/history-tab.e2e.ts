@@ -50,18 +50,16 @@ test.describe('탭 구성 — 상세 7탭 / 등록 3탭', () => {
 
     await openDetail(page, 'ZZS-E2E-016');
     const tabs = page.getByRole('tab');
-    // ★ T1-6B4 에서 ⑥ 공급조건이 더해졌고, 변경이력은 **여전히 마지막**이다.
-    await expect(tabs).toHaveCount(7);
+    // ★ T1-6B5 에서 ⑦ BOM 이 더해졌고, 변경이력은 **여전히 마지막**이다.
+    await expect(tabs).toHaveCount(8);
     await expect(tabs.nth(0)).toHaveText('기본정보');
     await expect(tabs.nth(1)).toHaveText('코드·분류');
     await expect(tabs.nth(2)).toHaveText('바코드');
     await expect(tabs.nth(3)).toHaveText('외부시스템 매핑');
     await expect(tabs.nth(4)).toHaveText('재고관리 설정');
     await expect(tabs.nth(5)).toHaveText('공급조건');
-    await expect(tabs.nth(6)).toHaveText('변경이력');
-
-    // ⛔ 아직 없는 탭 — T07
-    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(0);
+    await expect(tabs.nth(6)).toHaveText('BOM');
+    await expect(tabs.nth(7)).toHaveText('변경이력');
   });
 });
 

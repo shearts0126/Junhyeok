@@ -53,7 +53,7 @@ async function openSupplierTab(page: Page, skuCode: string): Promise<void> {
 }
 
 test.describe('SKU 상세 ⑥ 공급조건 탭 (ADMIN)', () => {
-  test('★ 탭 위치 — 재고관리 설정과 변경이력 사이다 (BOM placeholder 없음)', async ({ page }) => {
+  test('★ 탭 위치 — 재고관리 설정과 BOM 사이다 (T1-6B5 이후)', async ({ page }) => {
     await login(page, ADMIN);
     await openDetail(page, TAB_SKU);
 
@@ -65,10 +65,11 @@ test.describe('SKU 상세 ⑥ 공급조건 탭 (ADMIN)', () => {
       '외부시스템 매핑',
       '재고관리 설정',
       '공급조건',
+      'BOM',
       '변경이력',
     ]);
-    // ⛔ BOM 탭은 아직 없다 (T07).
-    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(0);
+    // ✏️ T1-6B5 — ⑦ BOM 이 공급조건 **뒤**에 들어갔다.
+    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(1);
   });
 
   test('★ 현재 유효 공급조건만 보인다 — 과거·미래는 없다 (D-5)', async ({ page }) => {

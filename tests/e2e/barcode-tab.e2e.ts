@@ -61,12 +61,12 @@ test.describe('탭 구성 — 상세 7탭 / 등록 3탭', () => {
 
     await openBarcodeTab(page, 'ZZS-E2E-011');
     const detailTabs = page.getByRole('tab');
-    // ★ T1-6B4 에서 ⑥ 공급조건이 더해져 7탭이다.
-    await expect(detailTabs).toHaveCount(7);
+    // ★ T1-6B5 에서 ⑦ BOM 이 더해져 **8탭**이다.
+    await expect(detailTabs).toHaveCount(8);
     await expect(detailTabs.nth(2)).toHaveText('바코드');
 
-    // ⛔ 아직 없는 탭 — T07
-    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(0);
+    // ✏️ T1-6B5 — BOM 탭이 생겼다(공급조건 뒤 · 변경이력 앞).
+    await expect(page.getByRole('tab', { name: 'BOM' })).toHaveCount(1);
   });
 });
 

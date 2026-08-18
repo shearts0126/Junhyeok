@@ -1820,6 +1820,67 @@ SKU `X` 를 기준으로:
 `BOM 탭 toHaveCount(0)` 부재 단언과 unit 의 7탭 스냅샷은 **T1-6B5 가 8탭으로
 갱신**한다 — 예상된 regression 이며 T1-6B4 가 ⑥ 탭에서 겪은 것과 같다.
 
+#### ★ 항목 3 navigation 의 task-order dependency — deferred rendering (T1-6B5 확정)
+
+> 위 "⑦ 탭이 보여줄 것 (최소)" **항목 3**(각 행에서 `/master/boms/{id}` 로
+> 이동하는 링크)은 **삭제되지 않았다.** 아래는 그 항목을 *언제* 렌더하는지에
+> 대한 확정이며, 기능 축소가 아니라 **task 순서 의존성에 따른 연기**다.
+
+| 항목 | 확정 |
+|---|---|
+| 요구사항 | D-30 항목 3 — 행에서 `/master/boms/{id}` 로 이동 (유효) |
+| route owner | **T07-8** (D-31). `/master/boms` · `/master/boms/{id}` 2개 |
+| T1-6B5 시점 상태 | 두 route 모두 **미구현** — 접근하면 404 |
+| T1-6B5 렌더 결정 | **활성 링크를 렌더하지 않는다** (열 자체를 만들지 않는다) |
+| 근거 | 없는 화면으로 보내는 링크는 사용자에게 404 를 준다. ⛔ 404 링크를 만들지 않는다 |
+| 활성화 시점 | **T07-8 이 `/master/boms/{id}` 를 착지시킬 때 함께 켠다** |
+| 활성화 절차 | `bom-view.ts` 의 `BOM_TAB_MANAGE_LINK_ENABLED` 를 `true` 로 바꾼다 (한 줄) |
+| 경로 계약 | `bomManageLinkPath(bomHeaderId)` → `/master/boms/{bomHeaderId}` — 이미 고정돼 있고 unit 테스트가 지킨다 |
+
+⚠️ `BOM_TAB_MANAGE_LINK_ENABLED` 는 **dead marker 가 아니다.** `bom-tab.tsx` 의
+두 표(`TableHead` 머리글 열 · `ManageLinkCell` 셀)가 실제로 이 값을 조건으로
+렌더하므로, 토글을 켜면 두 섹션 모두에 링크 열이 즉시 나타난다.
+
+⛔ T1-6B5 는 `/master/boms` 를 **구현하지 않는다** — D-31 의 owner 는 T07-8 이다.
+⛔ 링크를 대신할 다른 화면(예: dialog·inline 상세)을 임의로 만들지 않는다.
+
+#### ★ status 표시 계약 — `BomStatus` 7종 exact key (T1-6B5 확정)
+
+⑦ 탭은 D-6 의 **7종 전부**를 각각 다른 라벨로 표시한다. ⛔ 축약·병합 금지.
+
+| enum key (authoritative) | ⑦ 탭 라벨 |
+|---|---|
+| `DRAFT` | 작성중 |
+| `PENDING_APPROVAL` | 승인대기 |
+| `REJECTED` | 반려 |
+| `APPROVED` | 승인됨 |
+| `ACTIVE` | 활성 |
+| `INACTIVE` | 사용종료 |
+| `ARCHIVED` | 보관 |
+
+⛔ `PENDING` 은 **key 가 아니다** — 실제 key 는 `PENDING_APPROVAL` 이다.
+⛔ `APPROVED`(승인 완료·미발효)와 `ACTIVE`(발효 중)를 합치지 않는다.
+⛔ `ACTIVE` 를 "현재 적용중"으로 번역하지 않는다 — status 와 적용기간은 다른 축이다.
+★ `where-used` 는 status 필터가 **없으므로** `ARCHIVED`·`INACTIVE` header 가
+실제로 ⑦ 탭에 도달한다. 숨기지 않는다.
+
+#### ★ 표시 식별자 계약 — `bomCode` 는 존재하지 않는다 (T1-6B5 확정)
+
+D-2 가 확정한 `BomHeader` scalar 19 개에 **BOM 코드 필드는 없다.** BOM 의
+identity 는 `id`(uuid) 와 `(parentSkuId, version)` UNIQUE 다.
+
+| 섹션 | 열 | 실제 field |
+|---|---|---|
+| A (이 SKU 의 BOM) | 버전 · 유형 · 상태 · 적용기간 · 구성품 수 · 소요량 확정 | `version` · `bomType` · `status` · `effectiveFrom`/`effectiveTo` · `lineCount` · `lineCount`−`unconfirmedCount` |
+| B (사용처) | **상위 SKU** · 버전 · 상태 · 적용기간 · 순번 · 소요량 · 소요량 상태 · 구성품 유형 · 필수 · 대체그룹 | `parentSku.skuCode`/`skuName` · `version` · `status` · 기간 · `lineNo` · `quantityPer`+`uom` · `quantityStatus` · `componentRole` · `isRequired` · `alternateGroup` |
+
+⛔ "BOM 코드" 열을 만들지 않는다 — 그런 필드가 없다.
+⛔ `${skuCode}-${version}` 같은 **합성 식별자**를 만들지 않는다.
+⛔ `BomHeader.id`(uuid)를 "코드"로 표시하지 않는다 — key·`data-` 속성·링크
+경로에만 쓴다.
+★ 섹션 A 는 이미 해당 SKU 의 상세 화면 안이므로 상위 SKU 를 반복하지 않고
+`version` 으로 구분한다.
+
 ### D-31 — standalone UI (T07-8)
 
 route 는 정확히 **2개**. ⛔ `/new` route 없음(생성은 dialog — T06-4 와 같은 원칙).

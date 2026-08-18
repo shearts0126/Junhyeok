@@ -66,8 +66,8 @@ describe('★ 상세 탭 구성 — 변경이력 추가', () => {
     expect(SKU_CREATE_TABS.map((tab) => tab.label) as readonly string[]).not.toContain('변경이력');
   });
 
-  it('2. 상세 화면은 7탭이다 (T1-6B4 ⑥ 공급조건 추가)', () => {
-    expect(SKU_DETAIL_TABS).toHaveLength(7);
+  it('2. ★ 상세 화면은 8탭이다 (T1-6B5 ⑦ BOM 추가로 원문 8탭 완성)', () => {
+    expect(SKU_DETAIL_TABS).toHaveLength(8);
   });
 
   it('3. ★ 상세 탭 순서가 원문 8탭의 논리 순서다 (변경이력이 마지막)', () => {
@@ -78,6 +78,7 @@ describe('★ 상세 탭 구성 — 변경이력 추가', () => {
       'externalMapping',
       'inventory',
       'supplier',
+      'bom',
       'history',
     ]);
     expect(SKU_DETAIL_TABS.map((tab) => tab.label)).toEqual([
@@ -87,20 +88,22 @@ describe('★ 상세 탭 구성 — 변경이력 추가', () => {
       '외부시스템 매핑',
       '재고관리 설정',
       '공급조건',
+      'BOM',
       '변경이력',
     ]);
     // ★ ⑥ 공급조건이 ⑤ 재고관리 설정과 ⑧ 변경이력 사이에 들어갔고,
     //   변경이력은 여전히 마지막이다 (⑦ BOM 은 T07 에서 그 사이로 들어온다).
   });
 
-  it('4. ★ 공급조건은 상세에만 있고(T1-6B4), BOM 은 아직 어느 배열에도 없다', () => {
+  it('4. ★ 공급조건·BOM 은 상세에만 있다 (T1-6B4 · T1-6B5)', () => {
     const createLabels = SKU_CREATE_TABS.map((tab) => tab.label);
     const detailLabels = SKU_DETAIL_TABS.map((tab) => tab.label);
     // ⑥ 공급조건은 상세 전용 child 탭이다 — 등록 화면에는 없다.
     expect(detailLabels).toContain('공급조건');
     expect(createLabels).not.toContain('공급조건');
-    // ⑦ BOM 은 T07 이후다 — placeholder 도 없다.
-    expect([...createLabels, ...detailLabels]).not.toContain('BOM');
+    // ✏️ T1-6B5 에서 ⑦ BOM 이 **상세 전용** child 탭으로 추가됐다.
+    expect(detailLabels).toContain('BOM');
+    expect(createLabels).not.toContain('BOM');
   });
 });
 

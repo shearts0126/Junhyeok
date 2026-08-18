@@ -34,6 +34,10 @@ function has(permissions: readonly string[] | null, key: string): boolean {
  *
  * ★ ⑥ 공급조건 탭은 `supplier.read` **AND** `supplier_price.read` 둘 다 필요하다
  *   (T1-6B4 D-4) — 응답에 공급조건과 **가격**이 함께 들어가기 때문이다.
+ * ★ ⑦ BOM 탭은 **`bom.read` 하나**다 (T1-6B5, `docs/18` §D-15·§D-30). 두 소비
+ *   endpoint(`GET /api/boms?parentSkuId=` · `GET /api/skus/{id}/where-used`)가
+ *   모두 `bom.read` 로 판정되므로 capability 를 합치지 않는다.
+ *   ⚠️ `bom.read` 는 **EXECUTIVE 를 포함**한다 — ⑥ 공급조건(E = —)과 정반대다.
  */
 export function visibleSkuDetailTabs({
   permissions,
@@ -43,6 +47,7 @@ export function visibleSkuDetailTabs({
     if (entry.key === 'externalMapping') return has(permissions, 'external_mapping.read');
     if (entry.key === 'supplier')
       return has(permissions, 'supplier.read') && has(permissions, 'supplier_price.read');
+    if (entry.key === 'bom') return has(permissions, 'bom.read');
     return true;
   });
 }
