@@ -685,10 +685,9 @@ INACTIVE` 로 전이한다. 따라서 오늘 요청하면서 `effectiveTo` 를 �
 effectiveFrom < requestedEffectiveTo <= businessDateOf(now)
 ```
 
-★ 상한 `<= businessDateOf(now)` 는 **새로 저장하는 값**에 적용한다.
-`requestedEffectiveTo` 가 현재 저장된 `effectiveTo` 와 **완전히 같으면**
-기간을 새로 쓰지 않으므로 이 상한을 적용하지 않고 통과시킨다(아래 표
-"`requested == 현재`" 행 · R4 예시 ②). 하한 `effectiveFrom <` 는 언제나 본다.
+★ **이 master rule 에는 예외가 없다.** 현재 저장된 `effectiveTo` 와 값이
+같다는 이유만으로 상한 `<= businessDateOf(now)` 를 우회하지 않는다.
+equality 자체는 허용하지만 **그 equal 값도 반드시 오늘 이하**여야 한다.
 
 ##### ★ `businessDateOf(now)` 의 시간대 — 확정 (R3)
 
@@ -726,7 +725,8 @@ businessDateOf(now): 2026-08-19        ← 이 값과 비교한다
 | `requestedEffectiveTo <= effectiveFrom` | ⛔ 금지 (DB CHECK 와 동일 방향) |
 | 현재 `effectiveTo == null` | `requestedEffectiveTo` 저장 |
 | 현재 `effectiveTo != null` 이고 `requested < 현재` | ✅ **단축 허용** |
-| 현재 `effectiveTo != null` 이고 `requested == 현재` | ✅ 허용. 기간 write 는 no-change 여도 **`ACTIVE → INACTIVE` 전이는 수행** |
+| 현재 `effectiveTo != null` 이고 `requested == 현재` **이며 오늘 이하** | ✅ 허용. 기간 write 는 no-change 여도 **`ACTIVE → INACTIVE` 전이는 수행** |
+| 현재 `effectiveTo != null` 이고 `requested == 현재` **이지만 미래** | ⛔ **금지** — equality 는 상한을 면제하지 않는다 (CASE C) |
 | 현재 `effectiveTo != null` 이고 `requested > 현재` | ⛔ **금지** — 기간 연장·reopen 없음 |
 | nearest successor `ACTIVE` 존재 | `requestedEffectiveTo <= successor.effectiveFrom` 이어야 한다 |
 
@@ -736,6 +736,20 @@ businessDateOf(now): 2026-08-19        ← 이 값과 비교한다
 successor 경계는 **서비스가 먼저 막는다.** DB EXCLUDE 는 최종 backstop 일
 뿐이며 정상 validation 을 대체하지 않는다 (409 만 나오면 사용자가 원인을
 알 수 없다).
+
+##### 최종 validation 술어
+
+```
+effectiveFrom < requestedEffectiveTo
+AND requestedEffectiveTo <= businessDateOf(now)
+AND ( currentEffectiveTo == null
+      OR requestedEffectiveTo <= currentEffectiveTo )
+AND ( successor == null
+      OR requestedEffectiveTo <= successor.effectiveFrom )
+```
+
+네 조건을 **모두** 만족해야 한다. DB EXCLUDE 는 backstop 이며 이 서비스
+validation 을 생략하지 않는다.
 
 ##### 경계 예시 (R4)
 
@@ -750,17 +764,32 @@ successor 경계는 **서비스가 먼저 막는다.** DB EXCLUDE 는 최종 bac
 | `2026-08-19` (미래) | ⛔ **400 `VALIDATION_ERROR`** |
 | `2026-01-01` (= `effectiveFrom`) | ⛔ 400 (`> effectiveFrom` 위반) |
 
-**② 이미 마감된 ACTIVE — `effectiveTo = 2026-09-01`**
+**② 유한 ACTIVE — CASE A ~ F**
 
-| `requestedEffectiveTo` | 판정 |
-|---|---|
-| `2026-08-01` | ✅ **단축 허용** |
-| `2026-09-01` (동일) | ✅ 허용. 기간은 no-change 이지만 **`ACTIVE → INACTIVE` 전이는 수행** |
-| `2026-10-01` | ⛔ **연장 금지 → 400 `VALIDATION_ERROR`** |
+| CASE | 현재 `effectiveTo` | `requestedEffectiveTo` | 결과 |
+|---|---|---|---|
+| **A** | `2026-09-01` | `2026-08-01` | ✅ 허용 → `effectiveTo = 2026-08-01` · `ACTIVE → INACTIVE` (소급 단축) |
+| **B** | `2026-09-01` | `2026-08-18` | ✅ 허용 → `effectiveTo = 2026-08-18` · `ACTIVE → INACTIVE` (오늘로 단축) |
+| **C** | `2026-09-01` | `2026-09-01` | ⛔ **400 `VALIDATION_ERROR`** — 현재값과 같아도 **미래**다 |
+| **D** | `2026-08-18` | `2026-08-18` | ✅ 허용 → 기간 no-change · **`ACTIVE → INACTIVE` 전이 수행** |
+| **E** | `2026-08-10` | `2026-08-10` | ✅ 허용 → 기간 no-change · **`ACTIVE → INACTIVE` 전이 수행** |
+| **F** | `2026-08-10` | `2026-08-11` | ⛔ **400** — 기존 기간 연장 금지 |
 
-⚠️ ②의 `2026-09-01` 은 오늘(`2026-08-18`)보다 미래지만, **현재 저장된
-`effectiveTo` 와 같은 값**이다. 이 경우는 기간을 새로 쓰지 않으므로 미래 종료
-금지 규칙에 걸리지 않는다 — 새로 **저장할** 값이 미래일 때만 400 이다.
+★ **CASE C 가 이 규칙의 핵심**이다. "기간을 새로 쓰지 않으니 통과" 라는
+예외를 **만들지 않는다.**
+
+##### ★ 왜 미래 종료를 허용하지 않는가
+
+`deactivate` 는 호출 **즉시** `ACTIVE → INACTIVE` 가 된다. 그런데 저장된
+`effectiveTo` 를 오늘 이후로 남겨 두면
+
+> **status 는 지금 `INACTIVE` 인데 기간은 미래까지 열려 있는**
+
+이중 의미가 만들어진다. `ACTIVE` 의 실제 유효성은 status 와 `[from, to)` 를
+**함께** 읽어 판정하므로, 두 축이 서로 다른 말을 하게 두면 안 된다.
+
+미래 시점에 자동으로 종료하고 싶다면 그것은 **scheduled deactivation** 이라는
+별도 기능·상태 머신이 필요하다. ⛔ T07-5 에는 그런 기능을 추가하지 않는다.
 
 ##### 오류코드
 
