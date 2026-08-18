@@ -59,6 +59,7 @@ export {
   normalizeAlternateGroup,
   parseBomId,
   parseBomLineId,
+  parseBulkConfirmQtyInput,
   parseCreateBomInput,
   parseCreateLineInput,
   parseDateOnly,
@@ -76,6 +77,8 @@ export {
   BOM_UOM_MAX_LENGTH,
   BOM_VERSION_MAX_LENGTH,
   COMPONENT_ROLES,
+  type BulkConfirmQtyInput,
+  type BulkConfirmQtyItem,
   type CreateBomInput,
   type CreateLineInput,
   type ListBomsQuery,
@@ -145,6 +148,13 @@ export {
   type CreateLineResult,
 } from './create-line';
 export { updateBomLine } from './update-line';
+export {
+  bulkConfirmBomLineQuantities,
+  bomLineBulkConfirmRouteScope,
+  parseBomDetailSnapshot,
+  type BulkConfirmQtyAuditSummary,
+  type BulkConfirmQtyResult,
+} from './bulk-confirm-qty';
 export { deleteBomLine } from './delete-line';
 export { listBomWhereUsed, type WhereUsedResult } from './where-used';
 export { hasBomUsage, type HasBomUsageDependencies } from './has-bom-usage';
