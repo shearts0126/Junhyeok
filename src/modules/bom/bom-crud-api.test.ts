@@ -452,8 +452,10 @@ describe('T07-3 신규 오류코드 5종의 HTTP 상태 (D-29)', () => {
     expect(httpStatusForCode(ERROR_CODES.BOM_NOT_FOUND)).toBe(404);
   });
 
-  it('⛔ workflow·cost 전용 코드는 아직 없다 — 후속 Task 가 추가한다', () => {
-    expect(ERROR_CODES).not.toHaveProperty('BOM_INVALID_TRANSITION');
+  it('✏️ `BOM_INVALID_TRANSITION` 은 T07-5 가 활성화했다 — cost 코드는 아직 없다', () => {
+    // T07-5 workflow endpoint 가 생기면서 던질 곳이 생겼다 (D-29 15종 중 하나).
+    expect(ERROR_CODES).toHaveProperty('BOM_INVALID_TRANSITION');
+    // T07-7A 소관은 여전히 없다.
     expect(ERROR_CODES).not.toHaveProperty('BOM_SUPPLIER_SELECTION_CONFLICT');
   });
 });
@@ -570,16 +572,23 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     );
   });
 
-  it('★ 예약은 정책일 뿐 endpoint 가 아니다 — workflow route handler 가 0개다', async () => {
+  it('★ route 목록 — T07-5 workflow 7종이 들어왔다 (예상된 회귀)', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
     expect(readdirSync(bomsDir).sort()).toEqual(['[id]', 'route.ts']);
-    // 상세 하위에는 `lines` 와 route.ts 뿐 — submit/approve/clone 등이 없다.
-    expect(readdirSync(`${bomsDir}/[id]`).sort()).toEqual(['lines', 'route.ts']);
-    // ✏️ T07-4 가 `bulk-confirm-qty` 를 추가했다 — **예상된 회귀**다.
-    //    이 테스트의 의도(workflow route handler 0개)는 그대로 유지된다:
-    //    submit·approve·reject·activate·deactivate·archive·clone·import 없음.
+    // ✏️ T07-5 가 workflow 7종을 추가했다. `lines` 아래 `bulk-confirm-qty` 는 T07-4.
+    expect(readdirSync(`${bomsDir}/[id]`).sort()).toEqual([
+      'activate',
+      'approve',
+      'archive',
+      'clone',
+      'deactivate',
+      'lines',
+      'reject',
+      'route.ts',
+      'submit',
+    ]);
     expect(readdirSync(`${bomsDir}/[id]/lines`).sort()).toEqual([
       '[lineId]',
       'bulk-confirm-qty',
@@ -587,7 +596,7 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     ]);
   });
 
-  it('★ T07-5 workflow route handler 는 여전히 0개다 (T07-4 가 만들지 않았다)', async () => {
+  it('★ T07-6·T07-7·import route 는 여전히 0개다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
@@ -596,18 +605,7 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
       ...readdirSync(`${bomsDir}/[id]`),
       ...readdirSync(`${bomsDir}/[id]/lines`),
     ];
-    for (const forbidden of [
-      'submit',
-      'approve',
-      'reject',
-      'activate',
-      'deactivate',
-      'archive',
-      'clone',
-      'import',
-      'explode',
-      'cost',
-    ]) {
+    for (const forbidden of ['import', 'explode', 'cost', 'max-assembly-qty', 'status']) {
       expect(all, forbidden).not.toContain(forbidden);
     }
   });
