@@ -343,7 +343,77 @@ describe('★★ direct line 원가 (D-19 · F-1)', () => {
     expect(result.lines[0]?.lineCost).not.toBe('999999');
   });
 
-  it('★★ packQuantity 는 계산에 쓰이지 않는다 (TC-BOM-009)', async () => {
+  // ═════════════════════════════════════════════════════════════
+  // ★ TC-BOM-009 — backlog T07-7 완료조건 "박스 단가 = 가격 ÷ 입수량"
+  //
+  // Recovery(D-19)가 이 문구의 구현 의미를 확정했다.
+  //   ⛔ `unitPrice / packQuantity` 라는 별도 계산을 만들지 않는다.
+  //   ★ `quantityPer` 가 이미 입수량 효과를 표현하므로
+  //     `rawRequiredQty × unitPrice` 하나만으로 박스 단가 효과가 나와야 한다.
+  //   ★ `packQuantity` 는 원가 산술의 operand 가 아니다.
+  // ═════════════════════════════════════════════════════════════
+
+  it('★★ TC-BOM-009 — exact division: 입수 20 · quantityPer 0.05 · 30000원 → "1500"', async () => {
+    // 박스 30000원 / 입수량 20 = 개당 1500원.
+    // 20 은 나누어떨어지므로 precision 논쟁이 전혀 없는 fixture 다.
+    const parent = await newSku('tc009-exact-p');
+    const component = await pricedComponent('tc009-exact-c', '30000');
+    const bom = await newHeader(parent, 'TC9EX', { outputQty: '1' });
+    await newLine(bom, component, { quantityPer: '0.05', packQuantity: '20' });
+
+    const result = await cost(bom, '1');
+
+    expect(result.lines[0]?.requiredQty).toBe('0.05');
+    // ★ 1500 이 나오는 이유는 **quantityPer = 0.05** 이기 때문이다.
+    //   production 어디에도 30000 / 20 을 계산하는 코드가 없다.
+    expect(result.lines[0]?.lineCost).toBe('1500');
+    // ⛔ packQuantity 로 한 번 더 나눴다면 75 였을 것이다 (이중 환산).
+    expect(result.lines[0]?.lineCost).not.toBe('75');
+    // packQuantity 는 계산에 들어가지 않는다 — 라인 metadata 로도 노출하지 않는다.
+    expect(JSON.stringify(result.lines[0])).not.toContain('packQuantity');
+  });
+
+  it('★★ TC-BOM-009 companion — 입수 30 · 0.033333 × 30000 = "999.99" · ⛔ 1000 재정규화 금지', async () => {
+    // 30 은 나누어떨어지지 않는다. 저장된 quantityPer 0.033333 을 그대로 쓴다.
+    const parent = await newSku('tc009-30-p');
+    const component = await pricedComponent('tc009-30-c', '30000');
+    const bom = await newHeader(parent, 'TC9NT', { outputQty: '1' });
+    await newLine(bom, component, { quantityPer: '0.033333', packQuantity: '30' });
+
+    const result = await cost(bom, '1');
+
+    expect(result.lines[0]?.requiredQty).toBe('0.033333');
+    expect(result.lines[0]?.lineCost).toBe('999.99');
+    // ⛔ backlog 의 "가격 ÷ 입수량" 문구를 이유로 0.033333 을 정확한 1/30 으로
+    //    되돌리는 보정 금지 — 그랬다면 정확히 1000 이 나왔을 것이다 (D-19).
+    expect(result.lines[0]?.lineCost).not.toBe('1000');
+    // ⛔ packQuantity 로 다시 나누는 것도 금지 — 그랬다면 33.333 이었을 것이다.
+    expect(result.lines[0]?.lineCost).not.toBe('33.333');
+  });
+
+  it('★★ TC-BOM-009 — packQuantity independence: 20 → 200 이어도 lineCost 가 동일하다', async () => {
+    // quantityPer · unitPrice · Q · outputQty 를 전부 고정하고 packQuantity 만 바꾼다.
+    const parent = await newSku('tc009-ind-p');
+    const componentA = await pricedComponent('tc009-ind-a', '30000');
+    const componentB = await pricedComponent('tc009-ind-b', '30000');
+    const bom = await newHeader(parent, 'TC9IND', { outputQty: '1' });
+    await newLine(bom, componentA, { quantityPer: '0.05', packQuantity: '20', lineNo: 1 });
+    await newLine(bom, componentB, { quantityPer: '0.05', packQuantity: '200', lineNo: 2 });
+
+    const result = await cost(bom, '1');
+
+    expect(result.lines).toHaveLength(2);
+    // ★ packQuantity 20 과 200 이 **완전히 같은 값**을 낸다.
+    expect(result.lines[0]?.lineCost).toBe('1500');
+    expect(result.lines[1]?.lineCost).toBe('1500');
+    expect(result.lines[0]?.lineCost).toBe(result.lines[1]?.lineCost);
+    // ★ packQuantity 가 operand 였다면 200 쪽이 150 이 되어 갈렸을 것이다.
+    expect(result.lines[1]?.lineCost).not.toBe('150');
+    // 소계도 단순 합이다 — 입수량으로 보정되지 않는다.
+    expect(result.subtotals).toEqual([{ currency: 'KRW', vatIncluded: false, amount: '3000' }]);
+  });
+
+  it('★★ packQuantity 는 계산에 쓰이지 않는다 — Q=30 회귀', async () => {
     // 박스 30000원 / 입수량 30 → 개당 1000원. quantityPer 가 이미 1/30 을 담는다.
     const parent = await newSku('pack-p');
     const component = await pricedComponent('pack-c', '30000');
@@ -356,6 +426,8 @@ describe('★★ direct line 원가 (D-19 · F-1)', () => {
     expect(result.lines[0]?.lineCost).toBe('29999.7');
     // ⛔ 별도로 30000/30 을 먼저 만들면 999.99 가 되어 이중 환산이다.
     expect(result.lines[0]?.lineCost).not.toBe('999.99');
+    // ⛔ 0.99999 를 1 로 재정규화하면 30000 이 된다 — 하지 않는다 (D-19).
+    expect(result.lines[0]?.lineCost).not.toBe('30000');
   });
 
   it('★★ purchaseUom 은 무시된다 — BOX 라고 환산하지 않는다', async () => {
@@ -441,7 +513,10 @@ describe('★★ C-2 — direct line 만 본다', () => {
     expect(result.subtotals).toEqual([{ currency: 'KRW', vatIncluded: false, amount: '700' }]);
   });
 
-  it('★★ root status 로 거르지 않는다 — 7종 전부 원가가 나온다', async () => {
+  // ⚠️ 여기의 "7종" 은 **`BomStatus`** 7종이다. `QuantityStatus` 는
+  //    `CONFIRMED / SUGGESTED / UNKNOWN` **3종**이며 그쪽 매트릭스는 아래
+  //    provisional 섹션이 따로 본다. 두 enum 을 혼동하지 않는다.
+  it('★★ root BomStatus 로 거르지 않는다 — BomStatus 7종 전부 원가가 나온다', async () => {
     const ALL = [
       'DRAFT',
       'PENDING_APPROVAL',
@@ -761,6 +836,15 @@ describe('★★ 수량 × 공급처 × 가격 provisional matrix', () => {
     return result.lines[0] as DirectCostLine;
   }
 
+  it('★★ QuantityStatus 는 정확히 3종이다 — CONFIRMED / SUGGESTED / UNKNOWN', async () => {
+    // ⛔ 가짜 status 를 만들거나 enum 의미를 확장하지 않는다. 아래 9조합 매트릭스는
+    //    이 3종 × (대표·가격) 3상태를 전부 덮는다.
+    const rows = await getPrismaClient().$queryRawUnsafe<{ label: string }[]>(
+      `SELECT unnest(enum_range(NULL::"QuantityStatus"))::text AS label`,
+    );
+    expect(rows.map((row) => row.label).sort()).toEqual(['CONFIRMED', 'SUGGESTED', 'UNKNOWN']);
+  });
+
   it('★ CONFIRMED + 대표 + 가격 → 사유 없음, 원가 계산', async () => {
     const line = await scenario('m-cc', 'CONFIRMED', true, true);
     expect(line.provisionalReasons).toEqual([]);
@@ -920,7 +1004,10 @@ describe('★★ subtotal — raw 합계 후 4dp · partial', () => {
     expect(result.subtotals[0]?.amount).not.toBe('0.0002');
   });
 
-  it('★★ 통화·VAT 별로 나뉜다 — 환산하지 않는다 (TC-BOM-009)', async () => {
+  // ⚠️ 이 회귀는 **TC-BOM-009 가 아니다.** TC-BOM-009 는 backlog 상 "박스 단가 =
+  //    가격 ÷ 입수량" acceptance 이며 위 전용 fixture 3종이 담당한다. 이쪽은
+  //    D-26·D-27 통화/VAT subtotal 분리 회귀로 별도 유지한다 (삭제하지 않는다).
+  it('★★ 통화·VAT 별로 나뉜다 — 환산하지 않는다 (D-26·D-27)', async () => {
     const parent = await newSku('cx-p');
     const krw = await pricedComponent('cx-krw', '100');
     const krwVat = await pricedComponent('cx-krwv', '200', { vatIncluded: true });

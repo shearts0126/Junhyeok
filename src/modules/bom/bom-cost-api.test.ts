@@ -54,17 +54,81 @@ describe('★★ F-1 — rawLineCost = rawRequiredQty × unitPrice', () => {
     }
   });
 
-  it('★★ packQuantity 를 다시 나누지 않는다 — 이중 환산 금지 (TC-BOM-009)', () => {
-    // quantityPer = 1/30 이 이미 박스 환산을 담고 있다. 30000원 박스 → 개당 1000원.
-    const requiredQty = divide('1', '30');
-    expect(toMoneyString(multiply(requiredQty, '30000'))).toBe('1000');
-    // ⛔ 여기에 다시 /30 을 하면 33.3333 이 되어 틀린다.
-    expect(toMoneyString(multiply(requiredQty, divide('30000', '30')))).not.toBe('1000');
-  });
-
   it('★★ VAT·통화는 곱셈에 들어가지 않는다 — 저장된 unitPrice 그대로', () => {
     // vatIncluded 여부와 무관하게 같은 값이 나온다.
     expect(rawCost('3', '1100')).toBe('3300');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// 1-B. ★ TC-BOM-009 — "박스 단가 = 가격 ÷ 입수량" (backlog 완료조건)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★★ **TC-BOM-009 — backlog T07-7 완료조건 "박스 단가 = 가격 ÷ 입수량".**
+ *
+ * Recovery(D-19)가 이 문구의 구현 의미를 확정했다.
+ *
+ * ⛔ `unitPrice / packQuantity` 라는 **별도 계산을 만들지 않는다.**
+ * ★ `quantityPer` 가 **이미 입수량 효과를 표현**하므로 (`1/입수량` 형태),
+ *   `rawRequiredQty × unitPrice` **하나만으로** 박스 단가 효과가 나와야 한다.
+ *
+ * 즉 `packQuantity` 는 원가 산술의 **operand 가 아니다** — 참고 metadata 다.
+ */
+describe('★★ TC-BOM-009 — 박스 단가는 quantityPer 로 표현된다 (packQuantity 미사용)', () => {
+  it('★★ exact-division fixture — 입수 20 · quantityPer 0.05 · 30000원 → "1500"', () => {
+    // 박스 30000원 / 입수량 20 = 개당 1500원.
+    // quantityPer = 1/20 = 0.05 (나누어떨어지므로 precision 논쟁이 없다).
+    // Q = 1, outputQty = 1 → rawRequiredQty = 0.05.
+    const rawRequiredQty = toDecimal('0.05');
+    const raw = computeRawLineCost({ rawRequiredQty, unitPrice: '30000' });
+
+    expect(toMoneyString(raw)).toBe('1500');
+
+    // ★ 1500 이 나오는 이유는 **quantityPer = 0.05 이기 때문**이다.
+    //   production 에 30000 / 20 을 계산하는 코드는 없다.
+    // ⛔ packQuantity 로 한 번 더 나누면 75 가 되어 이중 환산이다.
+    expect(
+      toMoneyString(computeRawLineCost({ rawRequiredQty, unitPrice: divide('30000', '20') })),
+    ).toBe('75');
+  });
+
+  it('★★ 30입수 companion — 0.033333 × 30000 = "999.99" · ⛔ 1000 으로 재정규화 금지', () => {
+    // 입수량 30 은 나누어떨어지지 않는다. quantityPer 는 저장된 0.033333 그대로 쓴다.
+    const rawRequiredQty = toDecimal('0.033333');
+    expect(toMoneyString(computeRawLineCost({ rawRequiredQty, unitPrice: '30000' }))).toBe(
+      '999.99',
+    );
+
+    // ⛔ backlog 의 "가격 ÷ 입수량" 문구를 이유로 0.033333 을 정확한 1/30 으로
+    //    되돌리는 보정을 하지 않는다 (D-19 — 저장값 그대로, 재정규화 금지).
+    expect(toMoneyString(computeRawLineCost({ rawRequiredQty, unitPrice: '30000' }))).not.toBe(
+      '1000',
+    );
+    // 참고 — 1/30 으로 되돌렸다면 정확히 1000 이 나왔을 것이다. 두 경로는 다르다.
+    expect(
+      toMoneyString(computeRawLineCost({ rawRequiredQty: divide('1', '30'), unitPrice: '30000' })),
+    ).toBe('1000');
+  });
+
+  it('★★ packQuantity 는 산식의 operand 가 아니다 — 넣을 자리 자체가 없다', () => {
+    // domain 층에서는 "값을 바꿔도 같다"가 아니라 **파라미터가 존재하지 않는다**가
+    // 더 강한 증명이다. fixture 수준의 20 → 200 독립성은 DB 테스트가 본다.
+    const rawRequiredQty = toDecimal('0.05');
+
+    // packQuantity 를 슬쩍 얹어도 산식이 그것을 읽지 않는다 — 애초에 그 이름의
+    // 파라미터가 타입에 없으므로 런타임에서도 무시된다.
+    const withStray = computeRawLineCost({
+      rawRequiredQty,
+      unitPrice: '30000',
+      packQuantity: '200',
+    } as unknown as Parameters<typeof computeRawLineCost>[0]);
+    expect(toMoneyString(withStray)).toBe('1500');
+
+    // ★ packQuantity 가 operand 였다면 200 에서 값이 10분의 1 로 바뀌었을 것이다.
+    expect(
+      toMoneyString(computeRawLineCost({ rawRequiredQty, unitPrice: divide('30000', '200') })),
+    ).toBe('7.5');
   });
 });
 
@@ -340,7 +404,10 @@ describe('★★ D-26 · D-27 — (currency, vatIncluded) 별 분리', () => {
     { currency: 'KRW', vatIncluded: false, rawLineCost: toDecimal('50') },
   ];
 
-  it('★★ 통화 혼재는 오류가 아니다 — subtotal 이 나뉜다 (TC-BOM-009)', () => {
+  // ⚠️ 이 회귀는 **TC-BOM-009 가 아니다.** TC-BOM-009 는 backlog 상 "박스 단가 =
+  //    가격 ÷ 입수량" acceptance 이며 위 전용 describe 가 담당한다. 이쪽은 D-26·D-27
+  //    통화/VAT subtotal 분리 회귀로 별도 유지한다.
+  it('★★ 통화 혼재는 오류가 아니다 — subtotal 이 나뉜다 (D-26·D-27)', () => {
     expect(computeCostSubtotals(LINES)).toEqual([
       { currency: 'KRW', vatIncluded: false, amount: '150' },
       { currency: 'KRW', vatIncluded: true, amount: '200' },

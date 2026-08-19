@@ -2684,6 +2684,37 @@ quantityStatus !== 'CONFIRMED'   →   QTY_UNCONFIRMED
 (`BOM_QTY_UNCONFIRMED` 422)뿐이며, 그쪽은 §2205 표대로 유지된다. 두 계약은
 이름만 비슷할 뿐 **다른 판정**이다.
 
+#### F-13 — **TC-BOM-009** 는 "박스 단가 = 가격 ÷ 입수량" acceptance 다
+
+authoritative backlog 의 `T07-7` 완료조건이 **"박스 단가 = 가격 ÷ 입수량"** 이고
+`TC-BOM-009` 가 그 조건에 붙어 있다. Recovery(D-19)가 이 문구의 **구현 의미**를
+확정한다.
+
+```
+⛔  unitPrice / packQuantity          ← 이런 별도 계산을 만들지 않는다
+✅  rawRequiredQty × unitPrice        ← 이 하나로 박스 단가 효과가 나온다
+```
+
+★ `quantityPer` 가 **이미 입수량 효과를 표현**한다(`1/입수량` 형태). 따라서
+`packQuantity` 는 원가 산술의 **operand 가 아니라 참고 metadata** 다.
+
+| fixture | `quantityPer` | `unitPrice` | 기대 `lineCost` | 금지 |
+|---|---|---|---|---|
+| **exact division** (입수 20) | `0.05` | `30000` | **`"1500"`** | `"75"` (packQuantity 재나눗셈) |
+| **companion** (입수 30) | `0.033333` | `30000` | **`"999.99"`** | `"1000"`(재정규화) · `"33.333"`(재나눗셈) |
+| **independence** | `0.05` 고정, `packQuantity` `20`→`200` | `30000` | **양쪽 `"1500"`** | `"150"` |
+
+★ exact-division fixture 는 **precision 논쟁이 없는** 형태다 — `1500` 이 나오는
+이유는 오직 `quantityPer = 0.05` 이기 때문이며, `30000 / 20` 을 계산하는 production
+코드는 존재하지 않는다.
+
+⛔ **`0.033333` 을 정확한 `1/30` 으로 되돌리는 보정 금지.** backlog 의 "÷ 입수량"
+문구는 재정규화 지시가 **아니다**. `0.033333 × 30000 = 999.99` 가 맞고 `1000` 은
+틀리다 (D-19 — 저장된 `quantityPer` 그대로 쓴다).
+
+⚠️ 통화/VAT subtotal 분리(D-26·D-27) 회귀는 필요하고 유지하지만 **`TC-BOM-009`
+가 아니다.**
+
 ### D-28 — concurrency
 
 #### ⛔ 폐기된 계약 — endpoint row lock 만으로는 순환을 막을 수 없다
@@ -2951,6 +2982,12 @@ lock → `sku` 행 순으로 잠근다. **자원 집합이 겹치지 않으므�
 기존 3종(문서 원문) + 신규 12종. 모두 `src/shared/errors/codes.ts` 의
 **3개 map 전부**에 추가한다(기존 규약).
 
+> ★ **CLARIFIED (T07-7A) — 위 "신규 12종"은 아래 표를 잘못 센 숫자다.**
+> 아래 표는 신규를 **15개** 열거한다(마지막 행이 `BOM_PARENT_NOT_ELIGIBLE` ·
+> `BOM_COMPONENT_NOT_ELIGIBLE` 두 개를 한 행에 담는다). **표가 정본**이므로
+> 실제 카탈로그는 **3 + 15 = 18종**이다. `codes.ts` 의 `BOM_*` 키도 18개이며
+> 이 18종 밖의 code 를 새로 발명하는 것은 여전히 금지다.
+
 | code | HTTP | 발생 | 근거 |
 |---|:-:|---|---|
 | `BOM_ACTIVE_IMMUTABLE` | 422 | ACTIVE 수정 시도 | **원문** `05v2:352` |
@@ -3189,9 +3226,15 @@ hasBomUsage(skuId) =
 | T07-4 | 정합 3종 · 자동 1 금지(**TC-BOM-010**) · 0/음수(**TC-BOM-002**) | `pack=30`/`qty=1/30` 별도 저장(**TC-BOM-003**) · bulk 트랜잭션 | — |
 | T07-5 | 전이 표 전량 · 자가승인 | **D-7 chain 전량**(미래/과거/gap/동일일/반복) · 동시 activate 수렴 · **TC-BOM-006** · ★ **activate `T` override 시 `T` 기준 cycle 재검사**(approve 통과 재사용 금지) · **clone 후 cycle 검사 + 실패 시 전체 rollback** | **E2E-05**(생성→일괄확정→승인→활성화) · **E2E-06**(활성 수정 차단→버전 생성→활성화) |
 | T07-6 | 공식(D-19) · aggregation · ordering | 3단계 전개 정확(**TC-BOM-008**) · maxLevel · 순환 422 | — |
-| T07-7A | provisional 조합 · subtotal grouping | SupplierSku 선택 0/1/2건 · price 0/1/2건 · **0원 ≠ 가격없음** · 통화 혼재(**TC-BOM-009**) | — |
+| T07-7A | provisional 조합 · subtotal grouping · **박스 단가**(**TC-BOM-009**) | SupplierSku 선택 0/1/2건 · price 0/1/2건 · **0원 ≠ 가격없음** · **박스 단가 = 가격 ÷ 입수량**(**TC-BOM-009**) · 통화 혼재(D-26·D-27) | — |
 | T07-7B | roll-up | 다단계 원가 | — |
 | T07-8 | 목록 파라미터 · 폼 payload | — | 목록·상세·일괄확정·활성 배너·권한별 노출 |
+
+> ★ **TC-BOM-009 mapping 정정 (T07-7A).** 이 표의 이전 판은 `TC-BOM-009` 를
+> "통화 혼재"에 걸어 두었다. **잘못된 mapping 이다.** authoritative backlog 에서
+> `T07-7` 의 완료조건은 **"박스 단가 = 가격 ÷ 입수량"** 이고 `TC-BOM-009` 는 그
+> 조건에 붙어 있다. 통화/VAT subtotal 분리는 **D-26·D-27** 회귀로 (삭제하지 않고)
+> 그대로 유지하되 `TC-BOM-009` 라고 부르지 않는다. 구현 의미는 아래 F-13 이 정본이다.
 
 **DB 테스트 skipped 0** 은 전 Task 공통 게이트다.
 

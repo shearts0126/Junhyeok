@@ -461,7 +461,16 @@ describe('T07-3 신규 오류코드 5종의 HTTP 상태 (D-29)', () => {
     expect(httpStatusForCode(ERROR_CODES.BOM_SUPPLIER_SELECTION_CONFLICT)).toBe(409);
   });
 
-  it('⛔ D-29 의 `BOM_*` code 집합은 늘어나지 않았다', () => {
+  /**
+   * ⛔ **D-29 카탈로그 밖의 `BOM_*` code 를 발명하지 않는다.**
+   *
+   * ⚠️ 숫자 주의 — D-29 산문은 "기존 3종 + 신규 12종"(=15)이라고 적었지만
+   *    **같은 절의 표는 신규를 15개 열거**한다(마지막 행이
+   *    `BOM_PARENT_NOT_ELIGIBLE` / `BOM_COMPONENT_NOT_ELIGIBLE` 두 개를 한 행에
+   *    담는다). 즉 **표가 정본이고 실제 카탈로그는 3 + 15 = 18종**이며 산문의
+   *    "12"가 표를 잘못 센 것이다. 아래 목록은 **D-29 표를 그대로 옮긴 18종**이다.
+   */
+  it('⛔ D-29 의 `BOM_*` code 집합은 카탈로그 18종 그대로다 (표 기준)', () => {
     // 카탈로그 고정 — 새 task 가 code 를 임의로 추가하면 여기서 깨진다.
     expect(
       Object.keys(ERROR_CODES)
