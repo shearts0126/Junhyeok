@@ -157,6 +157,13 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
 - **T07-7B** — multi-level roll-up: explode 결과 위의 원가 집계 · 반제품 원가
   전파 · aggregation(D-20) 연동.
 
+> ★ 위 두 줄은 **어느 쪽이 public endpoint 를 완성하는지**를 적지 않았다.
+> 정본은 `★ T07-7A cost boundary and quantity gap closure` 다 —
+> **`GET /api/boms/{id}/cost` 와 public `CostResult` 는 `T07-7B` 소유**이며,
+> `T07-7A` 는 direct-line costing engine 이다. 위 T07-7A 행의
+> "currency/VAT subtotal · provisional" 은 **atomic/direct-level semantics 와
+> 재사용 helper** 를 뜻하고, 최종 public 집계는 `T07-7B` 다.
+
 **`T07-6` 의 `max-assembly-qty` 는 T07-6 에서 구현하지 않고 유예한다.**
 근거: 최대 조립가능수량은 **현재고**(`inventory_balance`)를 필요로 하는데
 재고 코어는 R1a-2(`T2-*`)이며 T07 의 선행조건이 아니다. v0.2 가 T3-10 에
@@ -1521,6 +1528,10 @@ version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFro
 
 #### `CostResult` (D-25·D-26·D-27)
 
+> ★ **`T07-7B` public response 다** — 조립 주체는 `T07-7B` 이며 `T07-7A` 는 이
+> DTO 를 반환하지 않는다 (`★ T07-7A cost boundary and quantity gap closure` C-1·C-7).
+> 필드 자체는 변경 없다.
+
 ```
 {
   bomId, parentSkuId, asOf, requestedQty (string),
@@ -1729,7 +1740,7 @@ scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포�
 
 | 기호 | 출처 |
 |---|---|
-| `Q` | 요청 수량 (`explode.qty` · `cost.qty`) |
+| `Q` | 요청 수량 (`explode.qty` · `cost.qty`). ★ `cost.qty` 의 query 계약은 `★ T07-7A cost boundary and quantity gap closure` C-4 가 정본이다 — optional, 생략 시 `"1"`. ⛔ `root.outputQty` 로 치환하지 않는다 |
 | `outputQty` | `BomHeader.outputQty` — 이 BOM 1회 실행의 **산출 수량** |
 | `quantityPer` | `BomLine.quantityPer` — **`outputQty` 만큼 만들 때** 필요한 구성품 수량 |
 | `lossRate` | `BomLine.lossRate` — 라인 손실률 |
@@ -2051,6 +2062,10 @@ D-18 의 구조 계약과 D-20 의 무합산 계약은 **그대로**다.
 
 ### D-20 — aggregation
 
+> ★ 아래 `cost` 집계는 **`T07-7B` 전용**이다 — `T07-7A`(direct-line costing)는
+> 수행하지 않는다 (`★ T07-7A cost boundary and quantity gap closure` C-6).
+> 규칙 자체는 변경 없다.
+
 | 항목 | 확정 |
 |---|---|
 | `explode` 응답 | **경로별 detail 을 그대로 보존**한다. 합산하지 않는다 |
@@ -2073,7 +2088,7 @@ D-18 의 구조 계약과 D-20 의 무합산 계약은 **그대로**다.
 |---|---|
 | 기본값 | `businessDateOf(new Date())` — **Asia/Seoul 업무일자** (`src/shared/business-date.ts`) |
 | `explode` | `asOf` **optional**, 생략 시 기본값 |
-| `cost` | `asOf` **optional**, 생략 시 기본값 — ★ `05:133` 의 required 표기를 좁게 supersede |
+| `cost` | `asOf` **optional**, 생략 시 기본값 — ★ `05:133` 의 required 표기를 좁게 supersede. `qty?` 는 `★ T07-7A cost boundary and quantity gap closure` C-4 참조 |
 | 형식 | `YYYY-MM-DD`. 형식 오류 400 |
 | 미래·과거 | 제한 없음 |
 | UI | BOM 상세 원가 탭은 **기준일 선택**을 제공하고(`05v2:494`) 기본값을 오늘로 채운다 |
@@ -2259,6 +2274,184 @@ T06-3·T1-6B4 와 같은 판단이다.
 근거: `01:135` 가 원본 `최종 BOM` 시트를 **"재고원가 요약(VAT별도/포함)"** 으로,
 `01:148` V/W 열을 **"최근 매입가(VAT별도)"** 로 기록해 **두 형태가 실제로 공존**
 한다. 세율을 시스템이 알지 못하는 상태에서 정규화하면 조용히 틀린 원가가 나온다.
+
+### ★ T07-7A cost boundary and quantity gap closure
+
+T07-7A PRE-FLIGHT 가 **세 조항의 충돌**을 발견해 확정한 계약이다. 기존 설계
+결정(D-19 공식 · D-20 집계 규칙 · D-23~D-27 · D-14 `CostResult` 필드)은
+**하나도 바꾸지 않는다.** 정하는 것은 **`T07-7A` / `T07-7B` 중 누가 무엇을
+구현하는가**와, 원문에 빠져 있던 **`qty` query** 뿐이다.
+
+#### 무엇이 공백이었나
+
+| # | 조항 | 함의 |
+|---|---|---|
+| ① | 분할 문단: T07-7A = **"단일 레벨"** + subtotal + provisional | A 는 한 레벨만 |
+| ② | 분할 문단: T07-7B = multi-level roll-up + **aggregation(D-20) 연동** | D-20 은 B 소관 |
+| ③ | D-14 `CostResult` + D-20 | `components[].level` · `(componentSkuId, uom)` 합산 · "다이아몬드는 합산된다" · "level 은 **등장한 최소 level**" ⇒ **`CostResult` 는 본질적으로 다단계 집계물** |
+
+`CostResult` 를 만들려면 D-20 집계가 필요한데 D-20 은 B 소관이므로, **A 가
+`/cost` 를 노출하면 ①②③ 이 동시에 성립할 수 없다.** 또 `05:133` 원문은 cost 의
+query 를 `asOf` 만 적었는데 `CostResult` 에는 `requestedQty` 가 있고 D-19 는
+`cost.qty` 를 기호 출처로 든다 — **`Q` 의 출처가 공백**이었다.
+
+#### C-1 — public `/cost` 는 **T07-7B** 소유다
+
+```
+GET /api/boms/{id}/cost   →   public CostResult
+```
+
+**⛔ `T07-7A` 는 이 route 를 만들지 않고 public `CostResult` 를 반환하지 않는다.**
+
+| task | 책임 |
+|---|---|
+| **T07-7A** | **direct-line costing engine** — application/domain primitive |
+| **T07-7B** | **multi-level orchestration + D-20 aggregation + public `/cost` + `CostResult` 조립** |
+
+이 결정은 "`/cost` 가 존재한다"(`05:133`)를 바꾸지 않는다. **어느 subdivision 이
+endpoint 를 완성하는가**만 고정한다.
+
+근거: A 에서 public API 를 먼저 열면 B 가 같은 URL 의 **의미를 바꾸게** 된다
+(단일 레벨 원가 → 다단계 roll-up 원가). 소비자가 이미 붙은 뒤 계약이 바뀌는
+것을 막는다.
+
+#### C-2 — "single-level" 의 정확한 의미
+
+T07-7A 의 범위는 **요청한 `BomHeader` 의 direct `BomLine` 뿐**이다.
+
+```
+BomHeader
+  → direct BomLine[]
+  → direct component requiredQty        (D-19)
+  → primary SupplierSku                 (D-23)
+  → effective approved SupplierSkuPrice (D-24)
+  → direct component lineCost
+```
+
+★ **구성품 SKU 에 asOf 유효 `ACTIVE` BOM 이 있어도 T07-7A 는 펼치지 않는다.**
+그 반제품을 **현재 BOM 의 direct component 하나**로 취급하고, 그 SKU 자체의
+`SupplierSku`·가격으로 원가를 낸다.
+
+⛔ T07-7A 에서 금지: 하위 `resolveEffectiveBom` 재귀 · `explode` traversal ·
+child BOM substitution · 다단계 순회 · 다이아몬드 집계 · **D-20 component
+aggregation** · 반제품 rolled-up 원가 전파.
+
+이 읽기라야 분할 문단의 ①("단일 레벨")과 ②("반제품 원가 전파 = B")가 **둘 다**
+살아난다.
+
+#### C-3 — 재사용 primitive 계약
+
+T07-7A 는 T07-7B 가 재사용할 수 있도록 아래를 primitive 로 둘 수 있다.
+
+| # | primitive |
+|---|---|
+| ① | `skuIds` → asOf primary `SupplierSku` **0/1/2+** 해석 (D-23) |
+| ② | `supplierSkuIds` → 기존 `resolveEffectiveSupplierPrices` **재사용** (D-24) |
+| ③ | component occurrence + `requiredQty` + price → line/component `lineCost` |
+| ④ | per-component provisional reason 판정 (D-25) |
+| ⑤ | `(currency, vatIncluded)` grouping helper (D-26·D-27) |
+
+⚠️ **⑤ 가 존재한다고 해서 T07-7A 가 D-20 을 소유하는 것이 아니다.**
+`primitive/helper reuse` 와 `final CostResult aggregation` 은 다른 개념이다.
+
+#### C-4 — `Q` / `qty` 계약
+
+`Q` = **요청 수량(requested quantity)** 이다 (D-19 기호표 그대로).
+
+- **T07-7A internal service** — `requestedQty` 를 **caller 가 명시적으로 전달**한다.
+  ⛔ 서비스 내부에서 `root.outputQty` 나 서버 기본값으로 임의 결정하지 않는다.
+- **T07-7B public API** — `GET /api/boms/{id}/cost?qty=&asOf=`
+
+| query | 계약 |
+|---|---|
+| `qty` | **optional**. 생략 시 **`"1"`**. parsing·validation 은 **T07-6 `/explode` 의 `qty` 계약을 그대로 재사용**한다 (`positiveDecimal18_6`). ⛔ 별도 Decimal query 규칙을 만들지 않는다 |
+| `asOf` | **optional**. 생략 시 `businessDateOf(now)` Asia/Seoul (D-21). 실존 달력 날짜만 허용 |
+
+`CostResult.requestedQty` 는 **실제 계산에 사용한 `Q`** 를 현행 Decimal 직렬화
+규약으로 돌려준다.
+
+⚠️ **supersession** — `05:133` 의 cost 요청 열(`asOf` 만 기재)은 이 절이
+**query detail 만 좁게 supersede** 한다. endpoint 이름·permission·response 이름은
+그대로다. 같은 표의 explode 행을 D-18 이 확장·정본화한 것과 같은 방식이다.
+
+#### C-5 — provisional / subtotal 책임 분할
+
+D-25 의 reason 3종(`QTY_UNCONFIRMED` · `NO_PRIMARY_SUPPLIER` ·
+`NO_EFFECTIVE_PRICE`)과 그 판정 규칙은 **그대로**다.
+
+| 책임 | T07-7A | T07-7B |
+|---|---|---|
+| direct component 별 `provisionalReason` 판정 | ✅ | — |
+| direct-level provisional aggregation **helper** | ✅ (internal) | — |
+| direct-level `(currency, vatIncluded)` grouping **helper** | ✅ (internal) | — |
+| **public** `isProvisional` · `provisionalReasons[]` | ⛔ | ✅ |
+| **public** `components[]` · `subtotals[]` | ⛔ | ✅ |
+
+⛔ **0원 ≠ 가격 없음**, **데이터 손상은 provisional 이 아니라 409** 는 D-25
+그대로 유지된다.
+
+#### C-6 — D-20 은 **T07-7B 전용**이다
+
+최종 cost 응답의 `(componentSkuId, uom)` 합산 · 다이아몬드 합산 ·
+"합산 행의 `level` 은 등장한 최소 level" 은 **전부 T07-7B** 다.
+
+⛔ T07-7A 는 direct line 에 같은 component 가 여러 번 나오더라도 **D-20 semantic
+으로 미리 접지 않는다.** batch 조회를 위한 **selection dedupe/memoization** 과
+**business aggregation** 은 다른 개념이다 (T07-6 의 다이아몬드 판단과 같은 원칙).
+
+#### C-7 — `CostResult` 는 **T07-7B public response** 다
+
+D-14 의 `CostResult` exact shape 는 **변경 없다.** 다만 그 DTO 는
+**`T07-7B` 가 조립하는 public response** 임을 명시한다. T07-7A 의 내부 타입은
+public API contract 가 아니며, 이 문서가 그 이름을 고정하지 않는다.
+
+#### C-8 — 예시
+
+**A. direct line 수량**
+
+```
+Root BOM P: outputQty = 5
+  direct line → C  quantityPer = 2,  lossRate = 0,  overallLossRate = 0
+request: Q = 10
+
+requiredQty(C) = (10 / 5) × 2 × 1 × 1 = 4
+```
+⛔ `Q` 를 `root.outputQty`(=5)로 치환하지 않는다.
+
+**B. `qty` 기본값**
+
+```
+GET /api/boms/{id}/cost        (qty 생략)
+→ requestedQty = "1"
+```
+
+**C. 반제품 direct component**
+
+```
+P → B          B 에 asOf 유효 ACTIVE BOM (B → C) 이 있다
+```
+T07-7A 는 **`P → B` 까지만** 계산하고 `B` 를 direct component 로 취급해
+`B` 의 `SupplierSku`·가격으로 원가를 낸다. **`B → C` 를 따라가지 않는다.**
+`B` 의 하위 BOM 을 소비해 roll-up 하는 것은 T07-7B 다.
+
+**D. 다이아몬드**
+
+```
+P → A → X
+P → B → X
+```
+`X` 합산과 최소 level projection 은 **T07-7B 전용**이다. T07-7A 가 미리 `X` 를
+합치지 않는다.
+
+#### C-9 — 이번 gap closure 가 바꾸지 않는 것
+
+D-23 primary 선택(asOf + `isPrimary`) · primary 0 → `NO_PRIMARY_SUPPLIER` ·
+primary 2+ → **409 `BOM_SUPPLIER_SELECTION_CONFLICT`** · `Supplier.status` 자동
+필터 없음 · 기존 `resolveEffectiveSupplierPrices` 재사용 · pending 가격 제외 ·
+0원은 정상 가격 · 가격 2+ → **409 `SUPPLIER_PRICE_CHAIN_CONFLICT`** ·
+request 당 단일 `asOf` · 산정 불가 `lineCost = null`(0 아님) · 환산 0 ·
+VAT 조정 0 · `purchaseUom` 변환 0 · `packQuantity` 추가 나눗셈 0 ·
+금액 4dp `ROUND_HALF_UP` · `bom.read` 권한 · schema·migration·permission 변경 0.
 
 ### D-28 — concurrency
 
@@ -2827,8 +3020,8 @@ T07-8  standalone UI (/master/boms · /master/boms/{id})
 | **T07-4** | T07-3 | `quantityStatus` 정합 · `bulk-confirm-qty` · 추천값 계약 | UI |
 | **T07-5** | T07-3, `T01-4`(승인 워크플로, 완료) | 7 workflow endpoint · **D-7 chain** · 자가승인 · clone | explode · cost · UI |
 | **T07-6** | T07-2, T07-5 | `explode` · D-19 공식 · aggregation | `max-assembly-qty` · cost |
-| **T07-7A** | T07-6, `T06-3`(완료) | 단일 레벨 원가 · D-23·D-24·D-25·D-26·D-27 | roll-up · UI |
-| **T07-7B** | T07-7A | multi-level roll-up | UI |
+| **T07-7A** | T07-6, `T06-3`(완료) | **direct-line costing engine** — requested header 의 direct line 만 · D-23·D-24 · direct-level D-25·D-26·D-27 semantics 와 helper | **public `/cost` · `CostResult`** · child BOM traversal · **D-20** · roll-up · UI |
+| **T07-7B** | T07-7A | multi-level roll-up · **D-20 aggregation** · **`GET /api/boms/{id}/cost`** · **public `CostResult` 조립** | UI |
 | **T07-8** | T07-4, T07-7B | `/master/boms` 2 route · 상세 4탭 · 일괄확정 UI | import(PENDING #7) |
 
 각 Task 는 **독립 PR** 이며 ⛔ 한 PR 에 schema + workflow + cost + UI 를 넣지
