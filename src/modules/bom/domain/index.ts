@@ -19,6 +19,12 @@ export {
 } from './cycle';
 export { bomEffectiveConflict, selectEffectiveBom } from './effective-selection';
 export {
+  computeRawRequiredQty,
+  toRequiredQtyString,
+  REQUIRED_QTY_SCALE,
+  type ExplosionQuantityInput,
+} from './explosion';
+export {
   assertAllRequiredQuantitiesConfirmed,
   assertComponentEligible,
   assertNotSelfComponent,

@@ -1497,6 +1497,11 @@ version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFro
 
 #### `ExplodedNode` (D-18)
 
+> ⚠️ **`requiredQty: string` 은 `SUPERSEDED BY ★ T07-6 explosion quantity gap
+> closure` 다** — nullable(`string | null`)로 바뀐다. 아래 블록은 원문 보존용이며,
+> 정본은 그 절의 `ExplodedNode` 표다. ⛔ 필드를 추가·삭제하지 않는다 —
+> **exact 12 필드**는 그대로이고 바뀌는 것은 `requiredQty` 의 nullability 하나뿐이다.
+
 ```
 {
   level:            number      // root=0
@@ -1507,7 +1512,7 @@ version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFro
   componentRole:    string
   quantityPer:      string|null
   lossRate:         string|null
-  requiredQty:      string      // D-19 로 계산된 누적 소요량
+  requiredQty:      string      // ⚠️ SUPERSEDED → string|null (T07-6 gap closure)
   uom:              string
   isLeaf:           boolean
   quantityStatus:   string
@@ -1696,15 +1701,16 @@ scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포�
 |---|---|
 | root | **요청한 BOM header 자체**(SKU 가 아니다). root 는 asOf 로 재선택하지 않는다 |
 | `qty` | Decimal 문자열, `> 0`, **기본 `"1"`** |
-| `asOf` | `YYYY-MM-DD`, **기본 = 서버 업무일자**(D-21) |
+| `asOf` | `YYYY-MM-DD`, **기본 = 서버 업무일자**(D-21). ★ **실존하는 달력 날짜**여야 한다 — `2026-02-30` 롤오버 금지(`★ T07-6 explosion response · asOf clarification`) |
 | `maxLevel` | 정수 `1..10`, **기본 10**. 범위 밖 400 |
 | 하위 BOM 선택 | **`resolveEffectiveBom(componentSkuId, asOf)`** (D-22) |
 | leaf | 해당 asOf 에 유효한 ACTIVE BOM 이 **없는** 구성품 |
 | 중간 노드 | **결과에 포함한다** (`isLeaf=false`). 반제품 자체도 소요 대상이다 |
 | `maxLevel` 초과 | **422 `BOM_MAX_LEVEL_EXCEEDED`**. ⛔ 조용히 절단하지 않는다 |
 | 순환 발견 | **422 `BOM_CYCLE_DETECTED`** (경로 포함) |
-| ordering | `level` asc → 같은 level 내 부모의 `lineNo` asc → `lineNo` asc |
-| 응답 | `ExplodedNode[]` — **평면 배열** + `level`·`path` 로 트리 복원 |
+| ordering | `level` asc → 같은 level 내 부모의 `lineNo` asc → `lineNo` asc. ★ level 3 이상의 tie-break 는 `★ T07-6 explosion deterministic ordering clarification`(full `lineNoPath` 사전순)이 정본이다 |
+| 응답 | `ExplodedNode[]` — **평면 배열** + `level`·`path` 로 트리 복원. ★ 이 배열이 곧 **HTTP body** 다 — wrapper object 를 씌우지 않는다(`★ T07-6 explosion response · asOf clarification`) |
+| **미확정 수량** | ★ 위 표에 없던 항목 — **`★ T07-6 explosion quantity gap closure` 가 정본**이다. `quantityStatus = UNKNOWN`(`quantityPer = null`)이면 `requiredQty = null` 이고 **구조 전개는 계속**한다. ⛔ endpoint 전체 422 아님 |
 
 중간 노드를 포함하는 근거: `01:192` 가 `완제품 → 반제품(벌크) → 부자재` 를
 실제 구조로 확인했고, 반제품은 **그 자체로 재고 SKU** 다. 빼면 조립 소요를
@@ -1795,6 +1801,253 @@ requiredQty(child) = requiredQty(parent)
 이 공식은 **R1a-2 의 `ASSEMBLY`/`DISASSEMBLY` conservation 검증 기준**이 된다
 (`PENDING #5` — *"조립지시서 + BOM 기준 검증"*). 나중에 바꾸면 원장 검증까지
 영향을 받으므로, 변경 시 반드시 `PENDING #5` 와 함께 재검토한다.
+
+### ★ T07-6 explosion quantity gap closure
+
+T07-6 PRE-FLIGHT 가 **D-14 · D-18 · D-19 세 조항이 서로 모순**임을 발견해 확정한
+계약이다. 두 종류를 구분해 기록한다.
+
+| 종류 | 대상 |
+|---|---|
+| **SUPERSEDED** | D-14 `ExplodedNode.requiredQty: string` → **`string \| null`** |
+| **CLARIFIED** | D-19 의 "6dp HALF_UP" · "중간 무반올림" 을 직렬화·재귀 전파 수준까지 구체화 |
+
+#### 왜 gap 인가
+
+- D-14 는 `requiredQty: string` 을 **non-nullable** 로, `quantityPer` 는
+  **nullable** 로 선언했다.
+- D-19 공식은 `quantityPer` 를 **피연산자로 요구**한다 — `null` 이면 숫자
+  `requiredQty` 를 산출할 수 없다.
+- D-18 의 edge case 표 10행 어디에도 **미확정 수량 처리가 없다.**
+- D-10 의 submit 게이트는 `isRequired = true` 에만 걸리므로, **`ACTIVE` BOM 에도
+  `quantityStatus = UNKNOWN` / `quantityPer = null` 라인이 합법적으로 남는다.**
+  (구현 증거: `tests/db/bom-workflow-api.test.ts`
+  §`★★ optional 라인의 UNKNOWN 은 submit 을 막지 않는다`)
+
+즉 corner case 가 아니라 **정상 데이터에서 반드시 도달하는 상태**다.
+
+#### 정본 — `ExplodedNode` (exact 12 필드, `requiredQty` 만 nullable)
+
+```
+{
+  level:            number        // root SKU = 0, root 직접 구성품 = 1
+  path:             string[]      // 조상 skuId 배열 (self 제외). path.length === level
+  bomHeaderId:      string|null   // 이 구성품을 전개한 하위 BOM. leaf 는 null
+  componentSkuId:   string
+  componentSku:     {id, skuCode, skuName, baseUom}
+  componentRole:    string
+  quantityPer:      string|null
+  lossRate:         string|null
+  requiredQty:      string|null   // ★ SUPERSEDES D-14 의 `string`
+  uom:              string
+  isLeaf:           boolean
+  quantityStatus:   string
+}
+```
+
+⛔ 다음 필드를 **만들지 않는다**: `isQuantityUnknown` · `isProvisional` ·
+`provisionalReasons` · `rawRequiredQty` · `calculationStatus`.
+`quantityStatus` 가 이미 있으므로 새 상태 필드가 필요 없다.
+
+#### E-1 — 정상 `UNKNOWN` 은 오류가 아니다
+
+| 라인 상태 | node `requiredQty` |
+|---|---|
+| `quantityStatus = UNKNOWN` **AND** `quantityPer = null` | **`null`** |
+
+⛔ `BOM_QTY_UNCONFIRMED` **422 를 내지 않는다.** ⛔ `"0"` fallback 금지 ·
+자동 `1` 금지 · 라인 skip 금지. explode 는 "어떻게 구성되는가"(D-20)에 답하는
+조회이며, 수량을 모른다는 사실이 **구조를 감출 이유가 되지 않는다.**
+
+#### E-2 — subtree 전파
+
+```
+parent.requiredQty == null
+  → child 의 Q == null
+  → child.requiredQty == null       (child 라인이 CONFIRMED 여도 그렇다)
+```
+
+★ **구조 recursion 은 계속한다.** 하위 구성품에 asOf 유효 `ACTIVE` BOM 이 있으면
+그대로 전개하며, 그 subtree 의 `requiredQty` 만 계속 `null` 로 전파된다.
+⛔ 수량을 모른다는 이유로 하위를 잘라내지 않는다.
+
+#### E-3 — `isLeaf` 는 수량과 **독립**이다
+
+```
+isLeaf  :=  resolveEffectiveBom(componentSkuId, asOf) == null
+```
+
+⛔ `UNKNOWN` 수량 때문에 `isLeaf = true` 로 위장하지 않는다.
+
+```
+A → B  (UNKNOWN / quantityPer = null),  B 에 ACTIVE BOM 이 있고  B → C
+
+  B:  requiredQty = null,  isLeaf = false      ← 반드시 B 아래로 내려간다
+  C:  requiredQty = null,  isLeaf = (C 에 유효 BOM 이 없으면 true)
+```
+
+#### E-4 — `SUGGESTED` 는 정상 계산한다
+
+`quantityStatus = SUGGESTED` 이고 `quantityPer > 0` 이면 D-19 로 **정상 계산**한다.
+⛔ `SUGGESTED` 라는 이유만으로 `null` 처리·422·recursion 중단을 하지 않는다.
+응답에 `quantityStatus` 가 이미 있으므로 확정/추천 판별은 소비자의 몫이다.
+
+★ **D-25 의 `QTY_UNCONFIRMED` provisional 은 `CostResult` 전용 계약**이며
+explode 로 자동 확장되지 않는다 (아래 D-25 경계 주석 참조).
+
+#### E-5 — 손상 상태는 완화하지 않는다
+
+아래는 "정상적인 미확정" 이 아니라 **invariant 위반**이다.
+
+| 상태 | 처리 |
+|---|---|
+| `UNKNOWN` + `quantityPer != null` | 기존 `BOM_QTY_STATUS_MISMATCH` |
+| `SUGGESTED` + `quantityPer == null` | 기존 `BOM_QTY_STATUS_MISMATCH` |
+| `CONFIRMED` + `quantityPer == null` | 기존 `BOM_QTY_STATUS_MISMATCH` |
+| `quantityPer <= 0` | 기존 `BOM_QTY_INVALID` |
+
+기존 T07-2 validator 를 재사용한다. ⛔ 새 error code 를 만들지 않는다 (D-29 15종 유지).
+⛔ "read API 니까 조용히 `null` 로 완화" 금지.
+
+#### E-6 — `requiredQty` 직렬화 (D-19 CLARIFIED)
+
+계산 최종값은 **scale 6 · `ROUND_HALF_UP`** (D-19 그대로). 그러나 JSON 문자열에
+**trailing zero 를 강제로 채우지 않는다.**
+
+```
+roundToScale(rawRequiredQty, 6, ROUND_HALF_UP)  →  toDecimalString(rounded)
+```
+
+| 반올림 결과 | `requiredQty` |
+|---|---|
+| `6.000000` | `"6"` |
+| `0.999990` | `"0.99999"` |
+| `1.234568` | `"1.234568"` |
+
+⛔ `toDecimalString(value, 6)` 로 항상 6자리를 강제하지 않는다 — 기존 BOM
+Decimal API 전체가 minimal-form 이며(`quantityPer`·`lossRate`·`outputQty` …)
+계약은 **자릿수가 아니라 값**이다 (T07-4 선례).
+
+#### E-7 — ★ 재귀에는 **raw 값**을 넘긴다 (D-19 CLARIFIED)
+
+D-19 의 `⛔ 단계마다 반올림하지 않는다` 를 다단계까지 확장해 못박는다.
+
+| 이름 | 타입 | 용도 |
+|---|---|---|
+| `rawRequiredQty` | `Decimal \| null` | **내부 전용.** 다음 level 의 `Q` 로 전달 |
+| `requiredQty` | `string \| null` | **public.** 6dp `HALF_UP` 반올림 후 minimal 문자열 |
+
+⛔ **public 6dp 값을 다시 `Decimal` 로 읽어 child `Q` 로 쓰지 않는다.**
+
+```
+부모 raw   = 0.333333333333
+부모 public = "0.333333"
+
+child 계산의 Q 는 반드시 0.333333333333 이다.   ⛔ 0.333333 이 아니다.
+```
+
+`rawRequiredQty` 는 **DB 저장 금지 · public DTO 필드 추가 금지 · cache/영속 금지** —
+계산 중에만 존재하는 내부 값이다.
+
+### ★ T07-6 explosion deterministic ordering clarification
+
+D-18 의 ordering 행은 `level` asc → 같은 level 내 **부모의 `lineNo`** asc →
+`lineNo` asc 다. level 1·2 에서는 이것으로 순서가 완전히 정해지지만,
+**level 3 이상에서는 정해지지 않는다** — 서로 다른 branch 의 부모가 같은
+`lineNo` 를 가질 수 있기 때문이다(`(bomHeaderId, lineNo)` 가 UNIQUE 이므로
+`lineNo` 는 **BOM 안에서만** 유일하다).
+
+#### 확정 규칙
+
+```
+1. level ASC
+2. 같은 level 안에서는 root → 현재 node 까지의 full lineNoPath 사전순 ASC
+```
+
+`lineNoPath` = root BOM 의 라인부터 현재 node 를 만든 라인까지의 `lineNo` 수열.
+`lineNoPath.length === level` 이다.
+
+| level | 순서 |
+|---|---|
+| 1 | `[1]` · `[2]` |
+| 2 | `[1,1]` · `[1,2]` · `[2,1]` |
+| 3 | `[1,1,1]` · `[1,1,2]` · `[1,2,1]` · `[2,1,1]` |
+
+이는 D-18 의 `부모의 lineNo → 자기 lineNo` 를 **깊이 N 까지 재귀 확장**한
+것이며, level 1·2 에서는 D-18 문구와 결과가 같다. 기존 규칙을 바꾸지 않는
+clarification 이다.
+
+#### 왜 한 단계로는 부족한가
+
+```
+A ─ line1 → B ─ line1 → D ─ line1 → G      [1,1,1]
+  │           │ line2 → E ─ line1 → I      [1,2,1]
+  └ line2 → C ─ line1 → F ─ line1 → J      [2,1,1]
+```
+
+`G` 의 부모 `D` 와 `J` 의 부모 `F` 는 **둘 다 부모 라인 `lineNo = 1`** 이고
+`G`·`J` 자신도 `lineNo = 1` 이다. "부모의 lineNo → 자기 lineNo" 만으로는 두
+node 가 동률이라 순서가 비결정적이다. full path 를 봐야 `[1,1,1] < [2,1,1]` 이
+확정된다.
+
+#### 구현 계약
+
+- ⛔ `lineNoPath` 를 **public `ExplodedNode` 에 노출하지 않는다** — 정렬용
+  내부 개념이며 12 필드는 그대로다.
+- ⛔ **DB 의 자연 순서에 의존하지 않는다.** 같은 데이터를 역순으로 삽입해도
+  응답 순서가 같아야 한다.
+- BFS 구현에서는 level 별로 **직전 level 의 순서대로** 부모를 순회하고 각
+  부모의 라인을 `lineNo` 오름차순으로 붙이면 이 순서가 자연히 나온다.
+
+구현 근거: `src/modules/bom/application/explode-bom.ts` ·
+`tests/db/bom-explode-api.test.ts`
+§`★★ deterministic ordering — level 3+ full lineNoPath`.
+
+### ★ T07-6 explosion response · asOf clarification
+
+#### ① 성공 응답은 **`ExplodedNode[]` 그 자체**다
+
+D-18 응답 행(`ExplodedNode[]` — 평면 배열)이 곧 **HTTP body** 다.
+
+```
+HTTP 200
+[ ExplodedNode, ExplodedNode, … ]
+```
+
+⛔ `{nodes, bomId, parentSkuId, asOf, qty, maxLevel, requestId}` 같은 wrapper
+object 를 씌우지 않는다. 근거가 없고, root metadata 는 이미
+`GET /api/boms/{id}`(`BomDetail`)가 답한다. `requestId` 는 오류 응답과 서버
+로그가 담으므로 성공 body 에 넣지 않는다.
+
+⚠️ 다른 endpoint 의 `{…, requestId}` 규약을 explode 로 끌어오지 않는다 —
+그쪽은 단일 객체 응답이고 이쪽은 **배열 응답**이다.
+
+#### ② `asOf` 는 **실존하는 달력 날짜**여야 한다
+
+| 입력 | 결과 |
+|---|---|
+| `2026-02-28` · `2028-02-29`(윤년) · `2026-04-30` | 통과 |
+| `2026-02-29`(평년) · `2026-02-30` · `2026-04-31` · `2026-06-31` | **400 `VALIDATION_ERROR`** |
+| `2026-13-01` · `2026-00-01` · `2026-1-01` · `01-01-2026` | **400** |
+
+⛔ **`2026-02-30` 을 `2026-03-02` 로 조용히 굴리지 않는다.** 전개는 `asOf` 로
+하위 BOM 을 고르므로(D-22) 하루가 밀리면 곧 **다른 구성표**가 나온다.
+사용자가 지정한 기준일과 서버가 조회한 기준일은 반드시 같아야 한다.
+
+⚠️ 공용 `dateString` 은 형식과 `NaN` 여부만 보며 V8 의 날짜 롤오버를 그대로
+통과시킨다. **전역 파서는 이번 범위에서 바꾸지 않고**(다른 모듈의 계약이다)
+explode query DTO 에서 좁게 강화한다 — 기존 `parseDateOnly` →
+`toDateOnlyString` **round-trip 동등성** 검사이며 새 날짜 헬퍼를 만들지 않는다.
+
+#### 변하지 않는 것
+
+D-18 의 구조 계약과 D-20 의 무합산 계약은 **그대로**다.
+
+- root = 요청한 exact `BomHeader`, asOf 로 재선택하지 않음
+- 하위만 `resolveEffectiveBom`, 2건 이상 → 409 `BOM_EFFECTIVE_CONFLICT`
+- 중간 노드 포함 · `maxLevel` 초과 422 · 순환 422 · deterministic ordering
+- 다이아몬드는 **경로별로 각각** 남는다 — `requiredQty` 가 `null` 인 경로가 있어도
+  다른 경로와 합치거나 보정하지 않는다 (D-20)
 
 ### D-20 — aggregation
 
@@ -1948,6 +2201,12 @@ T06-3·T1-6B4 와 같은 판단이다.
 | 단일 `totalCost` | ⛔ **필드 자체를 두지 않는다** (D-26) |
 | 데이터 손상 | ⛔ **provisional 로 숨기지 않는다** — chain conflict·selection conflict·effective BOM conflict 는 전부 **409** |
 | **0원 가격** | **정상 가격이며 provisional 이 아니다.** `unitPrice="0"` → `lineCost="0.0000"` (T06-3 D-3 와 동일) |
+
+> ★ **경계 — 이 절은 `CostResult` 전용이다.** `QTY_UNCONFIRMED` provisional 은
+> `explode` 로 자동 확장되지 않는다. explode 에서 미확정 수량은
+> `requiredQty = null` 로 표현하며 `isProvisional`·`provisionalReasons` 를
+> 만들지 않는다 — 정본은 `★ T07-6 explosion quantity gap closure` 다.
+> 두 endpoint 는 D-20 대로 답하는 질문이 다르다(구조 vs 총량).
 
 `QTY_UNCONFIRMED` 를 포함하는 근거: 383행이 전량 `UNKNOWN` 으로 이관되므로
 (`06v2:253`) 실무상 이 사유가 지배적이며, `05v2:494` 의 `잠정` 배지가 원가 탭에
@@ -2287,6 +2546,15 @@ lock → `sku` 행 순으로 잠근다. **자원 집합이 겹치지 않으므�
 | `BOM_EFFECTIVE_CONFLICT` | 409 | asOf 유효 ACTIVE BOM 2건 이상 (D-22) | 신규 |
 | `BOM_SUPPLIER_SELECTION_CONFLICT` | 409 | 대표 SupplierSku 2건 이상 (D-23) | 신규 |
 | `BOM_PARENT_NOT_ELIGIBLE` / `BOM_COMPONENT_NOT_ELIGIBLE` | 422 | D-12 위반 | 신규 |
+
+> ★ **T07-6 은 이 목록을 늘리지 않는다.** explode 가 쓰는 오류는 전부 위에 이미
+> 있다 — `BOM_NOT_FOUND`(404) · `BOM_MAX_LEVEL_EXCEEDED`(422) ·
+> `BOM_CYCLE_DETECTED`(422) · `BOM_EFFECTIVE_CONFLICT`(409) ·
+> `BOM_QTY_STATUS_MISMATCH`(422) · `BOM_QTY_INVALID`(422) · `VALIDATION_ERROR`(400)
+> · `FORBIDDEN`(403). ⛔ 미확정 수량은 **오류가 아니다** —
+> `requiredQty = null` 로 표현하며 `BOM_QTY_UNCONFIRMED` 를 쓰지 않는다
+> (`★ T07-6 explosion quantity gap closure`). `BOM_QTY_UNCONFIRMED` 는 위 표대로
+> **submit 전용**이다.
 
 **Prisma / PostgreSQL 매핑** (T06-1·T06-2 선례 그대로):
 

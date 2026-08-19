@@ -253,3 +253,52 @@ export function toWhereUsedView(row: WhereUsedRow): BomWhereUsedView {
     alternateGroup: row.alternateGroup,
   };
 }
+
+// ═══════════════════════════════════════════════════════════════
+// ExplodedNode — GET /api/boms/{id}/explode (T07-6)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 전개 결과 한 행 = **한 구성품 라인** (D-14 · D-18).
+ *
+ * ⚠️ 정본은 `docs/18` `★ T07-6 explosion quantity gap closure` 다 — D-14 의
+ *    `requiredQty: string` 은 그 절이 `string | null` 로 **SUPERSEDE** 했다.
+ *
+ * **exact 12 필드.** ⛔ 다음을 추가하지 않는다: `bomLineId` · `version` ·
+ * `alternateGroup` · `isRequired` · `isQuantityUnknown` · `isProvisional` ·
+ * `provisionalReasons` · `rawRequiredQty` · `calculationStatus`.
+ *
+ * | 필드 | 의미 |
+ * |---|---|
+ * | `level` | root SKU 를 `0` 으로 세는 깊이. **root 직접 구성품 = 1** |
+ * | `path` | **조상 skuId 배열**(자기 자신 제외). `path.length === level` |
+ * | `bomHeaderId` | 이 구성품을 **전개한 하위 BOM**. leaf 면 `null` |
+ * | `requiredQty` | D-19 로 계산한 누적 소요량. 미상이면 `null` (E-1·E-2) |
+ * | `isLeaf` | **수량과 무관** — asOf 유효 ACTIVE BOM 이 없으면 `true` (E-3) |
+ *
+ * ⛔ root `BomHeader` 자체는 node 가 아니다 — `componentRole`·`quantityStatus`
+ *    같은 라인 사실이 header 에 없기 때문이며, 배열은 root 의 **직접 구성품**부터
+ *    시작한다.
+ */
+export interface ExplodedNodeView {
+  readonly level: number;
+  readonly path: readonly string[];
+  readonly bomHeaderId: string | null;
+  readonly componentSkuId: string;
+  readonly componentSku: ComponentSkuRefView;
+  readonly componentRole: string;
+  readonly quantityPer: string | null;
+  readonly lossRate: string | null;
+  readonly requiredQty: string | null;
+  readonly uom: string;
+  readonly isLeaf: boolean;
+  readonly quantityStatus: string;
+}
+
+/** 전개가 읽는 라인 — 라인 사실 + **소속 header 의 수량 계수**를 함께 읽는다. */
+export const EXPLODE_LINE_INCLUDE = {
+  componentSku: { select: { id: true, skuCode: true, skuName: true, baseUom: true } },
+  bomHeader: { select: { id: true, outputQty: true, overallLossRate: true } },
+} as const satisfies Prisma.BomLineInclude;
+
+export type ExplodeLineRow = Prisma.BomLineGetPayload<{ include: typeof EXPLODE_LINE_INCLUDE }>;

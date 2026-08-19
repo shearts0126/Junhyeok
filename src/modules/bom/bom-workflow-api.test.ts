@@ -410,6 +410,8 @@ describe('★ workflow route handler 는 정확히 7개다', () => {
       'archive',
       'clone',
       'deactivate',
+      // ✏️ T07-6 explode (workflow 가 아니라 read endpoint 다).
+      'explode',
       'lines',
       'reject',
       'route.ts',
@@ -420,11 +422,13 @@ describe('★ workflow route handler 는 정확히 7개다', () => {
     }
   });
 
-  it('⛔ T07-6·T07-7 route 는 여전히 없다', async () => {
+  it('⛔ T07-7·T07-8 route 는 여전히 없다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('../../app/api/boms/[id]', import.meta.url));
-    for (const forbidden of ['explode', 'cost', 'max-assembly-qty']) {
+    // ✏️ `explode` 는 T07-6 이 추가했다 — 아래 workflow 7종 목록도 그래서
+    //    `explode` 를 포함한다. cost·max-assembly-qty 는 여전히 미착수다.
+    for (const forbidden of ['cost', 'max-assembly-qty']) {
       expect(readdirSync(dir), forbidden).not.toContain(forbidden);
     }
   });
