@@ -2202,7 +2202,7 @@ T06-3·T1-6B4 와 같은 판단이다.
 
 | reason | 조건 |
 |---|---|
-| `QTY_UNCONFIRMED` | `isRequired=true` 라인의 `quantityStatus ≠ CONFIRMED` |
+| `QTY_UNCONFIRMED` | ~~`isRequired=true` 라인의~~ `quantityStatus ≠ CONFIRMED` ★ **`isRequired` 조건은 CLARIFIED — 원가 판정에서는 보지 않는다** (`★ T07-7A direct cost arithmetic gap closure` F-12) |
 | `NO_PRIMARY_SUPPLIER` | D-23 에서 0건 |
 | `NO_EFFECTIVE_PRICE` | D-24 에서 0건 |
 
@@ -2227,6 +2227,11 @@ T06-3·T1-6B4 와 같은 판단이다.
 (`06v2:253`) 실무상 이 사유가 지배적이며, `05v2:494` 의 `잠정` 배지가 원가 탭에
 붙는 목적이 정확히 이 상태를 알리는 것이다. 소요량이 미확정이면 원가는 계산조차
 할 수 없다(`quantityPer` 가 null) → `lineCost = null`.
+
+> ★ **CLARIFIED — 위 마지막 문장은 `UNKNOWN` 계열에만 해당한다.** `SUGGESTED` 는
+> `quantityPer > 0` 이라 `lineCost` 가 **계산된다**. 그럼에도 `QTY_UNCONFIRMED`
+> provisional 이다 — "계산 가능" ≠ "수량 확정". 정본은
+> `★ T07-7A direct cost arithmetic gap closure` **F-12** 다.
 
 ### D-26 — currency ★
 
@@ -2649,6 +2654,35 @@ C-1~C-9 의 A/B 경계는 그대로다. T07-7A 는 direct line 의 `rawLineCost`
 helper · (선택) subtotal 산술 helper 까지이며, **public `/cost` ·
 `CostResult` · 최종 `components[]` · `isProvisional` · `provisionalReasons[]` ·
 `subtotals[]` 조립은 T07-7B** 다.
+
+#### F-12 — `SUGGESTED` 는 **계산 가능한 미확정 수량**이다 (구현 확정)
+
+T07-7A 구현 시점에 `quantityStatus` 7종 중 어디까지를 `QTY_UNCONFIRMED` 로
+볼지가 남은 유일한 모호점이었다. **확정한다.**
+
+```
+quantityStatus !== 'CONFIRMED'   →   QTY_UNCONFIRMED
+```
+
+즉 `SUGGESTED` 도 `QTY_UNCONFIRMED` 다.
+
+| `quantityStatus` | `rawRequiredQty` | `QTY_UNCONFIRMED` |
+|---|---|---|
+| `CONFIRMED` | 값 | ❌ |
+| `SUGGESTED` | **값 (계산된다)** | ✅ |
+| `UNKNOWN` 등 나머지 5종 | `null` | ✅ |
+
+★ **"계산 가능" ≠ "수량 확정".** D-10 이 `SUGGESTED` 를 *"마이그레이션이 자동
+생성한 값이며 사람이 수락해야 `CONFIRMED` 가 된다"* 로 정의했고 submit 게이트도
+`≠ CONFIRMED` 를 막는다. `SUGGESTED` 는 `quantityPer > 0` 이라 소요량과
+`lineCost` 가 **둘 다 숫자로 나오지만**, 그 숫자는 사람이 수락하지 않은 값이므로
+원가도 **잠정**이다. `lineCost` 가 `null` 인 것과 provisional 인 것은 **별개
+축**이다 (F-3 표의 1행은 `null` 의 조건이지 provisional 의 전부가 아니다).
+
+⛔ `isRequired` 는 **원가 provisional 판정에 쓰지 않는다** — optional 라인이어도
+미확정이면 `QTY_UNCONFIRMED` 다. `isRequired` 를 보는 것은 submit 게이트
+(`BOM_QTY_UNCONFIRMED` 422)뿐이며, 그쪽은 §2205 표대로 유지된다. 두 계약은
+이름만 비슷할 뿐 **다른 판정**이다.
 
 ### D-28 — concurrency
 

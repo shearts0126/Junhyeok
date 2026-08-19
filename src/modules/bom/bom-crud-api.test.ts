@@ -452,11 +452,43 @@ describe('T07-3 신규 오류코드 5종의 HTTP 상태 (D-29)', () => {
     expect(httpStatusForCode(ERROR_CODES.BOM_NOT_FOUND)).toBe(404);
   });
 
-  it('✏️ `BOM_INVALID_TRANSITION` 은 T07-5 가 활성화했다 — cost 코드는 아직 없다', () => {
-    // T07-5 workflow endpoint 가 생기면서 던질 곳이 생겼다 (D-29 15종 중 하나).
+  it('✏️ `BOM_INVALID_TRANSITION`(T07-5) · `BOM_SUPPLIER_SELECTION_CONFLICT`(T07-7A) 는 D-29 카탈로그의 활성화다', () => {
+    // T07-5 workflow endpoint 가 생기면서 던질 곳이 생겼다 (D-29 카탈로그 중 하나).
     expect(ERROR_CODES).toHaveProperty('BOM_INVALID_TRANSITION');
-    // T07-7A 소관은 여전히 없다.
-    expect(ERROR_CODES).not.toHaveProperty('BOM_SUPPLIER_SELECTION_CONFLICT');
+    // ✏️ T07-7A 가 D-23 대표 SupplierSku 2건 손상을 던지면서 활성화했다.
+    //    ⛔ **새 code 를 만든 것이 아니다** — D-29 가 이미 카탈로그에 둔 코드다.
+    expect(ERROR_CODES).toHaveProperty('BOM_SUPPLIER_SELECTION_CONFLICT');
+    expect(httpStatusForCode(ERROR_CODES.BOM_SUPPLIER_SELECTION_CONFLICT)).toBe(409);
+  });
+
+  it('⛔ D-29 의 `BOM_*` code 집합은 늘어나지 않았다', () => {
+    // 카탈로그 고정 — 새 task 가 code 를 임의로 추가하면 여기서 깨진다.
+    expect(
+      Object.keys(ERROR_CODES)
+        .filter((key) => key.startsWith('BOM_'))
+        .sort(),
+    ).toEqual(
+      [
+        'BOM_ACTIVE_IMMUTABLE',
+        'BOM_COMPONENT_NOT_ELIGIBLE',
+        'BOM_CYCLE_DETECTED',
+        'BOM_EFFECTIVE_CONFLICT',
+        'BOM_INVALID_TRANSITION',
+        'BOM_LINE_DUPLICATE',
+        'BOM_MAX_LEVEL_EXCEEDED',
+        'BOM_NOT_EDITABLE',
+        'BOM_NOT_FOUND',
+        'BOM_PARENT_NOT_ELIGIBLE',
+        'BOM_PERIOD_OVERLAP',
+        'BOM_QTY_INVALID',
+        'BOM_QTY_STATUS_MISMATCH',
+        'BOM_QTY_UNCONFIRMED',
+        'BOM_SELF_COMPONENT',
+        'BOM_SUPPLIER_SELECTION_CONFLICT',
+        'BOM_UOM_MISMATCH',
+        'BOM_VERSION_DUPLICATE',
+      ].sort(),
+    );
   });
 });
 

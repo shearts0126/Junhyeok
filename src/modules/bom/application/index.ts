@@ -36,6 +36,7 @@ export {
   loadBomSkuRef,
   productionPartnerNotFound,
   skuRefNotFound,
+  type BomCostReadClient,
   type BomDbClient,
   type BomReadClient,
   type BomSkuRef,
@@ -203,3 +204,13 @@ export { hasBomUsage, type HasBomUsageDependencies } from './has-bom-usage';
 
 // ── T07-6 explode ────────────────────────────────────────────
 export { explodeBom } from './explode-bom';
+
+// ── T07-7A direct-line costing ───────────────────────────────
+// ⛔ public `/cost` route 와 `CostResult` 는 T07-7B 소유다 (docs/18 C-1).
+export {
+  costDirectBom,
+  type BomCostDependencies,
+  type CostDirectBomInput,
+  type DirectCostLine,
+  type DirectCostResult,
+} from './cost-direct-bom';
