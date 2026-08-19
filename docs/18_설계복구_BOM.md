@@ -1799,7 +1799,7 @@ requiredQty(child) = requiredQty(parent)
 |---|---|
 | 중간 연산 | `src/shared/decimal` context 의 전체 정밀도. ⛔ 단계마다 반올림하지 않는다 |
 | `requiredQty` 최종 | **소수점 6자리**, `ROUND_HALF_UP` (`Decimal(18,6)` 과 일치) |
-| `lineCost`·`subtotal` | **소수점 4자리**, `ROUND_HALF_UP` (`Decimal(18,4)` 과 일치) |
+| `lineCost`·`subtotal` | **소수점 4자리**, `ROUND_HALF_UP` (`Decimal(18,4)` 과 일치). ★ 반올림 **시점**은 `★ T07-7A direct cost arithmetic gap closure` F-1·F-2·F-8 |
 | API 표현 | 전부 **문자열**. ⛔ `Number()`/`parseFloat()` 금지 |
 
 ★ **`0.033333 × 30 = 0.99999 ≠ 1` 을 재정규화하지 않는다.** 원본이 소요량을
@@ -2211,8 +2211,8 @@ T06-3·T1-6B4 와 같은 판단이다.
 
 | 항목 | 확정 |
 |---|---|
-| `lineCost` | 산정 불가한 component 는 **`null`**. ⛔ 0 으로 채우지 않는다 |
-| `subtotals` | **산정 가능한 component 만** 합산한다 (known partial sum) |
+| `lineCost` | 산정 불가한 component 는 **`null`**. ⛔ 0 으로 채우지 않는다. ★ 산식·반올림은 `★ T07-7A direct cost arithmetic gap closure` F-1~F-3 |
+| `subtotals` | **산정 가능한 component 만** 합산한다 (known partial sum). ★ 합산 순서는 `★ T07-7A direct cost arithmetic gap closure` F-8·F-9 — raw 합계 후 4dp |
 | 단일 `totalCost` | ⛔ **필드 자체를 두지 않는다** (D-26) |
 | 데이터 손상 | ⛔ **provisional 로 숨기지 않는다** — chain conflict·selection conflict·effective BOM conflict 는 전부 **409** |
 | **0원 가격** | **정상 가격이며 provisional 이 아니다.** `unitPrice="0"` → `lineCost="0.0000"` (T06-3 D-3 와 동일) |
@@ -2452,6 +2452,203 @@ primary 2+ → **409 `BOM_SUPPLIER_SELECTION_CONFLICT`** · `Supplier.status` �
 request 당 단일 `asOf` · 산정 불가 `lineCost = null`(0 아님) · 환산 0 ·
 VAT 조정 0 · `purchaseUom` 변환 0 · `packQuantity` 추가 나눗셈 0 ·
 금액 4dp `ROUND_HALF_UP` · `bom.read` 권한 · schema·migration·permission 변경 0.
+
+### ★ T07-7A direct cost arithmetic gap closure
+
+위 `★ T07-7A cost boundary and quantity gap closure`(C-1~C-9)가 **경계**를
+정했다면, 이 절은 **산술**을 정한다. D-19 는 `requiredQty` 까지만, D-25 는
+"계산 불가면 `lineCost = null`" 까지만 정했고 **`lineCost` 자체의 산식·반올림
+시점·복수 provisional 원인 처리·subtotal 합산 순서**가 공백이었다.
+
+⚠️ C-1~C-9 의 결정은 하나도 바꾸지 않는다.
+
+#### F-1 — `lineCost` 산식
+
+```
+rawLineCost = rawRequiredQty × SupplierSkuPrice.unitPrice
+```
+
+`rawRequiredQty` 는 **D-19 공식의 반올림 전 `Decimal`** 이다.
+
+```
+rawRequiredQty = (Q / outputQty) × quantityPer × (1 + lossRate) × (1 + overallLossRate)
+```
+
+⛔ **public/display 용 6dp `requiredQty` 를 다시 `Decimal` 로 읽어 `lineCost` 를
+계산하지 않는다.** T07-6 의 E-7(재귀에 raw 를 넘긴다)과 **같은 원칙**이며,
+다단계 원가에서 누적 오차를 만드는 경로를 여기서 차단한다.
+
+#### F-2 — `lineCost` 최종 정밀도
+
+`rawLineCost` 는 내부 `Decimal` 이다. public 값만:
+
+```
+roundToScale(rawLineCost, 4, ROUND_HALF_UP)  →  toDecimalString(rounded)
+```
+
+| 반올림 결과 | public `lineCost` |
+|---|---|
+| `6.0000` | `"6"` |
+| `10.5000` | `"10.5"` |
+| `10.1235` (raw `10.12345`) | `"10.1235"` |
+
+⛔ trailing zero 를 채우지 않는다 — 금액도 minimal form 이다
+(`price-views.ts` 의 `unitPrice` 선례와 같다).
+⛔ `rawLineCost` 는 **DB 저장 금지 · public debug 필드 금지**.
+⛔ `Number()` · `parseFloat()` · `Math.round()` 금지.
+
+#### F-3 — `lineCost = null` 과 `"0"` 의 구분
+
+아래 셋 중 하나면 **`lineCost = null`** 이다. ⛔ `0` 으로 채우지 않는다.
+
+| # | 조건 | reason |
+|---|---|---|
+| 1 | `rawRequiredQty == null` | `QTY_UNCONFIRMED` |
+| 2 | primary `SupplierSku` 없음 | `NO_PRIMARY_SUPPLIER` |
+| 3 | primary 는 있으나 asOf 유효 **승인** 가격 없음 | `NO_EFFECTIVE_PRICE` |
+
+반대로 **`unitPrice == 0` 이고 `rawRequiredQty != null`** 이면
+`rawLineCost = 0`, public `lineCost = "0"` 이며 **정상 확정 원가**다.
+**provisional 이 아니다** (D-25 "0원 가격은 정상 가격" 그대로).
+
+★ `null`(모른다)과 `"0"`(0원이다)을 절대 섞지 않는다.
+
+#### F-4 — 산식에 들어가지 않는 것
+
+`lineCost` 는 **정확히 `rawRequiredQty × price.unitPrice` 뿐**이다.
+
+⛔ `packQuantity` · `SupplierSku.purchaseUom` 변환 · VAT 가감 · 환율 환산이
+산식에 등장하지 않는다. `currency` 와 `vatIncluded` 는 **metadata 이자
+grouping key** 일 뿐 곱셈의 피연산자가 아니다.
+
+#### F-5 — 한 component 의 **복수** 원인
+
+한 component 에서 여러 missing condition 이 **동시에** 성립할 수 있다
+(예: `quantityStatus = UNKNOWN` **이면서** primary `SupplierSku` 없음).
+계산 내부에서는 **실제 발생한 모든 reason 을 보존**한다.
+
+⚠️ **단, primary `SupplierSku` 가 아예 없으면 `NO_EFFECTIVE_PRICE` 를 추가하지
+않는다** — 가격 resolver 를 실행할 대상 자체가 없기 때문이다.
+
+```
+quantity UNKNOWN + primary 없음
+  → actual reason set = [QTY_UNCONFIRMED, NO_PRIMARY_SUPPLIER]
+  ⛔ NO_EFFECTIVE_PRICE 는 포함하지 않는다
+```
+
+#### F-6 — public `components[].provisionalReason` 우선순위
+
+D-14 의 `provisionalReason` 은 **단수**이므로 결정적 projection 규칙을 둔다.
+
+```
+QTY_UNCONFIRMED  >  NO_PRIMARY_SUPPLIER  >  NO_EFFECTIVE_PRICE
+```
+
+| 상황 | public `provisionalReason` |
+|---|---|
+| quantity UNKNOWN + primary 없음 | `QTY_UNCONFIRMED` |
+| quantity 확정 + primary 없음 | `NO_PRIMARY_SUPPLIER` |
+| quantity 확정 + primary 있음 + 유효 가격 없음 | `NO_EFFECTIVE_PRICE` |
+
+★ 이 우선순위는 **정보를 버리기 위한 것이 아니다.** 단일 표시값을 정하는
+projection rule 이며, 실제 reason set 은 F-5 대로 내부에 보존된다.
+
+#### F-7 — top-level `provisionalReasons[]` 는 **union** 이다
+
+`CostResult.provisionalReasons[]` 는 `components[].provisionalReason` 을 단순
+수집한 것이 **아니다.** 계산 과정에서 발생한 **actual reason set 의 union** 이다.
+
+```
+component X: actual = [QTY_UNCONFIRMED, NO_PRIMARY_SUPPLIER]
+             public provisionalReason = QTY_UNCONFIRMED     (F-6)
+
+top-level provisionalReasons = [QTY_UNCONFIRMED, NO_PRIMARY_SUPPLIER]   ★ 둘 다
+```
+
+배열 순서는 F-6 우선순위 고정, **중복 제거**한다.
+
+| 책임 | T07-7A | T07-7B |
+|---|---|---|
+| reason-set primitive | ✅ | — |
+| 최종 top-level 배열 조립 | ⛔ | ✅ (C-5 그대로) |
+
+#### F-8 — subtotal 합산 순서
+
+`(currency, vatIncluded)` 별 subtotal 은 **반올림된 public `lineCost` 를 다시
+합산하지 않는다.**
+
+```
+rawSubtotal    = Σ rawLineCost              (계산 가능한 component 만)
+subtotal.amount = roundToScale(rawSubtotal, 4, ROUND_HALF_UP) → minimal string
+```
+
+⛔ 각 `lineCost` 를 4dp 로 먼저 접은 뒤 더하면 raw 합계와 달라진다 —
+금액도 **중간 무반올림**이다 (D-19 의 원칙을 금액에 적용).
+
+#### F-9 — partial subtotal
+
+`lineCost == null` 인 component 는 **subtotal 산술에서 제외**한다 (D-25 그대로).
+⛔ `null` 을 `0` 으로 보고 합산한 것처럼 취급하지 않는다.
+
+subtotal 의 업무 의미는 **"확정 가능한 부분의 합"** 이지
+**"missing 을 0 으로 본 전체 합"** 이 아니다.
+
+#### F-10 — 예시
+
+**CASE 1 — full precision**
+
+```
+rawRequiredQty = 1 / 3          (무한소수)
+public requiredQty = "0.333333"
+unitPrice = 3000000
+
+✅ raw:        rawRequiredQty × 3000000 → 4dp → "1000000"
+⛔ public 재사용: 0.333333      × 3000000 → 4dp →  "999999"
+```
+
+⚠️ **판별력 있는 fixture 를 써야 한다.** 같은 상황에서 `unitPrice = 3` 이면
+raw 는 `0.999999…9`, public 재사용은 `0.999999` 로 **raw 값은 다르지만**
+둘 다 4dp `HALF_UP` 후 `"1"` 이 되어 **public 값으로는 구분되지 않는다.**
+회귀 테스트는 위처럼 4dp 이후에도 값이 갈리는 fixture 로 고정한다.
+
+**CASE 2 — 복수 원인**
+
+```
+quantityStatus = UNKNOWN,  primary SupplierSku 없음
+
+actual reason set          = [QTY_UNCONFIRMED, NO_PRIMARY_SUPPLIER]
+public provisionalReason   = QTY_UNCONFIRMED          (F-6)
+top-level provisionalReasons = 위 둘 다                (F-7)
+lineCost = null
+```
+
+**CASE 3 — 0원 가격**
+
+```
+requiredQty = 5,  unitPrice = 0
+→ rawLineCost = 0,  public lineCost = "0"
+→ provisional reason 없음. isProvisional 을 true 로 만들지 않는다
+```
+
+**CASE 4 — subtotal 반올림 시점**
+
+```
+line A: requiredQty 0.5 × unitPrice 0.0001 → rawLineCost = 0.00005
+line B: 동일                                 → rawLineCost = 0.00005
+
+✅ raw 합 후 4dp:      0.0001 → "0.0001"
+⛔ 각 4dp 후 합:  0.0001 + 0.0001 = "0.0002"
+```
+
+두 경로가 **실제로 다른 값**을 내므로 회귀 테스트로 고정한다.
+
+#### F-11 — 경계 불변
+
+C-1~C-9 의 A/B 경계는 그대로다. T07-7A 는 direct line 의 `rawLineCost` ·
+`lineCost` projection primitive · actual reason set · 단수 reason projection
+helper · (선택) subtotal 산술 helper 까지이며, **public `/cost` ·
+`CostResult` · 최종 `components[]` · `isProvisional` · `provisionalReasons[]` ·
+`subtotals[]` 조립은 T07-7B** 다.
 
 ### D-28 — concurrency
 
