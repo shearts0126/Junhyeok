@@ -409,6 +409,8 @@ describe('★ workflow route handler 는 정확히 7개다', () => {
       'approve',
       'archive',
       'clone',
+      // ✏️ T07-7B cost (workflow 가 아니라 read endpoint 다).
+      'cost',
       'deactivate',
       // ✏️ T07-6 explode (workflow 가 아니라 read endpoint 다).
       'explode',
@@ -422,13 +424,13 @@ describe('★ workflow route handler 는 정확히 7개다', () => {
     }
   });
 
-  it('⛔ T07-7·T07-8 route 는 여전히 없다', async () => {
+  it('⛔ max-assembly-qty·T07-8 route 는 여전히 없다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('../../app/api/boms/[id]', import.meta.url));
-    // ✏️ `explode` 는 T07-6 이 추가했다 — 아래 workflow 7종 목록도 그래서
-    //    `explode` 를 포함한다. cost·max-assembly-qty 는 여전히 미착수다.
-    for (const forbidden of ['cost', 'max-assembly-qty']) {
+    // ✏️ `explode` 는 T07-6, `cost` 는 **T07-7B** 가 추가했다 — 위 목록도 그래서
+    //    둘을 포함한다. `max-assembly-qty` 는 재고 코어(T2-*) 의존이라 여전히 유예다.
+    for (const forbidden of ['max-assembly-qty', 'import', 'standard-cost']) {
       expect(readdirSync(dir), forbidden).not.toContain(forbidden);
     }
   });

@@ -61,6 +61,7 @@ export {
   parseBomLineId,
   parseBulkConfirmQtyInput,
   parseCreateBomInput,
+  parseCostBomQuery,
   parseCreateLineInput,
   parseDateOnly,
   parseExplodeBomQuery,
@@ -80,6 +81,7 @@ export {
   COMPONENT_ROLES,
   type BulkConfirmQtyInput,
   type BulkConfirmQtyItem,
+  type CostBomQuery,
   type CreateBomInput,
   type CreateLineInput,
   type ExplodeBomQuery,
@@ -214,3 +216,12 @@ export {
   type DirectCostLine,
   type DirectCostResult,
 } from './cost-direct-bom';
+
+// ── T07-7B multi-level cost roll-up ──────────────────────────
+// ★ terminal cost-bearing occurrence 만 산입한다 (docs/18 R-1·R-2).
+export {
+  costBom,
+  type CostBomDependencies,
+  type CostComponentView,
+  type CostResultView,
+} from './cost-bom';

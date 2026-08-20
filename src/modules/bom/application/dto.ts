@@ -307,6 +307,49 @@ export function parseExplodeBomQuery(searchParams: URLSearchParams): ExplodeBomQ
   return result.data;
 }
 
+/**
+ * `GET /api/boms/{id}/cost` 쿼리 (T07-7B).
+ *
+ * ★ **정확히 2개** — `qty?`(기본 `"1"`) · `asOf?`(기본 업무일자).
+ *   파서는 explode 와 **동일한 것을 재사용**한다 (C-4).
+ * ⛔ `maxLevel` 을 public query 로 만들지 않는다 — 깊이는 공유 상수
+ *    `BOM_MAX_LEVEL` 고정이며 초과는 422 다 (R-23 G12).
+ * ⛔ `supplierId`·`supplierSkuId`·`priceId`·`currency` override 를 받지 않는다 —
+ *    공급처 선택은 D-23 이 정하며 client 가 뒤집을 수 없다.
+ */
+export const costBomQuerySchema = z.strictObject({
+  qty: positiveDecimal18_6.default('1'),
+  asOf: calendarDateString.optional(),
+});
+
+export type CostBomQuery = z.infer<typeof costBomQuerySchema>;
+
+export function parseCostBomQuery(searchParams: URLSearchParams): CostBomQuery {
+  const allowed = new Set(Object.keys(costBomQuerySchema.shape));
+  const unknownKeys = [...new Set([...searchParams.keys()])].filter((key) => !allowed.has(key));
+  if (unknownKeys.length > 0) {
+    throw new ValidationError(
+      unknownKeys.map((key) => ({
+        path: key,
+        message: '지원하지 않는 파라미터입니다. (qty · asOf 만 받습니다)',
+      })),
+      { message: '지원하지 않는 원가 파라미터가 있습니다.' },
+    );
+  }
+
+  const raw: Record<string, string> = {};
+  for (const key of allowed) {
+    const value = searchParams.get(key);
+    if (value !== null) raw[key] = value;
+  }
+
+  const result = costBomQuerySchema.safeParse(raw);
+  if (!result.success) {
+    throw toValidationError(result.error.issues, 'BOM 원가 쿼리가 올바르지 않습니다.');
+  }
+  return result.data;
+}
+
 /** query 를 받지 않는 read endpoint 용 — 어떤 키든 400. */
 export function assertNoQueryParams(searchParams: URLSearchParams, message: string): void {
   const keys = [...new Set([...searchParams.keys()])];
