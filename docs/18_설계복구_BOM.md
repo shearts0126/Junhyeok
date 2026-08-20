@@ -156,6 +156,9 @@ backlog ID `T07-7` 을 대체하지 않으며 PR 을 둘로 나누는 용도로�
   전부 여기 모여 있다.
 - **T07-7B** — multi-level roll-up: explode 결과 위의 원가 집계 · 반제품 원가
   전파 · aggregation(D-20) 연동.
+  > ★ **"반제품 원가 전파"의 정확한 의미는 `★ T07-7B multi-level roll-up gap
+  > closure` R-21 이 정본이다** — 반제품 **자체의 매입가를 위로 올린다는 뜻이
+  > 아니다.** 소요량을 아래로 전파하고 **terminal 원가를 위로 누적**한다는 뜻이다.
 
 > ★ 위 두 줄은 **어느 쪽이 public endpoint 를 완성하는지**를 적지 않았다.
 > 정본은 `★ T07-7A cost boundary and quantity gap closure` 다 —
@@ -1531,6 +1534,12 @@ version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFro
 > ★ **`T07-7B` public response 다** — 조립 주체는 `T07-7B` 이며 `T07-7A` 는 이
 > DTO 를 반환하지 않는다 (`★ T07-7A cost boundary and quantity gap closure` C-1·C-7).
 > 필드 자체는 변경 없다.
+>
+> ⚠️ **단 `components[].requiredQty` 의 nullability 하나는
+> `SUPERSEDED BY ★ T07-7B multi-level roll-up gap closure` R-9 다** —
+> `string` → **`string | null`**. ⛔ 키 개수·필드 집합은 그대로다.
+> `components[]` 가 **terminal cost-bearing occurrence 의 집계**라는 것(intermediate
+> 반제품 제외)과 배열 정렬은 그 절의 R-6·R-18 이 정본이다.
 
 ```
 {
@@ -1539,7 +1548,8 @@ version 파싱을 하지 않으며(D-4), **버전 시간 순서는 `effectiveFro
   provisionalReasons: ('QTY_UNCONFIRMED'|'NO_PRIMARY_SUPPLIER'|'NO_EFFECTIVE_PRICE')[],
   components: [{
     componentSkuId, componentSku: {id, skuCode, skuName},
-    level, requiredQty (string), uom,
+    level, requiredQty (string),   // ⚠️ SUPERSEDED → string|null (T07-7B R-9)
+    uom,
     supplierSkuId: string|null,
     unitPrice: string|null, currency: string|null, vatIncluded: boolean|null,
     lineCost: string|null,                    // requiredQty × unitPrice, null 이면 산정 불가
@@ -1716,7 +1726,7 @@ scope 에 **실제 `bomId` 를 포함**한다(T06-3 가 `supplierSkuId` 를 포�
 | `maxLevel` | 정수 `1..10`, **기본 10**. 범위 밖 400 |
 | 하위 BOM 선택 | **`resolveEffectiveBom(componentSkuId, asOf)`** (D-22) |
 | leaf | 해당 asOf 에 유효한 ACTIVE BOM 이 **없는** 구성품 |
-| 중간 노드 | **결과에 포함한다** (`isLeaf=false`). 반제품 자체도 소요 대상이다 |
+| 중간 노드 | **결과에 포함한다** (`isLeaf=false`). 반제품 자체도 소요 대상이다. ★ 이것은 **`explode`(구조·수량) 계약이다** — `cost` 는 유효 child BOM 을 가진 중간 노드를 `components[]` 에서 **제외**한다(`★ T07-7B multi-level roll-up gap closure` R-1·R-6). 두 endpoint 는 D-20 대로 다른 질문에 답한다 |
 | `maxLevel` 초과 | **422 `BOM_MAX_LEVEL_EXCEEDED`**. ⛔ 조용히 절단하지 않는다 |
 | 순환 발견 | **422 `BOM_CYCLE_DETECTED`** (경로 포함) |
 | ordering | `level` asc → 같은 level 내 부모의 `lineNo` asc → `lineNo` asc. ★ level 3 이상의 tie-break 는 `★ T07-6 explosion deterministic ordering clarification`(full `lineNoPath` 사전순)이 정본이다 |
@@ -2075,6 +2085,14 @@ D-18 의 구조 계약과 D-20 의 무합산 계약은 **그대로**다.
 | 다이아몬드 | 합산된다. **순환이 아니다** (`07v2:427`) |
 | `level` 표기 | 합산 행의 `level` 은 **등장한 최소 level** |
 
+> ★ **CLARIFIED — 무엇을 합산하는가는 `★ T07-7B multi-level roll-up gap closure`
+> 가 정본이다.** 위 표는 **집계 키**만 정하고 **어떤 occurrence 가 집계 대상인지**
+> 는 정하지 않았다. 확정: 대상은 **terminal cost-bearing occurrence** 뿐이며
+> (asOf 유효 ACTIVE child BOM 이 없는 것), 유효 child BOM 을 가진 intermediate
+> 반제품은 **`components[]` 에 넣지 않고 매입가도 산입하지 않는다**(R-1·R-2 —
+> 이중계상 방지). 합산 산술(raw partial sum)·mixed-null·배열 정렬은 각각
+> R-8·R-10·R-18 이다.
+
 `explode` 는 "어떻게 구성되는가"(구조)를, `cost` 는 "얼마가 드는가"(총량)를
 답하므로 정책이 다르다. 둘 다 필요한 화면은 두 endpoint 를 각각 호출한다.
 ⛔ 한 endpoint 가 detail 과 aggregate 를 동시에 반환하지 않는다.
@@ -2232,6 +2250,13 @@ T06-3·T1-6B4 와 같은 판단이다.
 > `quantityPer > 0` 이라 `lineCost` 가 **계산된다**. 그럼에도 `QTY_UNCONFIRMED`
 > provisional 이다 — "계산 가능" ≠ "수량 확정". 정본은
 > `★ T07-7A direct cost arithmetic gap closure` **F-12** 다.
+
+> ★ **CLARIFIED (T07-7B) — `QTY_UNCONFIRMED` 는 경로를 상속한다.** 위 표는 한
+> 라인의 `quantityStatus` 만 말하지만, 다단계에서는 **root → terminal 경로상의
+> 어느 `BomLine` 이라도 `quantityStatus !== CONFIRMED` 이면** 그 terminal
+> occurrence 가 `QTY_UNCONFIRMED` 다 (path-level OR). 반대로 intermediate 의
+> `NO_PRIMARY_SUPPLIER`·`NO_EFFECTIVE_PRICE` 는 **하위로 전파하지 않는다.**
+> 정본은 `★ T07-7B multi-level roll-up gap closure` **R-12·R-13** 이다.
 
 ### D-26 — currency ★
 
@@ -2714,6 +2739,399 @@ authoritative backlog 의 `T07-7` 완료조건이 **"박스 단가 = 가격 ÷ �
 
 ⚠️ 통화/VAT subtotal 분리(D-26·D-27) 회귀는 필요하고 유지하지만 **`TC-BOM-009`
 가 아니다.**
+
+### ★ T07-7B multi-level roll-up gap closure
+
+T07-7B PRE-FLIGHT 가 **다섯 개의 설계 공백**(G2·G3·G4·G5·G9)을 발견해 확정한
+계약이다. D-14 `CostResult` 의 **필드 집합 · 키 개수는 바꾸지 않는다**(단
+`requiredQty` 의 nullability 하나만 좁게 supersede). D-19 공식 · D-20 집계 키 ·
+D-23~D-27 · C-1~C-9 · F-1~F-13 도 **하나도 바꾸지 않는다.**
+
+#### 무엇이 공백이었나
+
+| # | 공백 | 위험 |
+|---|---|---|
+| **G2·G3** | 반제품 `B` 의 매입가와 하위 `C` 의 재료비를 **둘 다** 최종 원가에 넣는지 | **이중계상** |
+| **G4** | aggregate `requiredQty` 합산 순서 · mixed-null 표현 | 잘못된 partial aggregate |
+| **G5** | aggregate `lineCost` mixed-null 표현 | component 와 subtotal 의 검산 불일치 |
+| **G9** | `components[]` 배열 정렬 | 비결정적 응답 |
+
+D-18 이 explode 에 중간 노드를 포함시킨 근거는 *"반제품은 그 자체로 재고 SKU"*
+이며 **조립 소요(수량)** 를 위한 것이다. D-20 은 `cost` 를 *"얼마가 드는가
+(총량)"* 로 정의한다. **두 endpoint 는 답하는 질문이 다르므로 산입 대상도 다르다.**
+
+#### R-1 — 최종 산입 대상은 **terminal cost-bearing occurrence** 뿐이다
+
+> **terminal** = 그 component SKU 에 **같은 request `asOf` 기준 유효 `ACTIVE`
+> child BOM 이 없는** occurrence.
+
+```
+P → B → C          B 에 asOf 유효 ACTIVE BOM (B → C) 이 있다
+```
+
+| 노드 | 역할 |
+|---|---|
+| `B` | **intermediate traversal node.** 수량을 아래로 전달할 뿐이다 |
+| `C` | **terminal cost-bearing occurrence.** 실제 원가가 여기서 발생한다 |
+
+★ `B` 는:
+
+- ⛔ 자체 `SupplierSku`·매입가를 이번 roll-up 원가에 **쓰지 않는다**
+- ⛔ 최종 `CostResult.components[]` 에 **넣지 않는다**
+- ✅ 하위 BOM 으로 **계속 내려간다**
+
+⛔ **판정 기준은 `itemType` 이나 "제조 가능 여부"가 아니라 `asOf` 유효 child BOM
+의 존재 여부**다. 같은 SKU 라도 기준일에 따라 terminal 이 되기도 한다.
+
+#### R-2 — ⛔ no double count
+
+```
+P → B → C
+
+B 매입가          = 1000
+C 소요 원가        =  600
+```
+
+`B` 가 유효 child BOM 을 가지므로 **`B` 의 매입가는 산입 대상이 아니다.**
+
+| | 값 |
+|---|---|
+| ✅ 최종 cost-bearing 금액 | **`600`** |
+| ⛔ 금지 | **`1600`** (매입가 + 하위 재료비 동시 산입) |
+
+#### R-3 — terminal fallback
+
+component `B` 에 `asOf` 유효 `ACTIVE` child BOM 이 **없으면 `B` 자체가
+terminal** 이다. 그때는 `B` → primary `SupplierSku` → 유효 승인 가격 →
+`rawLineCost` 를 정상적으로 계산하고 `components[]` 에 포함한다.
+
+★ *"반제품 SKU 라서 무조건 하위로 내려간다"* 가 **아니다.**
+
+#### R-4 — intermediate 의 SupplierSku·가격은 **조회하지 않는다**
+
+유효 child BOM 을 가진 intermediate node 에 대해서는 원가 목적의
+**primary `SupplierSku` resolution 도, 가격 resolution 도 수행하지 않는다.**
+
+따라서 그 노드에 primary 가 없든 · 가격이 없든 · primary 가 2건이든 · 가격이
+2건이든 **이번 roll-up 의 선택 사실로 쓰이지 않는다.**
+
+⚠️ 단 **child BOM resolver 자체의 계약은 그대로다** — `resolveEffectiveBom` 이
+2건이면 **409 `BOM_EFFECTIVE_CONFLICT`** 다.
+
+#### R-5 — terminal 무결성은 T07-7A 그대로
+
+| 상황 | 결과 |
+|---|---|
+| primary 0건 | `NO_PRIMARY_SUPPLIER` (provisional) |
+| primary 1건 | 사용 |
+| primary 2건+ | **409 `BOM_SUPPLIER_SELECTION_CONFLICT`** |
+| 가격 0건 | `NO_EFFECTIVE_PRICE` (provisional) |
+| 가격 1건 | 사용 |
+| 가격 2건+ | **409 `SUPPLIER_PRICE_CHAIN_CONFLICT`** |
+| `unitPrice = 0` | **정상 가격** — provisional 아님 |
+
+⛔ 데이터 손상을 provisional 로 downgrade 하지 않는다. ⛔ 부분 응답 금지.
+
+#### R-6 — public `components[]` 의 정체
+
+`CostResult.components[]` 는 **explode 의 intermediate+leaf 전체 목록이 아니다.**
+**terminal cost-bearing occurrence 를 D-20 으로 aggregate 한 결과**다.
+
+이 결정 덕분에 여러 통화·VAT 의 하위 구성품을 가진 intermediate 를 **가짜 단일
+`unitPrice`/`currency`/`vatIncluded` 로 압축할 필요가 사라진다** (R-13).
+
+#### R-7 — D-20 집계 키는 그대로
+
+terminal occurrence 를 **`(componentSkuId, uom)`** 단위로 합친다.
+
+```
+P → B → X
+P → C → X          X 가 terminal
+```
+
+| endpoint | 결과 |
+|---|---|
+| `explode` | `X` occurrence **2개** (경로별 detail 보존) |
+| `cost` | `X` aggregate component **1행** |
+
+#### R-8 — **G4 확정** · aggregate `requiredQty` = raw partial sum
+
+각 terminal occurrence 는 내부적으로 `rawRequiredQty: Decimal | null` 을 갖는다.
+⛔ **public 6dp 값을 합산하지 않는다** (F-1 · T07-6 E-7 과 같은 원칙).
+
+```
+knownRawQtys = rawRequiredQty !== null 인 occurrence 들
+```
+
+| 경우 | public `requiredQty` |
+|---|---|
+| `knownRawQtys.length > 0` | `Σ knownRawQtys` → **6dp `ROUND_HALF_UP`** → minimal string |
+| 전 occurrence 가 `null` | **`null`** |
+| known + null 혼합 | **known partial sum 의 projection** + `QTY_UNCONFIRMED` |
+
+#### R-9 — D-14 `requiredQty` nullability SUPERSEDE
+
+> `CostResult.components[].requiredQty` 의 기존 표기 **`string`** 은
+> **`string | null`** 로 좁게 supersede 한다.
+
+⛔ 키 개수 변경 없음 · ⛔ 새 필드 추가 없음.
+
+| 값 | 의미 |
+|---|---|
+| `null` | 그 group 에 **계산 가능한 occurrence 가 하나도 없다** |
+| 문자열 | 계산 가능한 부분의 합. 일부가 unknown 이면 `provisionalReason` 이 `QTY_UNCONFIRMED` 를 표시한다 |
+
+#### R-10 — **G5 확정** · aggregate `lineCost` = raw partial known cost
+
+```
+knownRawCosts = rawLineCost !== null 인 occurrence 들
+```
+
+| 경우 | public `lineCost` |
+|---|---|
+| `knownRawCosts.length > 0` | `Σ knownRawCosts` → **4dp `ROUND_HALF_UP`** → minimal string |
+| 전 occurrence 가 `null` | **`null`** |
+| known + null 혼합 | **known partial cost** (사유는 그대로 보존) |
+
+⛔ **반올림된 occurrence `lineCost` 를 재합산하지 않는다** (F-8 과 같은 원칙).
+
+#### R-11 — component 와 subtotal 의 철학 일치
+
+component aggregate 와 subtotal 은 **같은 partial-known 철학**을 쓴다.
+⛔ `null` 을 `0` 원으로 해석하지 않는다.
+
+mixed known/null group 에서 component 가 known partial cost 를 표시하면 그
+**같은 raw 금액이 subtotal 에도 들어간다** — 즉 `Σ (계산 가능한 aggregate raw
+cost)` 와 subtotal 산술이 일관된다. (G5 를 `null` 로 두면 `Σ components ≠
+subtotal` 이 되어 화면 검산이 깨진다.)
+
+#### R-12 — ★ **path quantity provisional propagation** (신설)
+
+> terminal occurrence 의 `QTY_UNCONFIRMED` 는 **terminal 자신의 `BomLine`
+> `quantityStatus` 만 보고 판정하지 않는다.**
+
+```
+root → terminal 경로상의 BomLine 중
+quantityStatus !== 'CONFIRMED' 가 하나라도 있으면
+→ 그 terminal occurrence 의 actual reasons 에 QTY_UNCONFIRMED 를 포함한다
+```
+
+즉 **path-level OR** 다. T07-6 이 raw 수량을 경로를 따라 전파하는 구조이므로
+원가의 provisional 도 같은 경로 의미를 잃으면 안 된다.
+
+**CASE F — `SUGGESTED` 조상**
+
+```
+P --SUGGESTED--> B --CONFIRMED--> C
+```
+
+| 항목 | 값 |
+|---|---|
+| `C` `rawRequiredQty` | **숫자** (`B` 라인에 `quantityPer` 가 있으므로 계산된다) |
+| `C` `rawLineCost` | 공급처·가격이 있으면 **숫자** |
+| actual reasons | **`[QTY_UNCONFIRMED]`** |
+
+★ "계산 가능" ≠ "수량 확정" (F-12 와 같은 원칙, 경로로 확장).
+
+**CASE G — `UNKNOWN` 조상**
+
+```
+P --UNKNOWN--> B --CONFIRMED--> C
+```
+
+| 항목 | 값 |
+|---|---|
+| `C` `rawRequiredQty` | **`null`** (T07-6 raw null 전파) |
+| `C` `rawLineCost` | **`null`** |
+| actual reasons | **`[QTY_UNCONFIRMED]`** |
+
+★ terminal `C` 라인 자체가 `CONFIRMED` 여도 **조상의 불확실성을 잃지 않는다.**
+
+#### R-13 — intermediate 의 공급처·가격 사유는 **전파하지 않는다**
+
+반대 방향은 성립하지 않는다. intermediate `B` 의 `NO_PRIMARY_SUPPLIER` ·
+`NO_EFFECTIVE_PRICE` 는 하위 terminal `C` 로 **전파하지 않는다** — R-4 대로 `B`
+의 매입 사실은 애초에 조회조차 하지 않기 때문이다.
+
+| 사유 종류 | 전파 |
+|---|---|
+| **수량 미확정** (`QTY_UNCONFIRMED`) | **경로 상속** (R-12) |
+| **공급처·가격 부재** | **terminal 자신에만** |
+
+#### R-14 — **G6 확정** · aggregate reason union + 단수 projection
+
+같은 `(componentSkuId, uom)` group 의 **모든 terminal occurrence actual reason
+집합을 union** 한 뒤, 단수 `provisionalReason` 은 F-6 우선순위로 고른다.
+
+```
+QTY_UNCONFIRMED  >  NO_PRIMARY_SUPPLIER  >  NO_EFFECTIVE_PRICE
+```
+
+사유가 없으면 `null`.
+
+#### R-15 — top-level provisional
+
+`CostResult.provisionalReasons[]` 는 **모든 terminal occurrence actual reason
+집합의 union** 이다. ⛔ 단수 projection 결과를 모아서 만들지 않는다 (F-7).
+정렬은 위 우선순위 고정, 중복 제거.
+
+`isProvisional` = **top-level union 의 길이 > 0**.
+
+⛔ 데이터 손상 409 는 reason 에 넣지 않는다.
+
+#### R-16 — **G7 확정** · aggregate metadata 는 구조적으로 유일하다
+
+D-21 이 한 request 안에서 `asOf` 단일을 강제하고, D-23 은 `(skuId, asOf)` 로,
+D-24 는 `(supplierSkuId, asOf)` 로 결정된다. 따라서 **같은 `componentSkuId` 의
+모든 terminal occurrence 는 필연적으로 같은 `SupplierSku`·가격을 갖는다.**
+
+aggregate 행의 `supplierSkuId`·`unitPrice`·`currency`·`vatIncluded` 는 그 공통
+선택 사실을 그대로 쓴다.
+
+⛔ weighted-average `unitPrice` 금지 · ⛔ path 별 임의 선택 금지 ·
+⛔ metadata mismatch 처리 규칙을 새로 발명하지 않는다 (발생 경로가 없다).
+
+**missing metadata projection**
+
+| 상태 | `supplierSkuId` | `unitPrice` | `currency` | `vatIncluded` |
+|---|---|---|---|---|
+| primary 없음 | `null` | `null` | `null` | `null` |
+| primary 있음 · 가격 없음 | 선택된 id | `null` | `null` | `null` |
+| 가격 있음 | 선택된 id | 가격 행 값 | 가격 행 값 | 가격 행 값 |
+
+`lineCost` 는 R-10 규칙을 따른다.
+
+#### R-17 — **G8 확정** · aggregate `level`
+
+`level` = **terminal occurrence 들의 최소 level** (D-20 그대로).
+
+```
+X at level 2 · X at level 4   →   aggregate X.level = 2
+```
+
+intermediate node 는 `components[]` 에 없으므로 집계 대상이 아니다.
+
+#### R-18 — **G9 확정** · `components[]` 정렬
+
+```
+1. level              ASC
+2. componentSku.skuCode  ASC
+3. componentSkuId     ASC
+4. uom                ASC
+```
+
+집계 키 전체에 대한 **total order** 이므로 완전히 결정적이다.
+
+★ 문자열 비교는 **환경 locale 에 의존하지 않는 code-point lexical 비교**를 쓴다.
+⛔ `localeCompare` 의 환경별 collation 에 응답 순서를 맡기지 않는다.
+⛔ DB natural order 금지 — 역순 insert 해도 같은 JSON 이 나와야 한다.
+
+#### R-19 — `subtotals[]` 정렬
+
+```
+1. currency     ASC
+2. vatIncluded  false → true
+```
+
+T07-7A helper 계약(D-26) 그대로. 통화 비교도 code-point lexical 비교다.
+
+#### R-20 — ⛔ synthetic intermediate cost 금지
+
+절대 만들지 않는다:
+
+`rolledUpUnitPrice` · synthetic `supplierSkuId` · synthetic `currency` ·
+synthetic `vatIncluded` · intermediate `lineCost` · intermediate subtotal bucket.
+
+**CASE H — 다통화 하위**
+
+```
+B 의 child BOM:  C1 (KRW · VAT 별도)   C2 (USD · VAT 포함)
+```
+
+⛔ `B` 하나의 scalar `currency` 로 압축 금지. 최종 `components[]`·`subtotals[]`
+에는 **`C1`·`C2` 의 terminal 사실이 그대로** 나타난다.
+
+#### R-21 — "roll-up" 의 정확한 의미
+
+> **반제품 `B` 자체의 매입가를 위로 전달한다는 뜻이 아니다.**
+
+`B` 에 child BOM 이 있으면 `B` 의 소요량을 기준으로 하위 소요량을 **재귀 계산**
+하고, 그 결과 **terminal component 원가를 root 원가에 반영**한다는 뜻이다.
+
+```
+수량·소요 요구는 아래로 전파  (downward requirement propagation)
+terminal 원가는 위로 누적      (upward terminal cost accumulation)
+```
+
+#### R-22 — 필수 예시 CASE A ~ H
+
+**CASE A — 제조 intermediate**
+
+```
+P → B → C     B 에 유효 child BOM · B 에 매입가도 존재 · C 에 가격 존재
+```
+
+| | 결과 |
+|---|---|
+| `B` | `components[]` **제외** · subtotal 에 **미산입** |
+| `C` | **포함** |
+| `B + C` 동시 산입 | ⛔ **금지** |
+
+**CASE B — 매입 terminal**
+
+```
+P → B         B 에 유효 child BOM 이 없다
+```
+
+`B` 는 terminal → `SupplierSku`·가격으로 원가 계산 → `components[]` **포함**.
+
+**CASE C — 다이아몬드**
+
+```
+P → B → X
+P → C → X     X terminal
+```
+
+두 raw 소요량을 합산 → `X` **1행** · `level` = 최소 occurrence level.
+
+**CASE D — 수량 mixed null**
+
+| occurrence | raw qty |
+|---|---|
+| A | `3` |
+| B | `null` |
+
+→ aggregate `requiredQty` = **`"3"`** · `provisionalReason` = `QTY_UNCONFIRMED`.
+둘 다 `null` 이면 `requiredQty = null`.
+
+**CASE E — 원가 mixed null**
+
+| occurrence | `rawLineCost` |
+|---|---|
+| A | `100` |
+| B | `null` |
+
+→ aggregate `lineCost` = **`"100"`** · `isProvisional = true` ·
+subtotal 에 known `100` **포함**.
+
+**CASE F** — R-12 참조 (`SUGGESTED` 조상).
+**CASE G** — R-12 참조 (`UNKNOWN` 조상).
+**CASE H** — R-20 참조 (다통화 하위).
+
+#### R-23 — 이번 gap closure 가 바꾸지 않는 것
+
+**G1** `CostResult` top-level **9키** · component **11키**(`requiredQty`
+nullability 만 좁게 supersede) · `componentSku` **3키** · subtotal **3키** ·
+⛔ `totalCost` 없음.
+**G10** `requestId` 를 body 에 포함한다.
+**G11** root = **요청한 exact `BomHeader`**. ⛔ `asOf` 로 root 버전 재선택 없음 ·
+⛔ root status 제한 신설 없음.
+**G12** public query 는 **`qty?`·`asOf?` 뿐**. ⛔ `maxLevel` query 없음.
+공유 상수 `BOM_MAX_LEVEL = 10`, 초과 **422**, ⛔ silent truncation 금지.
+
+그 밖에 T07-6 explode public 계약 · T07-7A direct-cost production behavior ·
+D-23 SupplierSku 선택 · D-24 가격 resolver · workflow · cycle · UOM · permission ·
+schema 는 **하나도 바꾸지 않는다.**
 
 ### D-28 — concurrency
 
@@ -3227,7 +3645,7 @@ hasBomUsage(skuId) =
 | T07-5 | 전이 표 전량 · 자가승인 | **D-7 chain 전량**(미래/과거/gap/동일일/반복) · 동시 activate 수렴 · **TC-BOM-006** · ★ **activate `T` override 시 `T` 기준 cycle 재검사**(approve 통과 재사용 금지) · **clone 후 cycle 검사 + 실패 시 전체 rollback** | **E2E-05**(생성→일괄확정→승인→활성화) · **E2E-06**(활성 수정 차단→버전 생성→활성화) |
 | T07-6 | 공식(D-19) · aggregation · ordering | 3단계 전개 정확(**TC-BOM-008**) · maxLevel · 순환 422 | — |
 | T07-7A | provisional 조합 · subtotal grouping · **박스 단가**(**TC-BOM-009**) | SupplierSku 선택 0/1/2건 · price 0/1/2건 · **0원 ≠ 가격없음** · **박스 단가 = 가격 ÷ 입수량**(**TC-BOM-009**) · 통화 혼재(D-26·D-27) | — |
-| T07-7B | roll-up | 다단계 원가 | — |
+| T07-7B | terminal 판정 · aggregate raw 합산(수량·금액) · mixed-null · reason union · **components 정렬** | 3단계 roll-up · **⛔ 이중계상 부재**(반제품 매입가 + 하위 재료비) · terminal fallback · 다이아몬드 1행 + 최소 level · **경로 `QTY_UNCONFIRMED` 상속**(SUGGESTED/UNKNOWN 조상) · 다통화 하위 · 손상 409 · batch/N+1 | **E2E** `GET /api/boms/{id}/cost` happy path |
 | T07-8 | 목록 파라미터 · 폼 payload | — | 목록·상세·일괄확정·활성 배너·권한별 노출 |
 
 > ★ **TC-BOM-009 mapping 정정 (T07-7A).** 이 표의 이전 판은 `TC-BOM-009` 를
@@ -3295,7 +3713,7 @@ T07-8  standalone UI (/master/boms · /master/boms/{id})
 | **T07-5** | T07-3, `T01-4`(승인 워크플로, 완료) | 7 workflow endpoint · **D-7 chain** · 자가승인 · clone | explode · cost · UI |
 | **T07-6** | T07-2, T07-5 | `explode` · D-19 공식 · aggregation | `max-assembly-qty` · cost |
 | **T07-7A** | T07-6, `T06-3`(완료) | **direct-line costing engine** — requested header 의 direct line 만 · D-23·D-24 · direct-level D-25·D-26·D-27 semantics 와 helper | **public `/cost` · `CostResult`** · child BOM traversal · **D-20** · roll-up · UI |
-| **T07-7B** | T07-7A | multi-level roll-up · **D-20 aggregation** · **`GET /api/boms/{id}/cost`** · **public `CostResult` 조립** | UI |
+| **T07-7B** | T07-7A | multi-level roll-up(**terminal cost-bearing occurrence** 만 산입 — `★ T07-7B multi-level roll-up gap closure`) · **D-20 aggregation** · **`GET /api/boms/{id}/cost`** · **public `CostResult` 조립** | UI |
 | **T07-8** | T07-4, T07-7B | `/master/boms` 2 route · 상세 4탭 · 일괄확정 UI | import(PENDING #7) |
 
 각 Task 는 **독립 PR** 이며 ⛔ 한 PR 에 schema + workflow + cost + UI 를 넣지
