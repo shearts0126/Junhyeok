@@ -164,7 +164,7 @@
 | GET | `/api/skus/{id}/where-used` | 역전개 | 전체 | | — |
 | ✏️ POST | `/api/boms/import` | **동기 업로드** | S,L,A | **소요량 없으면 1 자동입력 금지** / 전량 DRAFT | ✅ |
 
-> ✏️ **2026-08-13 설계복구 (BOM 전체, T07)**: 위 표는 원문으로 보존하되 다음이 **`18_설계복구_BOM.md`** 로 supersede 되었다 — `activate` 의 **`기존 ACTIVE 자동 INACTIVE`** → **§D-7**(status 를 바꾸지 않고 predecessor `effectiveTo` 마감) · `cost` 권한 `전체+F` → **§D-15**(`bom.read`) · `CostResult` 단일 총액 → **§D-26·§D-27**(`(currency, vatIncluded)` 별 subtotal) · `PATCH` 차단 범위 → **§D-6**(`PENDING_APPROVAL`·`APPROVED` 추가) · `max-assembly-qty` → **§D-1**(현재고 의존이므로 R1a-2 이후) · `/api/boms/import` → **§D-1**(PENDING #7 확정 전 유예) · DTO 6종 → **§D-14** · `검증규칙 14종` → **§D-10·§D-12·§D-13**. 신규 endpoint **`POST /api/boms/{id}/archive`** 가 **§D-6** 으로 추가되었다(`ARCHIVED` 진입 경로가 원문에 없었다).
+> ✏️ **2026-08-13 설계복구 (BOM 전체, T07)**: 위 표는 원문으로 보존하되 다음이 **`18_설계복구_BOM.md`** 로 supersede 되었다 — `activate` 의 **`기존 ACTIVE 자동 INACTIVE`** → **§D-7**(status 를 바꾸지 않고 predecessor `effectiveTo` 마감) · `cost` 권한 `전체+F` → **§D-15**(`bom.read`) · ★ 2026-08-19 추가: `cost` query 는 **`qty?`·`asOf?`** 이며 public `/cost`·`CostResult` 는 **`T07-7B` 소유** → **§★ T07-7A cost boundary and quantity gap closure** · `CostResult` 단일 총액 → **§D-26·§D-27**(`(currency, vatIncluded)` 별 subtotal) · `PATCH` 차단 범위 → **§D-6**(`PENDING_APPROVAL`·`APPROVED` 추가) · `max-assembly-qty` → **§D-1**(현재고 의존이므로 R1a-2 이후) · `/api/boms/import` → **§D-1**(PENDING #7 확정 전 유예) · DTO 6종 → **§D-14** · `검증규칙 14종` → **§D-10·§D-12·§D-13**. 신규 endpoint **`POST /api/boms/{id}/archive`** 가 **§D-6** 으로 추가되었다(`ARCHIVED` 진입 경로가 원문에 없었다).
 
 ## 10.9 창고
 

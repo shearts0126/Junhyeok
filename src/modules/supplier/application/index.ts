@@ -125,6 +125,14 @@ export {
   type ResolveEffectivePriceInput,
   type ResolveEffectivePricesInput,
 } from './resolve-effective-price';
+export {
+  bomSupplierSelectionConflict,
+  resolvePrimarySupplierSku,
+  resolvePrimarySupplierSkus,
+  type PrimarySupplierSkuRow,
+  type ResolvePrimarySupplierSkuInput,
+  type ResolvePrimarySupplierSkusInput,
+} from './resolve-primary-supplier-sku';
 export { updateSupplier } from './update-supplier';
 export { updateSupplierSku } from './update-supplier-sku';
 export {

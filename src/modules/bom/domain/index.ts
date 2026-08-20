@@ -19,6 +19,19 @@ export {
 } from './cycle';
 export { bomEffectiveConflict, selectEffectiveBom } from './effective-selection';
 export {
+  computeCostSubtotals,
+  computeRawLineCost,
+  deriveCostProvisionalReasons,
+  projectProvisionalReason,
+  toMoneyString,
+  unionProvisionalReasons,
+  COST_PROVISIONAL_REASONS,
+  MONEY_SCALE,
+  type CostProvisionalReason,
+  type CostSubtotal,
+  type CostSubtotalInput,
+} from './cost';
+export {
   computeRawRequiredQty,
   toRequiredQtyString,
   REQUIRED_QTY_SCALE,

@@ -452,11 +452,52 @@ describe('T07-3 신규 오류코드 5종의 HTTP 상태 (D-29)', () => {
     expect(httpStatusForCode(ERROR_CODES.BOM_NOT_FOUND)).toBe(404);
   });
 
-  it('✏️ `BOM_INVALID_TRANSITION` 은 T07-5 가 활성화했다 — cost 코드는 아직 없다', () => {
-    // T07-5 workflow endpoint 가 생기면서 던질 곳이 생겼다 (D-29 15종 중 하나).
+  it('✏️ `BOM_INVALID_TRANSITION`(T07-5) · `BOM_SUPPLIER_SELECTION_CONFLICT`(T07-7A) 는 D-29 카탈로그의 활성화다', () => {
+    // T07-5 workflow endpoint 가 생기면서 던질 곳이 생겼다 (D-29 카탈로그 중 하나).
     expect(ERROR_CODES).toHaveProperty('BOM_INVALID_TRANSITION');
-    // T07-7A 소관은 여전히 없다.
-    expect(ERROR_CODES).not.toHaveProperty('BOM_SUPPLIER_SELECTION_CONFLICT');
+    // ✏️ T07-7A 가 D-23 대표 SupplierSku 2건 손상을 던지면서 활성화했다.
+    //    ⛔ **새 code 를 만든 것이 아니다** — D-29 가 이미 카탈로그에 둔 코드다.
+    expect(ERROR_CODES).toHaveProperty('BOM_SUPPLIER_SELECTION_CONFLICT');
+    expect(httpStatusForCode(ERROR_CODES.BOM_SUPPLIER_SELECTION_CONFLICT)).toBe(409);
+  });
+
+  /**
+   * ⛔ **D-29 카탈로그 밖의 `BOM_*` code 를 발명하지 않는다.**
+   *
+   * ⚠️ 숫자 주의 — D-29 산문은 "기존 3종 + 신규 12종"(=15)이라고 적었지만
+   *    **같은 절의 표는 신규를 15개 열거**한다(마지막 행이
+   *    `BOM_PARENT_NOT_ELIGIBLE` / `BOM_COMPONENT_NOT_ELIGIBLE` 두 개를 한 행에
+   *    담는다). 즉 **표가 정본이고 실제 카탈로그는 3 + 15 = 18종**이며 산문의
+   *    "12"가 표를 잘못 센 것이다. 아래 목록은 **D-29 표를 그대로 옮긴 18종**이다.
+   */
+  it('⛔ D-29 의 `BOM_*` code 집합은 카탈로그 18종 그대로다 (표 기준)', () => {
+    // 카탈로그 고정 — 새 task 가 code 를 임의로 추가하면 여기서 깨진다.
+    expect(
+      Object.keys(ERROR_CODES)
+        .filter((key) => key.startsWith('BOM_'))
+        .sort(),
+    ).toEqual(
+      [
+        'BOM_ACTIVE_IMMUTABLE',
+        'BOM_COMPONENT_NOT_ELIGIBLE',
+        'BOM_CYCLE_DETECTED',
+        'BOM_EFFECTIVE_CONFLICT',
+        'BOM_INVALID_TRANSITION',
+        'BOM_LINE_DUPLICATE',
+        'BOM_MAX_LEVEL_EXCEEDED',
+        'BOM_NOT_EDITABLE',
+        'BOM_NOT_FOUND',
+        'BOM_PARENT_NOT_ELIGIBLE',
+        'BOM_PERIOD_OVERLAP',
+        'BOM_QTY_INVALID',
+        'BOM_QTY_STATUS_MISMATCH',
+        'BOM_QTY_UNCONFIRMED',
+        'BOM_SELF_COMPONENT',
+        'BOM_SUPPLIER_SELECTION_CONFLICT',
+        'BOM_UOM_MISMATCH',
+        'BOM_VERSION_DUPLICATE',
+      ].sort(),
+    );
   });
 });
 

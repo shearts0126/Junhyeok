@@ -14,6 +14,16 @@ import { DomainError, ERROR_CODES } from '@/shared/errors';
 export type BomReadClient = Pick<PrismaClient, 'bomHeader' | 'bomLine' | 'sku' | 'supplier'>;
 export type BomDbClient = BomReadClient | TransactionClient;
 
+/**
+ * BOM **원가** read port (T07-7A).
+ *
+ * 원가는 BOM 사실 위에 `SupplierSku`·`SupplierSkuPrice` 선택을 얹으므로
+ * 두 델리게이트가 더 필요하다. ⛔ `BomReadClient` 를 넓히지 않는다 — T07-3·T07-6
+ * 의 read 경로는 supplier 테이블을 건드리지 않으며 그 경계를 유지한다.
+ */
+export type BomCostReadClient = BomReadClient &
+  Pick<PrismaClient, 'supplierSku' | 'supplierSkuPrice'>;
+
 export function bomNotFound(id: string): DomainError {
   return new DomainError(ERROR_CODES.BOM_NOT_FOUND, {
     message: `BOM '${id}' 이(가) 없습니다.`,
