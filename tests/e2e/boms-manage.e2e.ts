@@ -362,7 +362,7 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
     await dialog.getByRole('button', { name: '검색' }).click();
     await dialog.getByLabel('구성품 SKU 선택').selectOption({ index: 0 });
 
-    await dialog.getByLabel('소요량').fill('5');
+    await dialog.getByLabel('소요량', { exact: true }).fill('5');
     await dialog.getByLabel('소요량 상태').selectOption('CONFIRMED');
     await dialog.getByRole('button', { name: '저장' }).click();
 
@@ -375,11 +375,12 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
     await page.getByTestId('line-2').getByLabel('2 수정').click();
 
     const dialog = page.getByRole('dialog', { name: '구성품 수정' });
-    await dialog.getByLabel('소요량').fill('7');
+    await dialog.getByLabel('소요량', { exact: true }).fill('7');
     await dialog.getByLabel('로스율').fill('0.1');
     await dialog.getByRole('button', { name: '저장' }).click();
 
-    await expect(page.getByTestId('line-2').locator('td').nth(3)).toHaveValue('7');
+    // DRAFT 는 소요량 칸이 입력이므로 `td` 가 아니라 입력값을 본다.
+    await expect(page.getByTestId('line-2').getByLabel('2 소요량')).toHaveValue('7');
     // 실제 필요량 = 7 × 1.1 = 7.7
     await expect(page.getByTestId('line-2').locator('td').nth(7)).toHaveText('7.7');
   });

@@ -4369,6 +4369,93 @@ hasBomUsage(skuId) =
   OR EXISTS (SELECT 1 FROM bom_line   WHERE component_sku_id = :skuId)
 ```
 
+### ★ T07-8 build remediation — client/server Decimal runtime boundary
+
+T07-8 production 구현 중 **실제 build 실패로 확인된** 경계 문제를 확정한다.
+앞선 `★ T07-8 BOM UI read-model gap closure`(U8-11·U8-12)와
+`★ T07-8 list reference-cost fault isolation remediation` 은 **전부 그대로
+유효**하다 — 이 절은 그 계산을 브라우저에서 **어떤 런타임으로** 수행하는지만
+정한다.
+
+#### 발견된 사실
+
+`U8-11`(비중)·`U8-12`(실제 필요량)은 client 계산이다. 그 helper 가
+`@/shared/decimal` 을 import 하자 `next build` 가 다음으로 실패했다.
+
+```
+Failed to write app endpoint /master/boms/[id]/page
+the chunking context does not support external modules (request: node:module)
+```
+
+의존 사슬:
+
+```
+bom-detail-client.tsx ('use client')
+  → bom-detail-view.ts → @/shared/decimal
+    → shared/decimal/context.ts
+      → @/generated/prisma/client   (값 import)
+        → node:module               ← 브라우저 번들 불가
+```
+
+client 에서 `@/shared/decimal` 을 쓴 것은 이 파일이 **프로젝트 최초**였다.
+기존 UI 는 Decimal 을 전부 불투명 문자열로만 다뤘기에 드러나지 않았다.
+
+#### 결정 — explicit browser-safe Decimal adapter
+
+Prisma 는 프론트엔드용 `@/generated/prisma/browser` 를 **공식 생성**하며 이
+엔트리는 server-only 의존성 없이 같은 `Prisma.Decimal` 을 제공한다. Next.js 도
+이런 상황에서 bundler alias 보다 **import 그래프 자체의 분리**를 권장한다.
+
+| 계층 | 모듈 | Prisma 엔트리 |
+|---|---|---|
+| 설정(공유) | `shared/decimal/config.ts` | **없음** (순수 상수) |
+| 산술(공유) | `shared/decimal/helpers.ts` | `import type` 뿐 (컴파일 시 소거) |
+| server 컨텍스트 | `shared/decimal/context.ts` | `@/generated/prisma/client` |
+| server 바인딩 | `shared/decimal/decimal.ts` → barrel `index.ts` | (위를 경유) |
+| browser 컨텍스트 | `shared/decimal/browser-context.ts` | `@/generated/prisma/browser` |
+| browser 바인딩 | `shared/decimal/browser.ts` | (위를 경유) |
+
+**산술 로직은 한 벌뿐이다.** `helpers.ts` 가 생성자를 주입받는 factory 이고,
+두 바인딩이 각자의 생성자를 넣어 묶는다. 로직을 복제하지 않으므로 두 런타임이
+갈라질 여지가 구조적으로 없다.
+
+#### "단일 Decimal context" 의 최종 의미
+
+기존 원칙을 다음으로 좁혀 명확히 한다.
+
+- **금지** — 같은 runtime 안에서 서로 다른 precision/rounding 을 가진 context 를
+  여럿 만드는 것.
+- **필수** — server runtime 에 context 1개, browser runtime 에 context 1개.
+  둘 다 `config.ts` 의 **동일한 설정**을 쓴다.
+- **cross-runtime 불변식은 생성자 identity 가 아니라 산술·출력 동일성이다.**
+  두 런타임은 별개 프로세스이므로 `instanceof` 를 서로 비교하지 않는다.
+- **DB 전달 가능 타입 불변식은 server 전용이다.** `instanceof Prisma.Decimal`
+  guard(`decimal.test.ts`)는 그대로 유지되며 이번 변경으로 약화되지 않았다.
+  ⛔ browser Decimal 값을 Prisma write/read 경계로 넘기지 않는다.
+
+#### ⚠️ `Decimal.clone()` 은 인자를 변형한다
+
+decimal.js 의 `clone(obj)` 는 빠진 속성을 **넘겨받은 객체에 직접 채운다**
+(`if (!obj.hasOwnProperty(p)) obj[p] = this[p]`). 공유 설정 상수를 그대로 넘기면
+`minE`·`maxE`·`crypto` 가 덧씌워지고 **먼저 clone 한 런타임의 기본값이 다른
+런타임에게 전달된다.** 그래서 두 컨텍스트 모두 얕은 복사본을 넘기며
+(`clone({ ...DECIMAL_CONTEXT_CONFIG })`), 상수는 `Object.freeze` 로 잠가 규칙을
+어기면 즉시 터지게 했다. 회귀 테스트가 이 사실을 고정한다.
+
+#### ⛔ next.config alias 를 쓰지 않았다
+
+`turbopack.resolveAlias` 는 기술적으로 가능한 fallback 이지만, 전역 bundler
+설정으로 import 경계를 숨기는 대신 **코드에서 경계를 드러내는** 쪽을 택했다.
+`next.config.ts` diff 는 **0** 이며 parity 테스트가 그것을 검증한다.
+
+#### acceptance
+
+- `pnpm build` PASS — `/master/boms/[id]` 포함.
+- `decimal.test.ts` 80건 **전부 그대로 green** (`instanceof` guard 포함).
+- `decimal-runtime-parity.test.ts` — 설정 parity · 산술 parity
+  (`0.231` · `0.033333` · `33.33%` · HALF_UP 경계 · precision 60 · trailing zero)
+  · browser barrel 노출 범위 · import 그래프 가드.
+
 `archive-eligibility.ts:26` 이 **"상위 SKU(parent)든 구성품(component)이든"** 으로
 범위를 이미 확정했다. `@@index([componentSkuId])` 가 역전개용으로 설계돼 있어
 두 번째 조건도 인덱스를 탄다. ⛔ T07 에서 `sku.archive` API 를 만들지 않는다.

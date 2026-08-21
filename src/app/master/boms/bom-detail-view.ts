@@ -10,7 +10,10 @@ import {
   ROUNDING,
   ZERO,
   type Decimal,
-} from '@/shared/decimal';
+  // ★ **browser 바인딩이다** (T07-8). `@/shared/decimal` server barrel 을 쓰면
+  //   `@/generated/prisma/client` → `node:module` 이 딸려 와 클라이언트 번들이
+  //   만들어지지 않는다. 산술 설정·로직은 두 바인딩이 공유하므로 결과는 같다.
+} from '@/shared/decimal/browser';
 
 /**
  * `/master/boms/[id]` 상세 표시 helper (T07-8).
