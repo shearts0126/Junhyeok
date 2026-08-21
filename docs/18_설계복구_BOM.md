@@ -3758,6 +3758,13 @@ effective BOM conflict · SupplierSku conflict · price chain conflict · 순환
 maxLevel 초과를 목록이라는 이유로 `0원`·`null`·provisional 로 **숨기지 않는다.**
 기존 error semantics 그대로다. ⛔ "목록 전용 가짜 원가" 를 만들지 않는다.
 
+> ⚠️ **CLARIFIED — "기존 error semantics 그대로" 의 범위는
+> `★ T07-8 list reference-cost fault isolation remediation` 이 정본이다.**
+> 위 문단의 의도(**`0`·`null`·provisional 로 숨기지 않는다**)는 **그대로 유지**
+> 되지만, 그것이 *"한 root 의 실패가 목록 HTTP 전체를 실패시킨다"* 를 뜻하지는
+> 않는다. 단건 `/cost` 는 계속 strict 하고, 목록은 **row-scoped
+> `UNAVAILABLE` + `errorCode`** 로 **더 정확히** 드러낸다.
+
 #### U8-10 — `referenceCost` public 표현
 
 ```
@@ -3768,6 +3775,12 @@ referenceCost: {
   isProvisional: boolean
 }
 ```
+
+> ⚠️ **SUPERSEDED — 위 shape 은 `★ T07-8 list reference-cost fault isolation
+> remediation` 이 `status` discriminated union 으로 좁게 대체한다.** 위 필드
+> 집합은 그대로 **`status: 'AVAILABLE'`** 분기의 내용이 되고, 원가 평가 자체가
+> 무결성 오류로 실패한 root 를 위해 **`status: 'UNAVAILABLE'` + `errorCode`**
+> 분기가 추가된다. KRW/VAT/`+`/`잠정` 규칙은 하나도 바뀌지 않는다.
 
 ⛔ 새 global total 없음 · ⛔ `totalCost` 없음. provisional 사유 detail 은 목록에
 넣지 않는다 — 상세 원가 탭의 `CostResult` 가 담당한다.
@@ -4060,6 +4073,276 @@ API/UI · 창고 이름 lookup · Attachment · Posting/WO · FX · landed cost 
 
 ★ 특히 **batch reference cost 를 위해 cache table·schema 를 만들지 않는다** —
 이번 계약은 전부 **read-time 계산**이다.
+
+### ★ T07-8 list reference-cost fault isolation remediation
+
+T07-8 production 구현 중 **실제 회귀로 확인된** 설계 부족을 보완한다. 앞선
+`★ T07-8 BOM UI read-model gap closure`(U8-1 ~ U8-19)는 유지하고, 그중
+**`referenceCost` 의 실패 격리 정책만** 좁게 supersede 한다.
+
+#### R8-1 — 무엇이 드러났나
+
+`GET /api/boms` 가 `referenceCost` 를 eager multi-root 로 계산하면, 페이지 안의
+**어느 한 root** 에서 순환·maxLevel·유효 BOM 충돌·대표 충돌·가격 chain 충돌 등이
+발생했을 때 단건 semantics 를 그대로 throw 하는 순간 **목록 전체가 409/422** 가
+된다.
+
+**실측 증거 (T07-3 merged DB fixture).** 제약을 끄고 만든 손상 데이터가 아니라
+평범한 `create` 로 만든 **개별적으로 완전히 합법적인 ACTIVE BOM 3건**이다.
+
+```
+A v1 ACTIVE [2020-01-01, 2027-01-01) → B
+A v2 ACTIVE [2027-01-01, ∞)          → D
+C    ACTIVE                          → A
+B    ACTIVE                          → C
+```
+
+`A` 의 두 버전은 기간이 겹치지 않아 EXCLUDE 제약을 통과한다. 그런데 **오늘 기준
+effective graph** 는 `A v1 → B → C → A` 로 **순환**이다.
+
+★ 이것은 test 인공물이 아니라 **운영에서 실제로 도달 가능한 상태**다 — 순환 가드는
+**write 시점 `asOf`** 로 검사하므로 다른 `asOf` 에서 나중에 순환이 드러나는 것을
+막지 못한다. D-13 이 `effectiveFrom` 변경 시 **재검사**를 요구하고 T07-5 activate
+가 `T` override 로 재검사하는 이유가 정확히 이것이다.
+
+이 상태에서 목록이 422 가 되면 **BOM 관리 화면이 아예 열리지 않아** 사용자가 문제
+BOM 으로 찾아가 고칠 수단이 사라진다. 진단해야 할 화면이 진단 대상 때문에 죽는다.
+
+#### R8-2 — 최종 원칙: 단건은 strict, 목록은 resilient
+
+| endpoint | 정책 |
+|---|---|
+| `GET /api/boms/{id}/cost` | **STRICT** — T07-7B 그대로. 무결성 오류는 **409/422**. ⛔ 부분 `CostResult` 금지 |
+| `GET /api/boms` | **RESILIENT read-model** — 한 root 의 원가 실패가 **다른 root 의 목록 조회를 실패시키지 않는다**. HTTP **200** |
+
+★ 두 endpoint 는 답하는 질문이 다르다 — 단건은 *"이 BOM 의 원가가 얼마인가"*, 목록은
+*"관리할 BOM 이 무엇이 있는가"* 다.
+
+#### R8-3 — `referenceCost` 최종 union
+
+```ts
+type BomListReferenceCost =
+  | {
+      status: 'AVAILABLE';
+      asOf: string;
+      krwSubtotals: Array<{ vatIncluded: boolean; amount: string }>;
+      hasOtherCurrency: boolean;
+      isProvisional: boolean;
+    }
+  | {
+      status: 'UNAVAILABLE';
+      asOf: string;
+      errorCode: string;   // ★ 아래 whitelist 중 하나
+    };
+```
+
+⛔ `referenceCost` 자체를 `null` 로 만들어 의미를 잃지 않는다.
+
+#### R8-4 — `AVAILABLE` 의 의미
+
+*"원가가 완전히 확정됐다"* 가 **아니다.** **원가 평가가 무결성 오류 없이
+완료됐다**는 뜻이다. 따라서 `AVAILABLE` 안에서도 `isProvisional = true` 가 정상적
+으로 가능하다 — `QTY_UNCONFIRMED` · `NO_PRIMARY_SUPPLIER` · `NO_EFFECTIVE_PRICE` 는
+기존대로 **provisional** 이고, known partial subtotal 도 `AVAILABLE` 이다.
+
+#### R8-5 — `UNAVAILABLE` 의 의미
+
+현재 데이터 구조로는 **신뢰 가능한 원가 계산 자체가 불가능**하다는 뜻이다.
+
+```
+provisional   =  값은 나왔지만 일부 정보가 미확정
+UNAVAILABLE   =  계산 자체가 성립하지 않음
+```
+
+⛔ `UNAVAILABLE` 을 `isProvisional = true` 로 표현 금지 — **다른 상태**다.
+⛔ `krwSubtotals: []` 를 "원가 없음" 처럼 쓰기 금지 · ⛔ `amount = 0` fallback 금지
+· ⛔ `null` 만 반환 금지. **`errorCode` 를 반드시 명시**한다.
+
+#### R8-6 — 격리 대상 error code **whitelist** (코드 실측)
+
+`costBom` traversal 경로에서 실제로 throw 될 수 있는 per-root 무결성 오류를
+production 코드에서 전수 조사했다.
+
+| # | code | HTTP | throw 지점 |
+|---:|---|:-:|---|
+| 1 | `BOM_CYCLE_DETECTED` | 422 | `bomCycleDetected` — 경로 순환 |
+| 2 | `BOM_MAX_LEVEL_EXCEEDED` | 422 | `bomMaxLevelExceeded` — 깊이 초과 |
+| 3 | `BOM_EFFECTIVE_CONFLICT` | 409 | `resolveEffectiveBoms` — 유효 ACTIVE BOM 2건+ |
+| 4 | `BOM_SUPPLIER_SELECTION_CONFLICT` | 409 | `resolvePrimarySupplierSkus` — 대표 2건+ |
+| 5 | `SUPPLIER_PRICE_CHAIN_CONFLICT` | 409 | `resolveEffectiveSupplierPrices` — 가격 chain 2건+ |
+| 6 | **`BOM_QTY_STATUS_MISMATCH`** | 422 | `assertQuantityConsistency` — D-10 정합 위반 |
+| 7 | **`BOM_QTY_INVALID`** | 422 | `assertQuantityConsistency`(`quantityPer <= 0`) · `computeRawRequiredQty`(`outputQty <= 0`) |
+
+★ **6·7 은 이번 실측으로 추가 발견한 것**이다. 둘 다 DB 손상 계열이므로 격리
+대상에 포함한다. ⛔ **새 error code 를 발명하지 않는다** — 위 7종은 전부 기존 코드다.
+
+#### R8-7 — ⛔ 격리하면 **안 되는** 것
+
+DB 연결 실패 · 예상 못 한 Prisma 오류 · 프로그래밍 버그 · unknown exception ·
+인증 실패 · 인가 실패 · 잘못된 목록 query · audit batch 실패 · base 목록 query
+실패 · 직렬화/시스템 실패.
+
+이런 request·infrastructure 오류는 **`GET /api/boms` 전체를 기존대로 실패**시킨다.
+
+```
+⛔  catch { → UNAVAILABLE }        ← catch-all 금지
+✅  위 7종 whitelist 에 해당할 때만 격리
+```
+
+#### R8-8 — 공유 dependency 실패의 전파 범위
+
+batch traversal 에서 여러 root 가 같은 dependency 를 공유할 수 있다.
+
+```
+Root A → X        X 의 가격 chain 이 충돌
+Root B → X
+Root C → Y
+```
+
+`A`·`B` 는 **둘 다** `UNAVAILABLE`(`SUPPLIER_PRICE_CHAIN_CONFLICT`), `C` 는 영향
+없음. 즉 fault scope 는 *"쿼리 1건"* 이 아니라 **"그 실패 dependency 에 의존하는
+root 들"** 이다.
+
+#### R8-9 — 순환·maxLevel 은 root/path 별이다
+
+`Root A` 의 graph 에서 순환이면 `A` 만 `UNAVAILABLE` 이다. `Root B` 가 그 순환
+graph 를 **실제로 traversal 하지 않으면** `B` 는 정상이다.
+
+⛔ 전역 batch traversal 을 쓴다는 이유로 한 root 의 recursion-path 실패를 전
+root 오류로 승격하지 않는다.
+
+#### R8-10 — batch 성능은 유지된다
+
+```
+⛔  try { for (root) costBom(root) }        ← N+1 로 회귀
+⛔  UNAVAILABLE root 만 개별 /cost 재호출
+```
+
+multi-root frontier batching 을 유지하고, batch 결과를 **root dependency/path
+metadata 와 함께 fan-out** 해 root 별 outcome 을 만든다. 쿼리 수는 root 수에 선형
+비례하지 않는다(U8-8 그대로).
+
+한 root 가 `UNAVAILABLE` 로 확정되면 그 root 만 이후 계산에서 빼도 된다. 단 같은
+node·SKU 를 공유하는 healthy root 가 있으므로 **단순 전역 visited/drop 으로 다른
+root 까지 제거하지 않는다.**
+
+#### R8-11 — 단건 `/cost` 계약은 **불변**
+
+`GET /api/boms/{id}/cost` 는 **어떤 변경도 없다.** 순환 422 · maxLevel 422 ·
+유효 BOM 충돌 409 · 대표 충돌 409 · 가격 충돌 409 그대로다.
+
+⛔ `CostResult` 에 `status`·`errorCode`·`unavailable` 필드를 **추가하지 않는다** —
+`BomListReferenceCost` 는 **목록 전용 read-model** 이다.
+
+#### R8-12 — 목록 HTTP 계약
+
+base 목록 query 가 성공하면 **HTTP 200** 이다.
+
+| 상황 | 응답 |
+|---|---|
+| 50행 중 49 `AVAILABLE` · 1 `UNAVAILABLE` | **200 + 50행** |
+| 50행 **전부** `UNAVAILABLE` | **200 + 50행** |
+
+★ 한 행의 원가 실패 때문에 목록의 pagination·filter 결과를 잃지 않는다.
+
+#### R8-13 — UI 계약
+
+`AVAILABLE` 은 U8-10 규칙 그대로(KRW VAT bucket · 타 통화 `+` · `잠정` 배지).
+
+`UNAVAILABLE` 은 기준원가 cell 에 **`계산 불가`** 로 명확히 표시한다.
+
+```
+⛔  —        ⛔  0원        ⛔  잠정
+```
+
+기존 Error/Badge styling 을 재사용한다. ⛔ 새 UI library **0**.
+
+**error label mapping** (static)
+
+| errorCode | label |
+|---|---|
+| `BOM_CYCLE_DETECTED` | 순환 구조 |
+| `BOM_MAX_LEVEL_EXCEEDED` | 전개 깊이 초과 |
+| `BOM_EFFECTIVE_CONFLICT` | 유효 BOM 충돌 |
+| `BOM_SUPPLIER_SELECTION_CONFLICT` | 대표 공급조건 충돌 |
+| `SUPPLIER_PRICE_CHAIN_CONFLICT` | 가격이력 충돌 |
+| `BOM_QTY_STATUS_MISMATCH` | 소요량 상태 불일치 |
+| `BOM_QTY_INVALID` | 소요량 값 오류 |
+
+technical `errorCode` 는 tooltip·보조 텍스트로 유지할 수 있다. API 가 새 message
+를 만들 필요는 없다.
+
+#### R8-14 — 상세로의 이동은 항상 가능하다
+
+`referenceCost` 가 `UNAVAILABLE` 이어도 row·상세 navigation 은 정상이다.
+사용자는 `/master/boms/{id}` 로 이동하고, 원가 탭이 `GET /api/boms/{id}/cost` 를
+실행하면 **기존 strict 오류가 `ErrorBanner` 로** 정확히 드러난다.
+
+```
+목록   →  문제 발견 · 진입 가능
+상세   →  strict failure 확인
+```
+
+#### R8-15 — T07-3 회귀 보존
+
+위 R8-1 fixture 에서 기존 `GET /api/boms` 는 **200** 이었고, T07-8 이후에도
+**200** 이다. 해당 `A` row 만 `referenceCost.status = 'UNAVAILABLE'` ·
+`errorCode = 'BOM_CYCLE_DETECTED'` 이고 나머지 정상 row 는 `AVAILABLE` 이다.
+
+★ 이 fixture 는 **T07-8 DB acceptance 에 반드시 남긴다** — "특정 `asOf` 에
+합법적으로 저장된 BOM 들이 현재 시점 graph 에서는 순환할 수 있고, 목록 UI 는 그것을
+견뎌야 한다" 를 증명하는 회귀다.
+
+#### R8-16 — ⛔ 조용한 은폐가 아니다
+
+*"목록이 200"* 이라는 이유로 오류를 숨겼다고 해석하지 않는다. 무결성 오류는
+**명시적인 `UNAVAILABLE` + `errorCode`** 로 드러난다. 따라서 다음은 전부 금지다.
+
+```
+⛔ null   ⛔ 0   ⛔ 빈 subtotal   ⛔ provisional   ⛔ catch-and-ignore
+```
+
+#### R8-17 — 바뀌지 않는 것
+
+`lastModifiedAt`(U8-1) · 삭제 라인 귀속(U8-2) · audit batch(U8-4) ·
+history endpoint(U8-13) · `requestedQty = "1"`(U8-6) ·
+`asOf = effectiveOn ?? 업무일자`(U8-7) · exact 7 filter · KRW/VAT 분리 ·
+타 통화 `+` · FX 0 · VAT normalize 0 · 단일 총액 0 — **하나도 바뀌지 않는다.**
+
+#### R8-18 — 필수 예시 CASE J ~ M
+
+**CASE J — 한 root 만 손상**
+
+```
+A: 순환    B·C: 정상
+→ GET /api/boms = 200, 3행 전부 반환
+→ A.referenceCost = { status:'UNAVAILABLE', asOf:'…', errorCode:'BOM_CYCLE_DETECTED' }
+→ B·C = AVAILABLE
+```
+
+**CASE K — 공유 dependency 실패**
+
+```
+A → X   B → X   C → Y        X 의 가격 chain 충돌
+→ A·B = UNAVAILABLE (SUPPLIER_PRICE_CHAIN_CONFLICT)
+→ C   = AVAILABLE
+```
+
+**CASE L — provisional 은 UNAVAILABLE 이 아니다**
+
+```
+terminal X 에 유효 가격 없음. chain 손상은 없음.
+→ status = 'AVAILABLE' · isProvisional = true
+⛔ UNAVAILABLE 아님
+```
+
+**CASE M — 예상 못 한 DB 오류**
+
+```
+reference-cost batch 쿼리 자체가 infrastructure 실패
+→ GET /api/boms 는 기존 error contract 대로 실패
+⛔ row-level UNAVAILABLE 로 삼키지 않는다
+```
 
 ### D-32 — boundaries / tests
 
