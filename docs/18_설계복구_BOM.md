@@ -3573,8 +3573,8 @@ route 는 정확히 **2개**. ⛔ `/new` route 없음(생성은 dialog — T06-4
 | 항목 | 확정 |
 |---|---|
 | 검색·필터 | `q`(상위 SKU 코드/상품명) · `status` · `bomType` · `parentSkuId` · `effectiveOn` · **`hasUnknownQty`** · `page` |
-| 목록 열 | 상태 / 상위 SKU / 상품명 / 유형 / 버전 / 적용 시작일 / 적용 종료일 / 구성품 수 / **기준원가** / **미확정 항목 수** / 승인자 / 수정일 |
-| 기준원가 | KRW subtotal 만 표시, 다른 통화가 있으면 `+` 표식 (D-26). 미확정이면 `잠정` 배지 |
+| 목록 열 | 상태 / 상위 SKU / 상품명 / 유형 / 버전 / 적용 시작일 / 적용 종료일 / 구성품 수 / **기준원가** / **미확정 항목 수** / 승인자 / 수정일 — **12열 유지**. ★ `승인자` 는 `approvedBy` **UUID 원문**(SKU 상세 선례), `수정일` 은 schema 컬럼이 아니라 audit 파생 `lastModifiedAt` 이다 (**U8-1**) |
+| 기준원가 | KRW subtotal 만 표시, 다른 통화가 있으면 `+` 표식 (D-26). 미확정이면 `잠정` 배지. ★ 수량·기준일·batch·`(KRW, vatIncluded)` 분리 표시는 `★ T07-8 BOM UI read-model gap closure` **U8-6 ~ U8-10** 이 정본 (**U-4 CLOSED**) |
 | 버튼 | **신규**(dialog) · 복사 · 승인 요청 · 활성화 · 사용종료 |
 | 유예 | **엑셀 업로드**(PENDING #7) · **전개/원가**(목록에서는 제외 — 상세 탭에서 한다) |
 | 페이지 크기 | 서버 고정 **50** |
@@ -3588,13 +3588,13 @@ route 는 정확히 **2개**. ⛔ `/new` route 없음(생성은 dialog — T06-4
 |---|---|
 | 헤더 | 상위 SKU · 유형 · 버전 · 상태 · 기준수량·단위 · 적용기간 · 조립처 · 입고처 · 전체 로스율 · 변경사유 |
 | 입고처·투입창고 | **UUID 를 그대로 표시**하거나 미표시. ⛔ 창고 이름 lookup 없음 (T08 미착수, D-32) |
-| 라인 그리드 | 순번 / 구성품 SKU / 상품명 / 소요량 / 소요량 상태 / 단위 / 로스율 / **실제 필요량** / 구성품 유형 / 공급유형 / 대체그룹 / 필수 / 투입창고 / 입수량 / 상세사양 |
+| 라인 그리드 | 순번 / 구성품 SKU / 상품명 / 소요량 / 소요량 상태 / 단위 / 로스율 / **실제 필요량** / 구성품 유형 / 공급유형 / 대체그룹 / 필수 / 투입창고 / 입수량 / 상세사양 — **15열**(⛔ `비고` 는 이 목록에 없다). ★ `실제 필요량` 은 API 필드가 아니라 `Q = outputQty` 로 D-19 를 적용한 **client 계산값**이다 (**U8-12**) |
 | **소요량 확정 UX** | ① `UNKNOWN` 행 빨간 배경 ② `packQuantity` 있으면 `1/입수량` **추천값(회색)** ③ 추천값 수락 버튼 ④ 일괄 확정 모드 ⑤ 진행률 바 `확정 N / 전체 M` |
 | **활성 BOM** | 전체 읽기전용 + 배너 *"활성 BOM은 수정할 수 없습니다. 새 버전을 생성하세요."* + `버전 생성` 버튼 |
 | 전개 탭 | `GET …/explode` 트리. `maxLevel` 선택. 순환 시 ErrorBanner |
-| 원가 탭 | **기준일 선택**(기본 오늘) → 구성품별 단가·소요량·라인원가·비중·미확정. **통화·VAT 별 subtotal**. 미확정 시 `잠정` 배지 |
-| 변경이력 탭 | `BomHeader`·`BomLine` audit 타임라인 |
-| 상태 표시 | D-7 에 따라 **status 와 적용기간을 분리 표시**한다. `ACTIVE` 이면서 기간이 종료된 버전은 **"적용기간 종료"** 로 보여 현행 버전과 구분한다 |
+| 원가 탭 | **기준일 선택**(기본 오늘) → 구성품별 단가·소요량·라인원가·비중·미확정. **통화·VAT 별 subtotal**. 미확정 시 `잠정` 배지. ★ **`비중` 의 분모는 같은 `(currency, vatIncluded)` subtotal** 이다 — `totalCost` 도 FX 도 만들지 않는다 (**U8-11**) |
+| 변경이력 탭 | `BomHeader`·`BomLine` audit 타임라인. ★ **삭제된 라인까지 포함**하며 귀속은 audit snapshot 의 `bomHeaderId` 로 판정한다. endpoint 는 `GET /api/boms/{id}/history?page=` (**U8-2·U8-13**) |
+| 상태 표시 | D-7 에 따라 **status 와 적용기간을 분리 표시**한다. `ACTIVE` 이면서 기간이 종료된 버전은 **"적용기간 종료"** 로 보여 현행 버전과 구분한다. ★ 이것이 **유일한 파생 label** 이다 — 미래 `ACTIVE`(`effectiveFrom > 오늘`)에 새 badge 를 만들지 않는다 (**U8-15**) |
 | 권한별 노출 | mutation 버튼은 permission 없으면 **렌더하지 않는다**(disabled 아님) |
 | loading / empty / error | 기존 `ErrorBanner`·`readApiError` 재사용. 403 은 빈 목록으로 위장하지 않는다 |
 
@@ -3603,6 +3603,463 @@ T06-4 의 `Dialog`/`DialogActions`/`TextInput` 패턴을 재사용한다.
 
 ★ **`잠정` 배지와 기준원가 열은 `T07-7A` 이후에야 값이 있다.** T07-8 이 T07-7
 보다 뒤에 오도록 순서를 잡은 이유다(D-38).
+
+> ★ **read-model 계약(수정일 · 기준원가 · 비중 · 실제 필요량 · 변경이력)의
+> 정본은 아래 `★ T07-8 BOM UI read-model gap closure`(U8-1 ~ U8-11)다.**
+> 위 표의 **12열 · 7필터 · 5버튼 · 15열 · 5단계 UX · 4탭 · 권한 렌더 ·
+> "적용기간 종료" · manage-link 는 하나도 바뀌지 않는다.**
+
+### ★ T07-8 BOM UI read-model gap closure
+
+T07-8 PRE-FLIGHT 가 발견한 **3개 blocker + 4개 경미 미결**을 확정한다. D-31 의
+UI 구조 계약(열·필터·버튼·탭·UX 단계)은 **하나도 바꾸지 않고**, 그 열들이
+**어디서 값을 얻는가**만 정한다.
+
+#### 무엇이 공백이었나
+
+| # | 공백 | 성격 |
+|---|---|---|
+| **U8-1** | 목록 `수정일` 의 공급원 — `BomHeader` 에 `updatedAt` 컬럼이 **없다** | 🔴 신규 발견 |
+| **U8-2~U8-5** | 목록 `기준원가` 의 수량·기준일·batch·표현 (**U-4**) | 🔴 기존 미해결 |
+| **U8-6** | 원가 탭 `비중` 의 **분모** — `totalCost` 도 FX 도 없다 | 🔴 |
+| **U8-7** | 라인 `실제 필요량` 의 산출 주체 | ⚠️ |
+| **U8-8·U8-9** | 변경이력의 **삭제된 라인** 귀속 · endpoint | ⚠️ |
+| **U8-10** | 생성 dialog 의 상위 SKU 선택 UX | ⚠️ |
+| **U8-11** | 미래 `ACTIVE` 표시 | ⚠️ |
+
+---
+
+#### U8-1 — `수정일` 은 schema 컬럼이 아니라 **audit 파생값**이다
+
+⛔ **`BomHeader.updatedAt` 을 추가하지 않는다.** Prisma schema 변경 **0** ·
+migration **0**.
+
+목록의 `수정일` 은 read-model 파생 필드 **`lastModifiedAt`** 이며, **그 BOM 에
+귀속되는 `AuditLog` 중 가장 최근 `occurredAt`** 이다.
+
+```
+lastModifiedAt = MAX(occurredAt) WHERE
+    (entityType = 'BomHeader' AND entityId = :bomId)
+ OR (entityType = 'BomLine'
+     AND (beforeValue->>'bomHeaderId' = :bomId
+       OR afterValue->>'bomHeaderId'  = :bomId))
+```
+
+이 정의가 header 수정 · workflow 전이 · 라인 CREATE/UPDATE/DELETE · clone 으로
+생긴 라인을 **전부** 반영한다. `bulk-confirm-qty` 는 D-16 대로 `BomHeader`
+`UPDATE` 요약 audit **1건**만 남기므로(383행이어도 383건이 아니다) 그
+`occurredAt` 이 그대로 반영된다.
+
+**근거는 AuditLog 가 이미 모든 실제 변경의 정본**이라는 점이다. 컬럼을 새로
+만들면 audit 과 컬럼이라는 **두 개의 진실**이 생긴다.
+
+#### U8-2 — ⛔ 삭제된 `BomLine` 을 잃지 않는다
+
+```
+⛔  entityId IN (현재 BomLine id 목록)          ← 삭제된 라인 이력이 사라진다
+✅  beforeValue.bomHeaderId / afterValue.bomHeaderId 로 귀속 판정
+```
+
+현재 `BomLine` 테이블 membership 에 의존하면 **DELETE 된 라인의 CREATE·UPDATE·
+DELETE 이력이 통째로 사라진다.** SKU 선례(`SkuBarcode`)는 물리삭제가 없어 이
+문제를 겪지 않았지만 `BomLine` 은 `deleteBomLine` 이 실제로 지운다.
+
+**★ 구현 가능성 실측 (docs 확정 전 검증 완료).** `BomLine` audit 을 남기는 곳은
+정확히 4곳이며 **전부 `BomLineView` 를 직렬화**한다. `BomLineView` 는
+`bomHeaderId` 를 **required non-null scalar** 로 갖는다.
+
+| 호출부 | action | `beforeValue` | `afterValue` | 귀속 복구 |
+|---|---|---|---|---|
+| `create-line.ts` | `CREATE` | `null` | `BomLineView` | ✅ after |
+| `clone-bom.ts` | `CREATE` | `null` | `BomLineView` | ✅ after |
+| `update-line.ts` | `UPDATE` | `BomLineView` | `BomLineView` | ✅ 양쪽 |
+| `delete-line.ts` | `DELETE` | `BomLineView` | `null` | ✅ before |
+
+`serializeAuditValue` 는 `undefined` 키만 제거하고 `isSensitiveKey` 는
+`password`·`token` 등 10개 fragment 뿐이라 **`bomHeaderId` 는 마스킹되지
+않는다.** ⇒ **모든 `BomLine` audit event 에서 귀속이 복구된다.**
+
+#### U8-3 — `lastModifiedAt` fallback
+
+정상 BOM 은 `CREATE` audit 이 있으므로 값이 존재한다. legacy·수기 데이터 방어로
+**matching audit 이 0건일 때만** `BomHeader.createdAt` 을 쓴다.
+
+⛔ `createdAt` 을 일반적인 수정일로 **항상** 표시하지 않는다 — label 이 거짓이 된다.
+
+#### U8-4 — 목록 `lastModifiedAt` 은 **batch** 로 읽는다
+
+⛔ 페이지 50건마다 audit 쿼리 N회 금지. 목록의 bom id 전체에 대해 **batch read
+1회**(`readLatestBomActivityByBomIds` 또는 동등물)로 해결한다.
+
+⛔ 이번 T07-8 에서 schema · index 를 추가하지 않는다 — 현행 규모(헤더 80)에서
+기존 `audit_log` 의 `(entity_type, entity_id, occurred_at DESC)` 인덱스로 처리한다.
+
+#### U8-5 — 목록 응답은 **list 전용 projection** 을 둔다
+
+`GET /api/boms` item 은 `BomHeaderView` + `lastModifiedAt` + `referenceCost` 를
+갖는 **`BomListItemView`**(정확한 이름은 repo convention) 다.
+
+⛔ 목록 metadata 때문에 `GET /api/boms/{id}` 의 `BomDetailView` 계약을 바꾸지
+않는다 — 상세는 원가·전개를 섞지 않는다는 D-14 원칙이 그대로다.
+
+---
+
+#### U8-6 — 목록 `기준원가` 의 수량은 **`"1"`** 이다
+
+목록의 기준원가는 **제품 1 unit** 을 만드는 terminal roll-up 원가다.
+
+```
+requestedQty = "1"
+```
+
+⛔ `BomHeader.outputQty` 를 `requestedQty` 로 쓰지 않는다 — `outputQty = 100` 인
+BOM 의 목록 원가가 100배로 보이면 행끼리 비교할 수 없다. 산식은 T07-7B 를 그대로
+쓴다.
+
+#### U8-7 — 목록 `기준원가` 의 기준일
+
+```
+referenceCostAsOf = query.effectiveOn ?? businessDateOf(now, 'Asia/Seoul')
+```
+
+⛔ **8번째 query `asOf` 를 추가하지 않는다** — D-31 의 exact 7 filter 를 깨지
+않는다. 사용자가 `effectiveOn` 으로 시점을 지정했다면 **목록 선택 시점과 원가
+시점을 같은 날짜로 맞추는 것**이 유일하게 일관된 읽기다.
+
+#### U8-8 — ⛔ N+1 금지 · multi-root batch
+
+```
+⛔  client:  list item 마다 GET /api/boms/{id}/cost  N회
+⛔  server:  for (bom of boms) costBom(bom.id)
+```
+
+3단계 BOM 50행이면 행당 7쿼리 × 50 = **350쿼리**가 된다. T07-7B 가 만든 batching
+을 목록에서 다시 N+1 로 무너뜨리는 것이다.
+
+**multi-root batch read primitive** 를 둔다(`costBomsBatch` /
+`resolveBomReferenceCosts` — 정확한 이름은 구현 단계에서 repo convention).
+
+| phase | 내용 |
+|---|---|
+| A | 목록 root header 는 이미 로드돼 있다 |
+| B | **root id 전체**의 라인 batch |
+| C | level frontier 별 — 구성품 SKU dedupe → 유효 child BOM batch → 다음 header 라인 batch |
+| D | **전 root 의 terminal SKU dedupe** → 대표 SupplierSku batch |
+| E | 선택된 SupplierSku dedupe → 유효 가격 batch |
+| F | root 별 D-20 집계·subtotal |
+
+★ 쿼리 수가 **root 수(1→50)에 선형 증가하지 않는다.** depth 에는 비례할 수 있다.
+★ 가능하면 T07-7B 의 single-root `costBom` 도 같은 primitive 의 **1-root
+wrapper** 로 재사용한다 — 단 public `/cost` 의 **behavior 변경은 0** 이다.
+
+#### U8-9 — batch 도 integrity 를 낮추지 않는다
+
+effective BOM conflict · SupplierSku conflict · price chain conflict · 순환 ·
+maxLevel 초과를 목록이라는 이유로 `0원`·`null`·provisional 로 **숨기지 않는다.**
+기존 error semantics 그대로다. ⛔ "목록 전용 가짜 원가" 를 만들지 않는다.
+
+#### U8-10 — `referenceCost` public 표현
+
+```
+referenceCost: {
+  asOf: string,                       // YYYY-MM-DD
+  krwSubtotals: [{ vatIncluded: boolean, amount: string }],
+  hasOtherCurrency: boolean,
+  isProvisional: boolean
+}
+```
+
+⛔ 새 global total 없음 · ⛔ `totalCost` 없음. provisional 사유 detail 은 목록에
+넣지 않는다 — 상세 원가 탭의 `CostResult` 가 담당한다.
+
+**KRW + VAT 분리 (D-26·D-27)**
+
+`vatIncluded` 가 다르면 **처음부터 다른 subtotal** 이다. KRW 라고 해서 합치지
+않는다.
+
+```
+✅  ₩1,000 (VAT 별도)   ₩1,100 (VAT 포함)     ← 두 bucket 을 구분 표시
+⛔  ₩2,100                                    ← 합산 금지
+```
+
+⛔ VAT normalize **0**.
+
+**다른 통화 `+` 표식 (D-26)**
+
+`currency !== 'KRW'` 인 **계산 가능한** subtotal bucket 이 하나라도 있으면
+`hasOtherCurrency = true` 이고 cell 에 `+` 를 붙인다. ⛔ FX 환산 **0** —
+비KRW 금액을 KRW 에 더하지 않는다.
+
+KRW subtotal 이 0개인데 비KRW 가 있으면 금액 자리는 `—` 이고 `+` 는 유지한다.
+
+```
+"— +"   ⇒  KRW 로 표시할 원가는 없지만 다른 통화 subtotal 이 존재한다
+```
+
+**`잠정` 배지**
+
+`isProvisional = true` 면 배지를 붙인다. KRW subtotal 이 known partial sum 이어도
+**그 금액은 표시하면서** 배지를 유지한다. ⛔ `null`·missing 을 `0` 으로 만들지
+않는다. `unitPrice = 0` 은 **정상 0원**이다.
+
+---
+
+#### U8-11 — 원가 탭 `비중` 의 분모는 **같은 bucket 의 subtotal** 이다
+
+```
+sharePct = component.lineCost / (같은 (currency, vatIncluded) subtotal).amount × 100
+```
+
+⛔ 전 통화 합계를 분모로 쓰지 않는다 · ⛔ FX **0** · ⛔ VAT `false`/`true` bucket
+합산 **0**.
+
+★ 이 정의는 `totalCost` 와 FX 를 **새로 만들지 않고** 성립한다. 통화가 하나면
+직관과 같고, 섞여도 각 bucket 안에서 합이 100% 가 된다.
+
+**edge case**
+
+| 상황 | `비중` |
+|---|---|
+| `lineCost === null` | `—` |
+| 대응하는 subtotal 없음 | `—` |
+| subtotal `amount === 0` | `—` (0 으로 나누지 않는다) |
+| `lineCost = 0`, subtotal > 0 | `0%` |
+
+⚠️ partial subtotal 인 경우 **계산 가능한 component 안에서의 비중**이다. 합이
+100% 라고 해서 전체 BOM 원가가 확정이라는 뜻이 **아니다** — `잠정` 배지가 그것을
+알린다.
+
+**정밀도**
+
+⛔ `Number()` · `parseFloat()` · `Math.round()` 금지. Decimal 로 계산해
+**소수점 2자리 `ROUND_HALF_UP`** 후 불필요한 trailing zero 없이 `%` 를 붙인다.
+
+```
+25          → "25%"
+33.3333…    → "33.33%"
+```
+
+★ 이것은 **presentation 값**이다. ⛔ `CostResult` API 에 필드를 추가하지 않는다.
+
+---
+
+#### U8-12 — 라인 그리드 `실제 필요량`
+
+15열 중 8번째 `실제 필요량` 은 **이 BOM 을 기준생산량만큼 만들 때** 그 라인이
+필요로 하는 loss 반영 수량이다. `Q = BomHeader.outputQty` 를 D-19 에 넣는다.
+
+```
+(outputQty / outputQty) × quantityPer × (1 + lossRate) × (1 + overallLossRate)
+```
+
+`scale = 1` 이 되어 실질적으로 `quantityPer × (1+lossRate) × (1+overallLossRate)`
+이지만 ⛔ **별도 단순화 공식을 새로 정의하지 않는다** — D-19 shared semantics 를
+그대로 쓴다.
+
+**계산 주체는 client presentation** 이다.
+
+⛔ 이 열 때문에 `/explode` 도 `/cost` 도 호출하지 않는다 (N+1 금지). 기존 shared
+Decimal helper 중 **browser-safe pure helper** 만 쓴다 — server 전용 의존을
+끌어오지 않는다.
+
+| 라인 상태 | 표시 |
+|---|---|
+| `UNKNOWN`(`quantityPer = null`) | `—` |
+| `SUGGESTED`·`CONFIRMED` | 6dp `ROUND_HALF_UP` minimal 문자열 |
+
+⛔ `packQuantity` 는 이 산식에 **등장하지 않는다** (TC-BOM-009 · F-13).
+
+---
+
+#### U8-13 — 변경이력 탭의 범위와 endpoint
+
+**범위** = `BomHeader` + 그 BOM 의 `BomLine` (삭제된 라인 포함, U8-2 predicate).
+
+**endpoint** — SKU 선례(T1-6B3 `GET /api/skus/{id}/history`)를 그대로 따른다.
+
+| 항목 | 확정 |
+|---|---|
+| 경로 | `GET /api/boms/{id}/history?page=` |
+| query | **`page` 하나뿐** — `pageSize` 포함 그 밖의 키는 **400** |
+| pageSize | 서버 고정 **50** |
+| 권한 | `bom.read` — generic `GET /api/boms` 정책이 이미 덮는다 |
+| 정렬 | `occurredAt DESC → id DESC` |
+| 없는 BOM | **404 `BOM_NOT_FOUND`** — 빈 이력으로 위장하지 않는다 |
+| 이력 0건 | 200 + `items: []` · `total: 0` |
+| actor | `actorId` **UUID 원문**. ⛔ 사용자 조회 API 를 만들지 않는다 |
+
+응답 item projection 은 **기존 `AuditHistoryItem` 을 그대로 재사용**한다
+(`entityType` · `entityId` · `action` · `occurredAt` · `actorId` · `reason` ·
+`beforeValue` · `afterValue`). ⛔ BOM 전용 audit DTO 체계를 새로 만들지 않는다.
+⛔ global `/api/audit-logs` · `/admin/audit-logs` 를 선구현하지 않는다.
+
+**계층** — 기존 `readAuditHistoryPage` 가 `entityId` 목록 매칭만 지원해 삭제된
+라인 귀속을 처리할 수 없으면, **audit infrastructure 에** narrow method
+(`readBomAuditHistoryPage` · `readLatestBomActivityByBomIds`)를 추가한다.
+
+```
+Route → BOM Application → Audit read port/application → Audit Infrastructure
+```
+
+⛔ route 에서 Prisma·raw SQL 직접 접근 금지 · 순환 의존 금지.
+
+---
+
+#### U8-14 — 생성 dialog 의 상위 SKU 선택
+
+⛔ 새 UI library **0** · ⛔ UUID 자유입력 **0**(사용자가 UUID 를 알 수 없다).
+
+기존 **`GET /api/skus?q=`** 를 재사용한다.
+
+```
+검색어 input → 검색 실행 → 결과 목록/select → 선택 → state 에 sku.id 저장
+```
+
+표시 label 은 최소 `skuCode` + `skuName`(상태는 보조 표시 가능).
+
+★ **eligibility 최종 판정은 `POST /api/boms` 서버가 정본**이다 — client 가 별도
+규칙을 재구현하지 않는다.
+
+⚠️ `bom.create` 를 가진 A·L·S 가 `sku.read` 도 갖는지는 **구현 착수 전에
+재확인**한다. 새 cross-module permission **0**. 만약 SKU 검색이 403 이면 권한을
+우회하거나 UUID 입력으로 fallback 하지 **않고** implementation BLOCKED 로 보고한다.
+
+---
+
+#### U8-15 — 미래 `ACTIVE` 는 새 label 을 만들지 않는다
+
+D-31 이 확정한 파생 label 은 **`ACTIVE` + `businessDate >= effectiveTo` →
+"적용기간 종료"** **하나뿐**이다.
+
+`effectiveFrom > businessDate` 인 미래 `ACTIVE` 에 대해 `예정`·`활성 예정`·
+`미적용` 같은 **새 status/badge 를 발명하지 않는다.** `status = ACTIVE` 를 그대로
+표시하고 `effectiveFrom` 날짜를 별도로 보여준다 — status 와 적용기간은 계속
+분리한다(D-7).
+
+---
+
+#### U8-16 — 필수 예시 CASE A ~ I
+
+**CASE A — 수정일**
+
+```
+T1  BOM 생성
+T2  라인 수정
+→ 목록 수정일 = T2
+```
+
+**CASE B — 삭제된 라인**
+
+```
+T1  라인 CREATE
+T3  라인 DELETE      (현재 BomLine row 없음)
+→ 변경이력에 CREATE·DELETE 둘 다 남는다
+→ lastModifiedAt = T3
+```
+
+**CASE C — 목록 기준일**
+
+```
+?effectiveOn=2026-06-01   →  referenceCost.asOf = "2026-06-01"
+effectiveOn 없음           →  KST 업무일자
+```
+
+**CASE D — KRW + USD**
+
+```
+subtotals: KRW/false 1000 · USD/false 5
+→ 목록: ₩1,000 +
+⛔ FX 합산 금지
+```
+
+**CASE E — KRW VAT 분리**
+
+```
+subtotals: KRW/false 1000 · KRW/true 1100
+→ 두 bucket 을 분리 표시.  ⛔ 2100 합산 금지
+```
+
+**CASE F — provisional 목록 원가**
+
+```
+KRW known partial 800 · QTY_UNCONFIRMED
+→ ₩800 + 잠정 배지
+```
+
+**CASE G — 비중**
+
+```
+KRW/false subtotal = 100
+component A = 25 → 25%
+component B = 75 → 75%
+★ USD component 는 이 KRW 분모에 들어가지 않는다
+```
+
+**CASE H — subtotal 0**
+
+```
+component lineCost = 0, subtotal = 0  →  비중 "—"
+```
+
+**CASE I — 실제 필요량**
+
+```
+outputQty = 100 · quantityPer = 0.2 · lossRate = 0.1 · overallLossRate = 0.05
+Q = 100 → scale = 1
+actual = 0.2 × 1.1 × 1.05 = 0.231
+표시 "0.231"      ⛔ packQuantity 미사용
+```
+
+---
+
+#### U8-17 — 이번 gap closure 가 바꾸지 않는 것
+
+D-31 의 **route 2개 · 목록 12열 · 필터 7종 · 목록 버튼 5종 · 라인 15열 ·
+소요량 확정 5단계 UX · 탭 4개 · 권한 렌더 규칙 · "적용기간 종료" label ·
+`잠정` 배지 · 페이지 50 · 새 UI library 금지** 는 **하나도 바뀌지 않는다.**
+
+★ **`수정일`·`기준원가` 를 파생값으로 만든 것은 12열을 유지하기 위해서다** —
+열을 11개로 줄이지 않는다.
+
+★ `비고` 는 D-31 의 15열에 **처음부터 없다.** 이것은 `BomLine.note` 컬럼이나 API
+필드를 지우라는 뜻이 **아니라** 이번 grid 의 column scope 일 뿐이다.
+
+**전개 탭** 은 D-31 이 좁혀 놓은 대로 `GET …/explode` 트리 + `maxLevel` 선택 +
+순환 시 ErrorBanner 뿐이다. ⛔ 공급업체·현재 유효단가·누적원가 열을 되살리지
+않는다 · ⛔ explode × cost client join **0**.
+
+**원가 탭** 의 나머지 계약(기준일 picker · `qty` 기본 `"1"` · `CostResult` exact
+키 · `(currency, vatIncluded)` subtotal · `null` vs `"0"` · `totalCost` 없음)도
+그대로다.
+
+**manage-link** — T07-8 착지 시 `BOM_TAB_MANAGE_LINK_ENABLED` 를 `false` →
+`true` 로 바꾸는 것이 활성화의 전부이며, target 은 기존 helper
+`bomManageLinkPath(bomHeaderId)` = `/master/boms/{bomHeaderId}` (row 단위 상세),
+label 은 `'BOM 관리에서 보기'` 다. SKU BOM 탭은 **read-only 유지** · mutation **0**.
+
+#### U8-18 — 성능 계약
+
+목록의 기존 응답시간 목표를 깨뜨리지 않는다. 불안정한 CI 에서 wall-clock 게이트를
+강제하지는 않되 **query-count 회귀는 반드시 둔다.**
+
+50 header 목록 fixture 에서:
+
+| 항목 | 계약 |
+|---|---|
+| `lastModifiedAt` | audit **batch 1회** |
+| `referenceCost` | root 수에 비례하는 supplier/price/cost **N+1 없음** |
+| BOM traversal | depth frontier 에 비례 |
+| ⛔ | `50 × costBom` · client `50 × /cost` |
+
+#### U8-19 — 계속 0
+
+`POST /api/boms/import` · 엑셀 업로드 UI · `max-assembly-qty` · T08 Warehouse
+API/UI · 창고 이름 lookup · Attachment · Posting/WO · FX · landed cost ·
+**cost cache table** · standard cost persistence · inventory valuation ·
+새 permission · 새 BOM error code.
+
+★ 특히 **batch reference cost 를 위해 cache table·schema 를 만들지 않는다** —
+이번 계약은 전부 **read-time 계산**이다.
 
 ### D-32 — boundaries / tests
 
@@ -3732,7 +4189,7 @@ T07-8  standalone UI (/master/boms · /master/boms/{id})
 | U-1 | **PENDING #7** — BOM 동기 업로드 6조건 충족 여부, 미충족 시 CLI 전환 | `T07-8` 착수 전 | 사용자 결정 |
 | U-2 | `max-assembly-qty` 의 현재고 소스·응답 형태 | R1a-2 이후 | 재고 코어 의존 |
 | U-3 | **PENDING #5** — `ASSEMBLY`/`DISASSEMBLY` conservation 검증에서 D-19 공식을 어떻게 쓰는지 | R1a-2 착수 전 | 이 문서가 공식을 고정했으므로 소비 방식만 남음 |
-| U-4 | BOM 목록 `기준원가` 열의 성능 — 목록 50행마다 원가를 계산하면 무겁다. 캐시/지연 로딩 여부 | `T07-8` 착수 전 | 구현 판단 |
+| U-4 | ~~BOM 목록 `기준원가` 열의 성능 — 목록 50행마다 원가를 계산하면 무겁다. 캐시/지연 로딩 여부~~ ★ **CLOSED** — `★ T07-8 BOM UI read-model gap closure` **U8-6 ~ U8-10**. 결론: **cache table 없이 multi-root batch read** 로 푼다(`qty="1"` · `asOf = effectiveOn ?? 업무일자` · root 수에 선형 증가하지 않는 쿼리) | `T07-8` 착수 전 | 구현 판단 |
 | U-5 | `legacyBomCode`/`legacyCommonBomCode` 를 API 응답에 노출할지 | `T07-3` 착수 전 | 사소 |
 
 ---
