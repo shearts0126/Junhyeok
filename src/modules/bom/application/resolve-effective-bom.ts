@@ -1,4 +1,5 @@
 import { dateOnlyOf } from '@/shared/business-date';
+import type { ConflictError } from '@/shared/errors';
 
 import { selectEffectiveBom } from '../domain/effective-selection';
 
@@ -83,8 +84,35 @@ export async function resolveEffectiveBoms(
   db: BomDbClient,
   input: ResolveEffectiveBomsInput,
 ): Promise<Map<string, EffectiveBomHeaderRow | null>> {
+  const outcomes = await resolveEffectiveBomOutcomes(db, input);
+  const result = new Map<string, EffectiveBomHeaderRow | null>();
+  // ★ 삽입 순서대로 순회하므로 **기존과 정확히 같은 오류**가 먼저 던져진다.
+  for (const [parentSkuId, outcome] of outcomes) {
+    if (outcome.status === 'ERROR') throw outcome.error;
+    result.set(parentSkuId, outcome.value);
+  }
+  return result;
+}
+
+/**
+ * ★ **T07-8 — key 별 outcome 을 그대로 돌려주는 low-level batch reader.**
+ *
+ * `resolveEffectiveBoms` 는 이것을 감싸 **첫 ERROR 에서 throw** 하므로 기존
+ * strict semantics 가 한 글자도 바뀌지 않는다. 반면 목록 read-model 은 ERROR 를
+ * **그 dependency 를 쓰는 root 들에만** fan-out 해야 하므로 outcome 이 필요하다
+ * (`★ T07-8 list reference-cost fault isolation remediation` R8-8).
+ *
+ * ⛔ 목록에서 strict resolver 를 부른 뒤 바깥에서 `try/catch` 하면 **어느 root 가
+ *    그 손상 dependency 를 썼는지 알 수 없어** 결국 전체 실패가 된다 (R8-1).
+ */
+export async function resolveEffectiveBomOutcomes(
+  db: BomDbClient,
+  input: ResolveEffectiveBomsInput,
+): Promise<Map<string, EffectiveBomOutcome>> {
   const ids = [...new Set(input.parentSkuIds)];
-  const result = new Map<string, EffectiveBomHeaderRow | null>(ids.map((id) => [id, null]));
+  const result = new Map<string, EffectiveBomOutcome>(
+    ids.map((id) => [id, { status: 'OK', value: null } as EffectiveBomOutcome]),
+  );
   if (ids.length === 0) return result;
 
   // ★ IN (...) 한 번 — SKU 별 top-1 을 SQL 로 자르지 않는다. 잘라 버리면 2건
@@ -110,10 +138,29 @@ export async function resolveEffectiveBoms(
 
   const asOfLabel = dateOnlyOf(input.asOf);
   for (const [parentSkuId, candidates] of grouped) {
-    result.set(parentSkuId, selectEffectiveBom(candidates, { parentSkuId, asOf: asOfLabel }));
+    try {
+      result.set(parentSkuId, {
+        status: 'OK',
+        value: selectEffectiveBom(candidates, { parentSkuId, asOf: asOfLabel }),
+      });
+    } catch (error) {
+      // ⚠️ 도메인이 던진 그 오류 객체를 **그대로** 보존한다 — 목록은 code 만
+      //    읽고, strict wrapper 는 이것을 그대로 다시 던진다.
+      result.set(parentSkuId, { status: 'ERROR', error: error as ConflictError });
+    }
   }
   return result;
 }
+
+/**
+ * key 하나의 해석 결과 (T07-8 R8-7).
+ *
+ * `ERROR` 는 **오직 `BOM_EFFECTIVE_CONFLICT`** 다 — `selectEffectiveBom` 이 그
+ * 하나만 던진다. ⛔ 다른 예외를 여기로 흡수하지 않는다.
+ */
+export type EffectiveBomOutcome =
+  | { readonly status: 'OK'; readonly value: EffectiveBomHeaderRow | null }
+  | { readonly status: 'ERROR'; readonly error: ConflictError };
 
 /** 단건 — 배치의 1-id wrapper 다. 외부 동작(반환값·오류·predicate)이 동일하다. */
 export async function resolveEffectiveBom(

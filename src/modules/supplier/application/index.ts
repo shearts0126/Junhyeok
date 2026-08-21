@@ -121,14 +121,18 @@ export {
 } from './refs';
 export {
   resolveEffectiveSupplierPrice,
+  resolveEffectiveSupplierPriceOutcomes,
   resolveEffectiveSupplierPrices,
+  type EffectiveSupplierPriceOutcome,
   type ResolveEffectivePriceInput,
   type ResolveEffectivePricesInput,
 } from './resolve-effective-price';
 export {
   bomSupplierSelectionConflict,
+  resolvePrimarySupplierSkuOutcomes,
   resolvePrimarySupplierSku,
   resolvePrimarySupplierSkus,
+  type PrimarySupplierSkuOutcome,
   type PrimarySupplierSkuRow,
   type ResolvePrimarySupplierSkuInput,
   type ResolvePrimarySupplierSkusInput,

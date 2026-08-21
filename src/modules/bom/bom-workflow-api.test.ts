@@ -412,8 +412,9 @@ describe('★ workflow route handler 는 정확히 7개다', () => {
       // ✏️ T07-7B cost (workflow 가 아니라 read endpoint 다).
       'cost',
       'deactivate',
-      // ✏️ T07-6 explode (workflow 가 아니라 read endpoint 다).
+      // ✏️ T07-6 explode · T07-8 history (workflow 가 아니라 read endpoint 다).
       'explode',
+      'history',
       'lines',
       'reject',
       'route.ts',

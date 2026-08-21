@@ -393,12 +393,21 @@ describe('⛔ T07-7B 경계 — synthetic intermediate cost 가 없다 (R-20)', 
   });
 });
 
-describe('⛔ T07-8 UI · max-assembly 는 여전히 0 이다', () => {
-  it('★ /master/boms 화면이 없다', async () => {
+describe('⛔ max-assembly 는 여전히 0 이다 (T07-8 UI 는 착지했다)', () => {
+  it('★ T07-8 이 /master/boms 화면을 만들었다 — 이 guard 만 해제된다', async () => {
+    // T07-7B 시점에는 이 화면이 없어야 했다. T07-8 이 그 소유자이므로 이제 존재하고,
+    // ⛔ 나머지 non-scope guard(아래 · max-assembly-qty)는 그대로 유효하다.
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('../../app/master', import.meta.url));
-    expect(readdirSync(dir)).not.toContain('boms');
+    expect(readdirSync(dir)).toContain('boms');
+
+    const boms = fileURLToPath(new URL('../../app/master/boms', import.meta.url));
+    expect(readdirSync(boms)).toEqual(
+      // ⛔ `/master/boms/new` 를 만들지 않는다 — 신규 등록은 목록 dialog 다 (D-31).
+      expect.arrayContaining(['page.tsx', 'boms-client.tsx', '[id]']),
+    );
+    expect(readdirSync(boms)).not.toContain('new');
   });
 
   it('★ cost 서비스가 UI 어휘를 담지 않는다', async () => {
