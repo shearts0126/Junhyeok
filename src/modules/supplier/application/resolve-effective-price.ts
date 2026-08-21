@@ -1,3 +1,5 @@
+import type { ConflictError } from '@/shared/errors';
+
 import { supplierPriceChainConflict } from './constraint-errors';
 import type { SupplierSkuPriceRow } from './price-views';
 import type { SupplierDbClient } from './refs';
@@ -56,8 +58,35 @@ export async function resolveEffectiveSupplierPrices(
   db: SupplierDbClient,
   input: ResolveEffectivePricesInput,
 ): Promise<Map<string, SupplierSkuPriceRow | null>> {
+  const outcomes = await resolveEffectiveSupplierPriceOutcomes(db, input);
+  const result = new Map<string, SupplierSkuPriceRow | null>();
+  // ★ 삽입 순서 순회 — 기존과 정확히 같은 오류가 먼저 던져진다.
+  for (const [supplierSkuId, outcome] of outcomes) {
+    if (outcome.status === 'ERROR') throw outcome.error;
+    result.set(supplierSkuId, outcome.value);
+  }
+  return result;
+}
+
+/** key 하나의 유효가격 해석 결과. `ERROR` 는 오직 chain 2건 이상이다. */
+export type EffectiveSupplierPriceOutcome =
+  | { readonly status: 'OK'; readonly value: SupplierSkuPriceRow | null }
+  | { readonly status: 'ERROR'; readonly error: ConflictError };
+
+/**
+ * ★ **T07-8 — key 별 outcome low-level batch reader** (R8-8).
+ *
+ * strict resolver 는 이것을 감싸 첫 ERROR 에서 throw 하므로 T06-3·T1-6B4·T07-7A/B
+ * 의 기존 동작이 바뀌지 않는다. 목록 read-model 만 ERROR 를 root 로 fan-out 한다.
+ */
+export async function resolveEffectiveSupplierPriceOutcomes(
+  db: SupplierDbClient,
+  input: ResolveEffectivePricesInput,
+): Promise<Map<string, EffectiveSupplierPriceOutcome>> {
   const ids = [...new Set(input.supplierSkuIds)];
-  const result = new Map<string, SupplierSkuPriceRow | null>(ids.map((id) => [id, null]));
+  const result = new Map<string, EffectiveSupplierPriceOutcome>(
+    ids.map((id) => [id, { status: 'OK', value: null } as EffectiveSupplierPriceOutcome]),
+  );
   if (ids.length === 0) return result;
 
   // ★ IN (...) 한 번 — id 별 top-1 을 SQL 로 자르지 않는다. 잘라 버리면 2건
@@ -81,13 +110,17 @@ export async function resolveEffectiveSupplierPrices(
 
   for (const [supplierSkuId, candidates] of grouped) {
     if (candidates.length >= 2) {
-      throw supplierPriceChainConflict({
-        supplierSkuId,
-        asOf: toDateOnly(input.asOf),
-        candidateIds: candidates.map((row) => row.id),
+      result.set(supplierSkuId, {
+        status: 'ERROR',
+        error: supplierPriceChainConflict({
+          supplierSkuId,
+          asOf: toDateOnly(input.asOf),
+          candidateIds: candidates.map((row) => row.id),
+        }),
       });
+      continue;
     }
-    result.set(supplierSkuId, candidates[0] ?? null);
+    result.set(supplierSkuId, { status: 'OK', value: candidates[0] ?? null });
   }
 
   return result;

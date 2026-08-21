@@ -351,6 +351,61 @@ async function main(): Promise<void> {
         createdBy: staffUser.id,
         updatedBy: staffUser.id,
       },
+      // ── ⑧ BOM 관리 화면 전용 (T07-8) ─────────────────────────
+      //
+      //   ZZS-E2E-023  가격 있는 구성품 — 목록 `기준원가` 가 금액을 낸다
+      //   ZZS-E2E-024  정상 root       — AVAILABLE + ₩ 금액
+      //   ZZS-E2E-025  순환 A          ┐ 서로를 구성품으로 갖는다 →
+      //   ZZS-E2E-026  순환 B          ┘ 목록에서 **`계산 불가`** 가 되어야 한다
+      //   ZZS-E2E-027  편집 전용 root  — 라인 CRUD·일괄확정·복제가 여기서만 일어난다
+      //
+      // ⚠️ 025·026 의 순환은 **의도적 손상**이다. 이것이 목록 전체를 죽이지
+      //    않는다는 것이 R8-15 의 핵심 인수조건이라 픽스처로 상주시킨다.
+      {
+        skuCode: 'ZZS-E2E-023',
+        skuName: 'E2E BOM 유가 구성품',
+        itemType: 'RAW_MATERIAL',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-024',
+        skuName: 'E2E BOM 원가정상',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-025',
+        skuName: 'E2E BOM 순환 A',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-026',
+        skuName: 'E2E BOM 순환 B',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
+      {
+        skuCode: 'ZZS-E2E-027',
+        skuName: 'E2E BOM 편집대상',
+        itemType: 'FINISHED_GOOD',
+        status: 'ACTIVE',
+        baseUom: 'EA',
+        createdBy: staffUser.id,
+        updatedBy: staffUser.id,
+      },
       // ── workflow E2E 전용 (T07-5) ────────────────────────────
       //
       // ⚠️ **BOM 을 하나도 갖지 않는 ACTIVE SKU** 다. workflow E2E 는 BOM 을
@@ -1020,6 +1075,163 @@ async function main(): Promise<void> {
       quantityStatus: 'CONFIRMED',
       uom: 'EA',
       componentRole: 'MATERIAL',
+      isRequired: true,
+    },
+  });
+
+  // ── ⑧ BOM 관리 화면 픽스처 (T07-8) ───────────────────────────
+  //
+  // 화면이 확인해야 하는 것:
+  //   ① 목록 `기준원가` 가 **KRW 금액**을 vatIncluded 별로 낸다
+  //   ② 순환 BOM 행은 **`계산 불가`** 다 — ⛔ `—`·`0원`·`잠정` 이 아니다
+  //   ③ ★ 그 손상 1건이 **같은 페이지의 정상 행을 죽이지 않는다** (R8-15)
+  //   ④ DRAFT root 에서 라인 CRUD·일괄확정·복제가 돌아간다
+  const uiPriced = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-023' } });
+  const uiCostRoot = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-024' } });
+  const uiCycleA = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-025' } });
+  const uiCycleB = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-026' } });
+  const uiEditRoot = await prisma.sku.findUniqueOrThrow({ where: { skuCode: 'ZZS-E2E-027' } });
+
+  // ① 승인된 KRW 단가 1500 (VAT 별도) — 목록 금액의 유일한 출처다.
+  const uiSupplier = await prisma.supplier.create({
+    data: {
+      supplierCode: 'ZZV-E2E-BOMUI',
+      supplierName: 'E2E BOM 원가 거래처',
+      supplierType: 'MANUFACTURER',
+      status: 'ACTIVE',
+    },
+    select: { id: true },
+  });
+  const uiSupplierSku = await prisma.supplierSku.create({
+    data: {
+      supplierId: uiSupplier.id,
+      skuId: uiPriced.id,
+      isPrimary: true,
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+      currency: 'KRW',
+    },
+    select: { id: true },
+  });
+  await prisma.supplierSkuPrice.create({
+    data: {
+      supplierSkuId: uiSupplierSku.id,
+      unitPrice: '1500',
+      currency: 'KRW',
+      vatIncluded: false,
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      effectiveTo: null,
+      // 승인은 `approvedBy IS NOT NULL` 하나로 표현된다 (T06-3).
+      approvedBy: staffUser.id,
+      createdBy: staffUser.id,
+    },
+  });
+
+  const uiCostBom = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: uiCostRoot.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-COST-1.0',
+      status: 'ACTIVE',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  await prisma.bomLine.create({
+    data: {
+      bomHeaderId: uiCostBom.id,
+      lineNo: 1,
+      componentSkuId: uiPriced.id,
+      quantityPer: '1',
+      quantityStatus: 'CONFIRMED',
+      uom: 'EA',
+      componentRole: 'MATERIAL',
+      isRequired: true,
+    },
+  });
+
+  // ② ★ **의도적 순환** — A 의 ACTIVE BOM 이 B 를, B 의 것이 A 를 갖는다.
+  //    EXCLUDE 제약은 `(parent_sku_id, 기간)` 단위라 서로 다른 parent 인 이
+  //    두 건은 정상적으로 INSERT 된다 — 즉 운영에서도 생길 수 있는 손상이다.
+  const uiCycleBomA = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: uiCycleA.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-CYC-A',
+      status: 'ACTIVE',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  const uiCycleBomB = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: uiCycleB.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-CYC-B',
+      status: 'ACTIVE',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  await prisma.bomLine.createMany({
+    data: [
+      {
+        bomHeaderId: uiCycleBomA.id,
+        lineNo: 1,
+        componentSkuId: uiCycleB.id,
+        quantityPer: '1',
+        quantityStatus: 'CONFIRMED',
+        uom: 'EA',
+        componentRole: 'MATERIAL',
+        isRequired: true,
+      },
+      {
+        bomHeaderId: uiCycleBomB.id,
+        lineNo: 1,
+        componentSkuId: uiCycleA.id,
+        quantityPer: '1',
+        quantityStatus: 'CONFIRMED',
+        uom: 'EA',
+        componentRole: 'MATERIAL',
+        isRequired: true,
+      },
+    ],
+  });
+
+  // ④ 편집 전용 DRAFT — 라인 1건(UNKNOWN · 입수량 30) 으로 시작한다.
+  //    `1/30 = 0.033333` 추천값과 일괄 확정을 한 화면에서 볼 수 있다.
+  const uiEditBom = await prisma.bomHeader.create({
+    data: {
+      parentSkuId: uiEditRoot.id,
+      bomType: 'MANUFACTURING',
+      version: 'ZZB-EDIT-1.0',
+      status: 'DRAFT',
+      outputQty: '1',
+      outputUom: 'EA',
+      effectiveFrom: new Date('2020-01-01T00:00:00.000Z'),
+      createdBy: staffUser.id,
+    },
+    select: { id: true },
+  });
+  await prisma.bomLine.create({
+    data: {
+      bomHeaderId: uiEditBom.id,
+      lineNo: 1,
+      componentSkuId: uiPriced.id,
+      quantityPer: null,
+      quantityStatus: 'UNKNOWN',
+      uom: 'EA',
+      componentRole: 'MATERIAL',
+      packQuantity: '30',
       isRequired: true,
     },
   });

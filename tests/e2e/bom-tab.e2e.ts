@@ -270,6 +270,9 @@ test.describe('SKU 상세 ⑦ BOM 탭 (ADMIN)', () => {
       '적용기간',
       '구성품 수',
       '소요량 확정',
+      // ★ T07-8 이 `/master/boms/{id}` 를 만들면서 링크 열이 켜졌다
+      //   (`BOM_TAB_MANAGE_LINK_ENABLED`). T1-6B5 때는 404 를 피하려고 꺼 뒀다.
+      '관리',
     ]);
 
     await openBomTab(page, COMPONENT_SKU);
@@ -285,6 +288,7 @@ test.describe('SKU 상세 ⑦ BOM 탭 (ADMIN)', () => {
       '구성품 유형',
       '필수',
       '대체그룹',
+      '관리',
     ]);
 
     // ⛔ `BomHeader` 에 없는 "BOM 코드" 가 화면 어디에도 없다.
@@ -441,11 +445,13 @@ test.describe('등록 화면 (D-30)', () => {
   });
 });
 
-test.describe('standalone BOM 화면 (T07-8 미착수)', () => {
-  test('★ `/master/boms` 는 아직 없다 — T07-8 범위다', async ({ page }) => {
+test.describe('standalone BOM 화면 (T07-8 착지)', () => {
+  test('★ `/master/boms` 가 열린다 — 더 이상 404 가 아니다', async ({ page }) => {
+    // T1-6B5 시점에는 route handler 가 없어 404 였다. T07-8 이 그 소유자이며
+    // 이제 실제 화면이 응답한다. 상세 시나리오는 `boms-manage.e2e.ts` 가 본다.
     await login(page, ADMIN);
     const response = await page.goto('/master/boms');
-    // route handler 가 없으므로 404 다. route-policy 예약만 존재한다.
-    expect(response?.status()).toBe(404);
+    expect(response?.status()).toBe(200);
+    await expect(page.getByRole('heading', { name: 'BOM 관리' })).toBeVisible();
   });
 });

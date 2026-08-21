@@ -90,8 +90,35 @@ export async function resolvePrimarySupplierSkus(
   db: SupplierDbClient,
   input: ResolvePrimarySupplierSkusInput,
 ): Promise<Map<string, PrimarySupplierSkuRow | null>> {
+  const outcomes = await resolvePrimarySupplierSkuOutcomes(db, input);
+  const result = new Map<string, PrimarySupplierSkuRow | null>();
+  // ★ 삽입 순서 순회 — 기존과 정확히 같은 오류가 먼저 던져진다.
+  for (const [skuId, outcome] of outcomes) {
+    if (outcome.status === 'ERROR') throw outcome.error;
+    result.set(skuId, outcome.value);
+  }
+  return result;
+}
+
+/** key 하나의 대표 공급조건 해석 결과. `ERROR` 는 오직 대표 2건 이상이다. */
+export type PrimarySupplierSkuOutcome =
+  | { readonly status: 'OK'; readonly value: PrimarySupplierSkuRow | null }
+  | { readonly status: 'ERROR'; readonly error: ConflictError };
+
+/**
+ * ★ **T07-8 — key 별 outcome low-level batch reader** (R8-8).
+ *
+ * strict `resolvePrimarySupplierSkus` 는 이것을 감싸 첫 ERROR 에서 throw 하므로
+ * 기존 동작이 바뀌지 않는다. 목록 read-model 만 ERROR 를 root 로 fan-out 한다.
+ */
+export async function resolvePrimarySupplierSkuOutcomes(
+  db: SupplierDbClient,
+  input: ResolvePrimarySupplierSkusInput,
+): Promise<Map<string, PrimarySupplierSkuOutcome>> {
   const ids = [...new Set(input.skuIds)];
-  const result = new Map<string, PrimarySupplierSkuRow | null>(ids.map((id) => [id, null]));
+  const result = new Map<string, PrimarySupplierSkuOutcome>(
+    ids.map((id) => [id, { status: 'OK', value: null } as PrimarySupplierSkuOutcome]),
+  );
   if (ids.length === 0) return result;
 
   // ★ IN (...) 한 번 — SKU 별 top-1 을 SQL 로 자르지 않는다. 잘라 버리면 2건
@@ -117,13 +144,17 @@ export async function resolvePrimarySupplierSkus(
   const asOfLabel = toDateOnly(input.asOf);
   for (const [skuId, candidates] of grouped) {
     if (candidates.length >= 2) {
-      throw bomSupplierSelectionConflict({
-        skuId,
-        asOf: asOfLabel,
-        candidateIds: candidates.map((row) => row.id),
+      result.set(skuId, {
+        status: 'ERROR',
+        error: bomSupplierSelectionConflict({
+          skuId,
+          asOf: asOfLabel,
+          candidateIds: candidates.map((row) => row.id),
+        }),
       });
+      continue;
     }
-    result.set(skuId, candidates[0] ?? null);
+    result.set(skuId, { status: 'OK', value: candidates[0] ?? null });
   }
 
   return result;
