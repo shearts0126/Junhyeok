@@ -130,6 +130,39 @@ export function deriveCostProvisionalReasons(input: {
 }
 
 /**
+ * ★ **R-12·R-13 — terminal occurrence 의 사유 (T07-7B).**
+ *
+ * `deriveCostProvisionalReasons` 와 판정 규칙이 **완전히 같고** 수량 입력만
+ * 다르다 — direct level 은 라인 자신의 `quantityStatus` 를 보지만, 다단계에서는
+ * **root → terminal 경로 전체를 OR 한 결과**를 본다 (R-12 path-level OR).
+ *
+ * ```
+ * P --SUGGESTED--> B --CONFIRMED--> C   →  C 는 숫자지만 QTY_UNCONFIRMED
+ * P --UNKNOWN-->   B --CONFIRMED--> C   →  C 는 null 이고 QTY_UNCONFIRMED
+ * ```
+ *
+ * ⛔ intermediate 의 `NO_PRIMARY_SUPPLIER`·`NO_EFFECTIVE_PRICE` 는 전파하지
+ *    않는다 (R-13) — 애초에 조회하지 않는 사실이다. 공급처·가격 사유는 항상
+ *    **이 terminal 자신의** 사실이다.
+ */
+export function deriveTerminalCostReasons(input: {
+  /** ★ 자신 + 모든 조상 라인의 `quantityStatus !== 'CONFIRMED'` OR 결과. */
+  readonly qtyUnconfirmed: boolean;
+  readonly hasPrimarySupplierSku: boolean;
+  readonly hasEffectivePrice: boolean;
+}): CostProvisionalReason[] {
+  const reasons: CostProvisionalReason[] = [];
+  if (input.qtyUnconfirmed) reasons.push('QTY_UNCONFIRMED');
+  if (!input.hasPrimarySupplierSku) {
+    reasons.push('NO_PRIMARY_SUPPLIER');
+    // ⛔ 대표가 없으면 가격 조회 대상이 없다 (F-5 와 동일).
+    return reasons;
+  }
+  if (!input.hasEffectivePrice) reasons.push('NO_EFFECTIVE_PRICE');
+  return reasons;
+}
+
+/**
  * ★ **F-6 — public 단수 `provisionalReason` projection.**
  *
  * ```
@@ -229,6 +262,71 @@ export function computeCostSubtotals(lines: readonly CostSubtotalInput[]): CostS
     }))
     .sort(
       (a, b) =>
-        a.currency.localeCompare(b.currency) || Number(a.vatIncluded) - Number(b.vatIncluded),
+        // ★ T07-7B R-19 — locale 비의존 code-point 비교. ⛔ `localeCompare` 금지.
+        //   ISO 4217 코드(A-Z)에서는 두 방식 결과가 같으므로 **behavior 변경 0** 이며,
+        //   환경별 collation 에 응답 순서를 맡기지 않기 위한 고정이다.
+        compareCodePoint(a.currency, b.currency) || Number(a.vatIncluded) - Number(b.vatIncluded),
     );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// T07-7B — multi-level 집계 primitive
+// 근거: `★ T07-7B multi-level roll-up gap closure` R-8·R-10·R-18·R-19
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★ **R-18·R-19 — locale 비의존 문자열 비교.**
+ *
+ * ⛔ `localeCompare` 를 쓰지 않는다 — ICU 유무·locale 에 따라 순서가 달라져
+ *    응답이 환경 의존이 된다. `<`/`>` 는 UTF-16 code unit 순서라 결정적이다.
+ */
+export function compareCodePoint(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+/**
+ * ★ **R-8·R-10 — known 값만 raw 로 합산한다.**
+ *
+ * | 입력 | 반환 |
+ * |---|---|
+ * | known 이 1개 이상 | 그 값들만의 **raw 합** (반올림 없음) |
+ * | 전부 `null` | **`null`** — "계산 가능한 것이 하나도 없다" |
+ *
+ * ⛔ `null` 을 `0` 으로 보고 더하지 않는다. 결과는 **known partial sum** 이며
+ *    "missing 을 0 으로 본 전체 합" 이 아니다 (F-9 와 같은 철학).
+ * ⛔ 반올림된 public 값을 받지 않는다 — 반드시 raw `Decimal` 이다.
+ */
+export function sumKnownDecimals(values: readonly (Decimal | null)[]): Decimal | null {
+  const known = values.filter((value): value is Decimal => value !== null);
+  if (known.length === 0) return null;
+  return sumDecimals(known);
+}
+
+/** `components[]` 정렬 키 (R-18). 집계 키 전체를 덮어 **total order** 가 된다. */
+export interface CostComponentSortKey {
+  readonly level: number;
+  readonly skuCode: string;
+  readonly componentSkuId: string;
+  readonly uom: string;
+}
+
+/**
+ * ★ **R-18 — 최종 `components[]` 정렬.**
+ *
+ * ```
+ * level ASC → componentSku.skuCode ASC → componentSkuId ASC → uom ASC
+ * ```
+ *
+ * 집계 키 `(componentSkuId, uom)` 를 전부 포함하므로 **동률이 존재할 수 없다.**
+ * ⛔ DB 자연 순서 의존 금지 — 역순 insert 해도 같은 JSON 이 나와야 한다.
+ */
+export function compareCostComponents(a: CostComponentSortKey, b: CostComponentSortKey): number {
+  return (
+    a.level - b.level ||
+    compareCodePoint(a.skuCode, b.skuCode) ||
+    compareCodePoint(a.componentSkuId, b.componentSkuId) ||
+    compareCodePoint(a.uom, b.uom)
+  );
 }

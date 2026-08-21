@@ -19,14 +19,19 @@ export {
 } from './cycle';
 export { bomEffectiveConflict, selectEffectiveBom } from './effective-selection';
 export {
+  compareCodePoint,
+  compareCostComponents,
   computeCostSubtotals,
   computeRawLineCost,
   deriveCostProvisionalReasons,
+  deriveTerminalCostReasons,
   projectProvisionalReason,
+  sumKnownDecimals,
   toMoneyString,
   unionProvisionalReasons,
   COST_PROVISIONAL_REASONS,
   MONEY_SCALE,
+  type CostComponentSortKey,
   type CostProvisionalReason,
   type CostSubtotal,
   type CostSubtotalInput,

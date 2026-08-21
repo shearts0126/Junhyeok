@@ -458,13 +458,16 @@ describe('⛔ T07-6 은 원가·재고를 만들지 않는다', () => {
     expect(fields).toHaveLength(12);
   });
 
-  it('⛔ max-assembly-qty · cost route 는 없다', async () => {
+  it('⛔ max-assembly-qty route 는 없다 — cost 는 T07-7B 가 별도로 소유한다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('../../app/api/boms/[id]', import.meta.url));
     const entries = readdirSync(dir);
     expect(entries).toContain('explode');
-    for (const forbidden of ['cost', 'max-assembly-qty', 'import']) {
+    // ✏️ `cost` 는 **T07-7B** 가 추가했다 — T07-6 이 만든 것이 아니며 explode
+    //    서비스도 원가를 알지 못한다(아래 어휘 guard 가 그것을 고정한다).
+    expect(entries).toContain('cost');
+    for (const forbidden of ['max-assembly-qty', 'import']) {
       expect(entries, forbidden).not.toContain(forbidden);
     }
   });

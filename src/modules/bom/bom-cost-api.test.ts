@@ -521,14 +521,23 @@ async function sourceOf(relative: string): Promise<string> {
 }
 
 describe('⛔ C-1 · C-2 · C-6 — T07-7B scope 가 들어오지 않았다', () => {
-  it('★★ public /cost route 가 없다', async () => {
+  // ✏️ **T07-7B 가 `/cost` route 를 만들면서 이 부재 단언이 소유권 단언으로
+  //    바뀐다** (docs/18 C-1 — route 는 처음부터 T07-7B 소유였다). route 가
+  //    존재하되 **T07-7A 서비스를 부르지 않는다**는 것이 이제 지켜야 할 계약이다.
+  //    ⛔ 나머지 T07-7A 계약은 하나도 바뀌지 않는다.
+  it('★★ public /cost route 는 T07-7B 소유다 — T07-7A 서비스를 부르지 않는다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const dir = fileURLToPath(new URL('../../app/api/boms/[id]', import.meta.url));
     const entries = readdirSync(dir);
-    expect(entries).not.toContain('cost');
     // T07-6 explode 는 그대로 있다.
     expect(entries).toContain('explode');
+    expect(entries).toContain('cost');
+
+    const route = await sourceOf('../../app/api/boms/[id]/cost/route.ts');
+    // ★ route 는 T07-7B 의 `costBom` 을 부른다. ⛔ direct-line 엔진이 아니다.
+    expect(route).toContain('costBom');
+    expect(route).not.toContain('costDirectBom');
   });
 
   it('★★ direct costing 이 하위 BOM 을 전개하지 않는다 (C-2)', async () => {
