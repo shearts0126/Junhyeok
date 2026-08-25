@@ -1,0 +1,42 @@
+-- 창고 DEFAULT 로케이션 관계를 1:1 로 고정 (T08-1 remediation)
+--
+-- 근거: docs/19_설계복구_Warehouse.md §W-D6
+--       (창고 1 ↔ DEFAULT 로케이션 1)
+--
+-- ── ★ 이 UNIQUE 는 성능용 인덱스가 아니다 ──────────────────────────
+-- `warehouse.id` 가 PK 이므로 `(id, default_location_id)` 는 DB 논리상 이미
+-- 유일하며, 이 인덱스는 그 위에 얹히는 **중복**이다. 그럼에도 만드는 이유는
+-- Prisma 가 **multi-field 1:1 relation 을 인정하려면 source 쪽 relation
+-- scalar 집합에 `@@unique` 를 요구**하기 때문이다.
+--
+-- 이것이 없으면 Prisma schema 는 inverse 를
+--
+--     WarehouseLocation.defaultForWarehouses  Warehouse[]
+--
+-- 로밖에 선언할 수 없고, 그러면 **ORM 모델의 cardinality 가 DB 불변식보다
+-- 느슨해진다** — DB 는 "한 로케이션이 default 인 창고는 최대 1개" 를 이미
+-- 강제하는데 ORM 타입은 여러 개를 허용하는 것처럼 보인다.
+-- 이 migration 으로 inverse 가
+--
+--     WarehouseLocation.defaultForWarehouse   Warehouse?
+--
+-- 가 되어 모델과 DB 가 같은 것을 말하게 된다.
+--
+-- ⛔ "중복 인덱스" 를 이유로 나중에 drop 하지 말 것 — drop 하면 Prisma 의
+--    1:1 선언이 깨진다.
+--
+-- ── ★ 이 migration 이 바꾸지 않는 것 ────────────────────────────────
+-- 20260825081113_add_warehouse_models 가 만든 것은 **하나도 건드리지 않는다**:
+--   - warehouse_id_default_location_id_fkey
+--     (컬럼 · REFERENCES · RESTRICT/CASCADE · DEFERRABLE INITIALLY DEFERRED)
+--   - warehouse_location_warehouse_id_id_key (composite FK 참조 대상)
+--   - warehouse_supplier_site_check (one-way)
+--   - ux_warehouse_in_transit_singleton
+--   - NOT-BLANK CHECK 5종
+--   - staged warehouse FK 5종
+-- ⛔ 기존 migration 파일을 수정하지 않는다 (checksum 보존).
+-- ⛔ drop/recreate 하지 않는다 — 순수 추가 1개다.
+-- ⛔ 데이터 행을 만들거나 바꾸지 않는다.
+
+-- CreateIndex
+CREATE UNIQUE INDEX "warehouse_id_default_location_id_key" ON "warehouse"("id", "default_location_id");

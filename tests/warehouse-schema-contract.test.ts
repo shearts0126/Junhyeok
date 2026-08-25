@@ -55,6 +55,67 @@ function fieldNames(name: string): string[] {
     .filter((token): token is string => token !== undefined);
 }
 
+/**
+ * 한 필드 선언을 **구조로** 파싱한다.
+ *
+ * ⛔ 문자열 한 조각을 `toContain` 하는 것만으로는 cardinality 를 못 본다 —
+ *    `Warehouse?` 와 `Warehouse[]` 를 구분해야 하기 때문이다.
+ */
+interface ParsedField {
+  readonly name: string;
+  /** 목록·optional 표시를 뗀 타입 이름. */
+  readonly type: string;
+  readonly isList: boolean;
+  readonly isOptional: boolean;
+  readonly relationName: string | null;
+  readonly fields: readonly string[] | null;
+  readonly references: readonly string[] | null;
+  readonly onDelete: string | null;
+  readonly onUpdate: string | null;
+}
+
+function parseField(model: string, fieldName: string): ParsedField | null {
+  const line = codeOnly(modelBody(model))
+    .split('\n')
+    .map((row) => row.trim())
+    .find((row) => new RegExp(`^${fieldName}\\s`).test(row));
+  if (line === undefined) return null;
+
+  const decl = new RegExp(`^${fieldName}\\s+([A-Za-z_][A-Za-z0-9_]*)(\\[\\])?(\\?)?`).exec(line);
+  if (decl === null) return null;
+
+  const list = (name: string): readonly string[] | null => {
+    const found = new RegExp(`${name}:\\s*\\[([^\\]]*)\\]`).exec(line);
+    if (found === null) return null;
+    return (found[1] ?? '')
+      .split(',')
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+  };
+
+  return {
+    name: fieldName,
+    type: decl[1] ?? '',
+    isList: decl[2] === '[]',
+    isOptional: decl[3] === '?',
+    relationName: /@relation\(\s*"([^"]+)"/.exec(line)?.[1] ?? null,
+    fields: list('fields'),
+    references: list('references'),
+    onDelete: /onDelete:\s*([A-Za-z]+)/.exec(line)?.[1] ?? null,
+    onUpdate: /onUpdate:\s*([A-Za-z]+)/.exec(line)?.[1] ?? null,
+  };
+}
+
+/** 모델의 `@@unique([...])` 블록을 필드 배열의 배열로 돌려준다. */
+function compositeUniques(model: string): string[][] {
+  return [...codeOnly(modelBody(model)).matchAll(/@@unique\(\s*\[([^\]]*)\]/g)].map((match) =>
+    (match[1] ?? '')
+      .split(',')
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0),
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // S1 — WarehouseType
 // ═══════════════════════════════════════════════════════════════
@@ -176,7 +237,7 @@ describe('S3. WarehouseLocation — scalar 필드 inventory exact (W-D4)', () =>
       'locationType',
       'active',
       'warehouse',
-      'defaultForWarehouses',
+      'defaultForWarehouse',
     ]);
   });
 
@@ -208,41 +269,89 @@ describe('S9. WarehouseLocation — 감사 컬럼이 없다 (W-D4)', () => {
 // S5 · S6 — UNIQUE
 // ═══════════════════════════════════════════════════════════════
 
-describe('S5 · S6. WarehouseLocation UNIQUE 2종', () => {
-  it('S5. business unique — (warehouseId, locationCode)', () => {
-    expect(codeOnly(modelBody('WarehouseLocation'))).toMatch(
-      /@@unique\(\[warehouseId,\s*locationCode\]\)/,
-    );
+describe('S5 · S6 · D · E. composite UNIQUE — source · target', () => {
+  it('S5. business unique — WarehouseLocation (warehouseId, locationCode)', () => {
+    expect(compositeUniques('WarehouseLocation')).toContainEqual(['warehouseId', 'locationCode']);
   });
 
-  it('S6. ★ composite FK target — (warehouseId, id) (W-D6)', () => {
+  it('S6 · E. ★ target composite unique — WarehouseLocation (warehouseId, id) (W-D6)', () => {
     // ⛔ 이 UNIQUE 를 지우면 `warehouse (id, default_location_id)` FK 를
     //    걸 수 없다. business identity 가 아니라 **참조 대상**이다.
-    expect(codeOnly(modelBody('WarehouseLocation'))).toMatch(/@@unique\(\[warehouseId,\s*id\]\)/);
+    expect(compositeUniques('WarehouseLocation')).toContainEqual(['warehouseId', 'id']);
+  });
+
+  it('D. ★ source composite unique — Warehouse (id, defaultLocationId)', () => {
+    // ★ 성능용 인덱스가 아니라 **1:1 cardinality 선언**이다.
+    //   `id` 가 PK 라 DB 논리상 중복이지만, Prisma 가 multi-field 1:1 을
+    //   인정하려면 source relation scalar 집합에 `@@unique` 가 있어야 한다.
+    //   없으면 inverse 를 `Warehouse[]` 로밖에 선언할 수 없어 ORM cardinality
+    //   가 DB 불변식보다 느슨해진다.
+    expect(compositeUniques('Warehouse')).toContainEqual(['id', 'defaultLocationId']);
+  });
+
+  it('★ 두 UNIQUE 의 필드 순서가 relation 의 fields/references 와 정확히 대응한다', () => {
+    const relation = parseField('Warehouse', 'defaultLocation');
+    expect(relation).not.toBeNull();
+
+    // source UNIQUE == relation fields
+    expect(compositeUniques('Warehouse')).toContainEqual([...(relation?.fields ?? [])]);
+    // target UNIQUE == relation references
+    expect(compositeUniques('WarehouseLocation')).toContainEqual([...(relation?.references ?? [])]);
   });
 });
 
 // ═══════════════════════════════════════════════════════════════
-// S7 — same-warehouse composite relation
+// S7 · A · B · C · F — same-warehouse composite relation, 1:1
 // ═══════════════════════════════════════════════════════════════
 
-describe('S7. defaultLocation composite relation (W-D6)', () => {
-  it('★ fields 는 [id, defaultLocationId] · references 는 [warehouseId, id] 다', () => {
-    const line = codeOnly(modelBody('Warehouse'))
-      .split('\n')
-      .find((row) => row.trim().startsWith('defaultLocation '));
+describe('S7 · A · F. Warehouse.defaultLocation (W-D6)', () => {
+  it('A · F. ★ singular required 이고 fields/references 가 정확하다', () => {
+    const field = parseField('Warehouse', 'defaultLocation');
 
-    expect(line, 'Warehouse.defaultLocation relation 이 없다').toBeDefined();
-    expect(line).toContain('fields: [id, defaultLocationId]');
-    expect(line).toContain('references: [warehouseId, id]');
-    expect(line).toContain('onDelete: Restrict');
-    expect(line).toContain('onUpdate: Cascade');
+    expect(field, 'Warehouse.defaultLocation relation 이 없다').not.toBeNull();
+    expect(field?.type).toBe('WarehouseLocation');
+    // A — singular. ⛔ 목록이 아니다.
+    expect(field?.isList).toBe(false);
+    // relation scalar(`defaultLocationId`) 가 NOT NULL 이므로 required 다.
+    expect(field?.isOptional).toBe(false);
+
+    // F — composite relation 의 열 대응이 W-D6 그대로다.
+    expect(field?.fields).toEqual(['id', 'defaultLocationId']);
+    expect(field?.references).toEqual(['warehouseId', 'id']);
+    expect(field?.onDelete).toBe('Restrict');
+    expect(field?.onUpdate).toBe('Cascade');
   });
 
   it('⛔ 단일 열 FK(`defaultLocationId → id`)로 축약하지 않았다', () => {
     // 단일 FK 면 **다른 창고의** 로케이션을 default 로 지정할 수 있다.
-    expect(codeOnly(modelBody('Warehouse'))).not.toMatch(
-      /fields:\s*\[defaultLocationId\]\s*,\s*references:\s*\[id\]/,
+    const field = parseField('Warehouse', 'defaultLocation');
+    expect(field?.fields).not.toEqual(['defaultLocationId']);
+    expect(field?.references).not.toEqual(['id']);
+  });
+});
+
+describe('B · C. WarehouseLocation inverse 는 optional singular 다', () => {
+  it('B. ★ defaultForWarehouse 는 `Warehouse?` 다 — 배열이 아니다', () => {
+    const field = parseField('WarehouseLocation', 'defaultForWarehouse');
+
+    expect(field, 'WarehouseLocation.defaultForWarehouse relation 이 없다').not.toBeNull();
+    expect(field?.type).toBe('Warehouse');
+    // ★ 핵심 — 목록이면 ORM cardinality 가 DB 불변식보다 느슨해진다.
+    expect(field?.isList).toBe(false);
+    // relation scalar 가 없는 inverse 이므로 Prisma 1:1 규칙상 optional 이다.
+    expect(field?.isOptional).toBe(true);
+    expect(field?.relationName).toBe('WarehouseDefaultLocation');
+  });
+
+  it('C. ⛔ `defaultForWarehouses Warehouse[]` 가 남아 있지 않다', () => {
+    expect(fieldNames('WarehouseLocation')).not.toContain('defaultForWarehouses');
+    // 모델 전체에서 이 relation 이 목록으로 선언된 곳이 없다.
+    expect(codeOnly(modelBody('WarehouseLocation'))).not.toMatch(/Warehouse\[\]/);
+  });
+
+  it('★ 두 방향의 relation name 이 같다 — Prisma 가 짝으로 인식한다', () => {
+    expect(parseField('Warehouse', 'defaultLocation')?.relationName).toBe(
+      parseField('WarehouseLocation', 'defaultForWarehouse')?.relationName,
     );
   });
 });

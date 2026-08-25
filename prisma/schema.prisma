@@ -1221,6 +1221,17 @@ model Warehouse {
   //   4) FK warehouse_id_default_location_id_fkey 를
   //        DEFERRABLE INITIALLY DEFERRED 로 생성 (Prisma 가 못 만든다)
 
+  /// ★ **1:1 cardinality 선언**이다 — query 성능용 인덱스가 아니다.
+  ///
+  /// `id` 가 PK 이므로 `(id, defaultLocationId)` 는 DB 논리상 이미 유일하고
+  /// 이 UNIQUE 는 그 위에 얹히는 중복이다. 그럼에도 두는 이유는 Prisma 가
+  /// **multi-field 1:1 relation 을 인정하려면 source 쪽 relation scalar 집합에
+  /// `@@unique` 를 요구**하기 때문이다. 이것이 없으면 inverse 를
+  /// `Warehouse[]` 로밖에 선언할 수 없어, **ORM 모델의 cardinality 가 DB
+  /// 불변식보다 느슨해진다**(창고 1 ↔ DEFAULT 로케이션 1).
+  /// ⛔ "중복 인덱스" 를 이유로 삭제하지 말 것 — 지우면 아래
+  ///    `defaultLocation` ↔ `defaultForWarehouse` 1:1 선언이 깨진다.
+  @@unique([id, defaultLocationId])
   @@map("warehouse")
 }
 
@@ -1239,15 +1250,19 @@ model WarehouseLocation {
 
   warehouse Warehouse @relation("WarehouseLocations", fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  /// composite FK 의 inverse.
+  /// composite FK 의 inverse — **1:1** 이다.
   ///
-  /// ★ 실제로는 **최대 1건**이다 — FK 의 첫 열이 `warehouse.id`(PK) 라서
-  ///   한 로케이션을 default 로 갖는 창고는 구조적으로 하나뿐이다.
-  ///   그럼에도 1:1 이 아니라 1:N 으로 선언하는 이유는, Prisma 가 1:1 을
-  ///   위해 `@@unique([id, defaultLocationId])` 를 요구하는데 그것이
-  ///   **PK 위에 얹히는 완전 중복 인덱스**이기 때문이다. 불변식은 이미
-  ///   PK + composite FK 가 강제하므로 인덱스를 하나 더 만들지 않는다.
-  defaultForWarehouses Warehouse[] @relation("WarehouseDefaultLocation")
+  /// 한 로케이션이 default 인 창고는 최대 하나다: FK 의 첫 열이
+  /// `warehouse.id`(PK) 이므로 구조적으로 둘이 될 수 없다. 그 사실을 ORM
+  /// 모델에도 그대로 표현한다 — `Warehouse[]` 로 두면 **cardinality 가 DB
+  /// 불변식보다 느슨해진다**.
+  ///
+  /// optional singular 인 이유: relation scalar(`defaultLocationId`) 를 가진
+  /// 쪽은 `Warehouse` 이고, scalar 가 없는 inverse 는 Prisma 1:1 규칙상
+  /// optional 이어야 한다. (아직 어떤 창고의 default 도 아닌 로케이션이
+  /// 존재하는 것도 정상이다 — DEFAULT 가 아닌 일반 로케이션들.)
+  /// ⛔ `Warehouse[]` 로 되돌리지 않는다.
+  defaultForWarehouse Warehouse? @relation("WarehouseDefaultLocation")
 
   @@unique([warehouseId, locationCode])
   /// ★ business identity 가 아니라 **composite FK 의 참조 대상**이다 (W-D6).

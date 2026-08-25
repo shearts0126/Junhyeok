@@ -59,24 +59,33 @@ export async function createTestWarehouse(warehouseCode: string): Promise<string
  *    (docs/19 §W-D19) 순서만으로는 풀리지 않는다 — 어느 쪽을 먼저 지워도
  *    상대가 막는다. 이는 사고가 아니라 물리삭제 금지 정책과 정합하는 성질이며,
  *    운영 경로에는 창고 물리삭제가 아예 없다. 테스트 잔여물 정리에 한해
- *    `session_replication_role = replica` 로 FK 검사를 잠시 끈다
- *    (`audit_log` 트리거를 DISABLE 하는 기존 정리 선례와 같은 성격).
+ *    FK 검사를 잠시 끈다 (`audit_log` 트리거를 DISABLE 하는 기존 정리 선례와
+ *    같은 성격).
  * ⛔ 운영 코드에는 이 경로가 없다.
+ *
+ * ── ★ 왜 트랜잭션 안의 `SET LOCAL` 인가 ─────────────────────────────
+ * `session_replication_role` 은 **세션(=커넥션) 단위** 설정인데 PrismaClient 는
+ * driver adapter 뒤에 커넥션 **풀**을 둔다. 따라서 평범한
+ * `SET ... = replica` → try/finally → `SET ... = origin` 은 안전하지 않다:
+ * 두 문장이 서로 다른 커넥션에 갈 수 있어 ① DELETE 가 replica 가 아닌
+ * 커넥션에서 실행되거나 ② **replica 인 채로 남은 커넥션이 풀에 반환**되어
+ * 이후 다른 DB 테스트의 FK 검사가 통째로 무력화된다.
+ *
+ * `$transaction` 은 하나의 커넥션에 고정되고, `SET LOCAL` 은 COMMIT/ROLLBACK
+ * 시점에 **PostgreSQL 이 스스로 되돌린다** — 예외가 나도 누출이 없다.
+ * try/finally 보다 강한 보장이며, 그래서 `finally` 로 복구하지 않는다.
  */
 export async function deleteTestWarehouses(codePrefix: string): Promise<void> {
-  const client = getPrismaClient();
-  await client.$executeRawUnsafe(`SET session_replication_role = replica`);
-  try {
-    await client.$executeRawUnsafe(
+  await getPrismaClient().$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`);
+    await tx.$executeRawUnsafe(
       `DELETE FROM warehouse_location WHERE warehouse_id IN
          (SELECT id FROM warehouse WHERE warehouse_code LIKE $1)`,
       `${codePrefix}%`,
     );
-    await client.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `DELETE FROM warehouse WHERE warehouse_code LIKE $1`,
       `${codePrefix}%`,
     );
-  } finally {
-    await client.$executeRawUnsafe(`SET session_replication_role = origin`);
-  }
+  });
 }

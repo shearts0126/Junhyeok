@@ -26,9 +26,11 @@ import { disconnectPrisma, getPrismaClient } from '@/shared/db';
  * (W-D19). 그래서 짝지어진 창고+DEFAULT 로케이션은 일반 DELETE 로 지울 수
  * 없다 — 어느 쪽을 먼저 지워도 상대가 막는다. 이는 사고가 아니라 **물리삭제
  * 금지 정책과 정합**하는 성질이다(운영 경로에 물리삭제가 없다).
- * 테스트 잔여물 정리에는 `session_replication_role = replica` 로 FK 검사를
- * 잠시 끄는 방식을 쓴다 — `audit_log` 트리거를 DISABLE 하는 기존 정리
- * 선례와 같은 성격이다. ⛔ 운영 코드에는 이 경로가 없다.
+ * 테스트 잔여물 정리에는 **트랜잭션 안의 `SET LOCAL session_replication_role`**
+ * 로 FK 검사를 잠시 끄는 방식을 쓴다 — `audit_log` 트리거를 DISABLE 하는 기존
+ * 정리 선례와 같은 성격이다. `SET LOCAL` 은 COMMIT/ROLLBACK 에서 PostgreSQL 이
+ * 스스로 되돌리므로 커넥션 풀에 replica 상태가 **누출될 수 없다**.
+ * ⛔ 운영 코드에는 이 경로가 없다.
  */
 
 const RUN = randomBytes(4).toString('hex');
@@ -38,40 +40,42 @@ const CODE = (suffix: string) => `TWH-${RUN}-${suffix}`;
 const ORPHAN_ID = 'eeeeeeee-0000-4000-8000-0000000c8001';
 
 async function cleanup(): Promise<void> {
-  const client = getPrismaClient();
   // ★ 상호 RESTRICT 때문에 순서로는 풀 수 없다 — 파일 상단 주석 참조.
   //   이 파일이 만드는 행은 전부 `TWH-` prefix 를 갖는 다섯 마스터에 매달려
   //   있으므로 FK 검사만 잠시 끄고 한 번에 지운다.
-  await client.$executeRawUnsafe(`SET session_replication_role = replica`);
-  try {
-    await client.$executeRawUnsafe(
+  //
+  // ★ `$transaction` + `SET LOCAL` 인 이유는 `warehouse-fixture.ts` 주석과 같다 —
+  //   커넥션 풀에서 평범한 `SET` 은 복구가 다른 커넥션에 갈 수 있어
+  //   **replica 인 채로 남은 커넥션**이 이후 DB 테스트의 FK 검사를 무력화한다.
+  //   `SET LOCAL` 은 COMMIT/ROLLBACK 에서 PostgreSQL 이 스스로 되돌린다.
+  await getPrismaClient().$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`);
+    await tx.$executeRawUnsafe(
       `DELETE FROM bom_line WHERE bom_header_id IN
          (SELECT h.id FROM bom_header h JOIN sku s ON s.id = h.parent_sku_id
            WHERE s.sku_code LIKE 'TWH-%')`,
     );
-    await client.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `DELETE FROM bom_header WHERE parent_sku_id IN
          (SELECT id FROM sku WHERE sku_code LIKE 'TWH-%')`,
     );
-    await client.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `DELETE FROM supplier_sku WHERE sku_id IN
          (SELECT id FROM sku WHERE sku_code LIKE 'TWH-%')`,
     );
-    await client.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `DELETE FROM sku_external_mapping WHERE sku_id IN
          (SELECT id FROM sku WHERE sku_code LIKE 'TWH-%')`,
     );
-    await client.$executeRawUnsafe(
+    await tx.$executeRawUnsafe(
       `DELETE FROM warehouse_location WHERE warehouse_id IN
          (SELECT id FROM warehouse WHERE warehouse_code LIKE 'TWH-%')`,
     );
-    await client.$executeRawUnsafe(`DELETE FROM warehouse WHERE warehouse_code LIKE 'TWH-%'`);
-    await client.$executeRawUnsafe(`DELETE FROM supplier WHERE supplier_code LIKE 'TWH-%'`);
-    await client.$executeRawUnsafe(`DELETE FROM external_system WHERE system_code LIKE 'TWH-%'`);
-    await client.$executeRawUnsafe(`DELETE FROM sku WHERE sku_code LIKE 'TWH-%'`);
-  } finally {
-    await client.$executeRawUnsafe(`SET session_replication_role = origin`);
-  }
+    await tx.$executeRawUnsafe(`DELETE FROM warehouse WHERE warehouse_code LIKE 'TWH-%'`);
+    await tx.$executeRawUnsafe(`DELETE FROM supplier WHERE supplier_code LIKE 'TWH-%'`);
+    await tx.$executeRawUnsafe(`DELETE FROM external_system WHERE system_code LIKE 'TWH-%'`);
+    await tx.$executeRawUnsafe(`DELETE FROM sku WHERE sku_code LIKE 'TWH-%'`);
+  });
 }
 
 beforeAll(cleanup);
@@ -246,6 +250,129 @@ describe('★ D1~D5. DEFAULT 로케이션 — same-warehouse composite FK (W-D6 
 
     expect(rows[0]?.condeferrable).toBe(false);
     expect(rows[0]?.condeferred).toBe(false);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// R1 ~ R7 — default location 1:1 remediation
+//
+// ★ Prisma 가 multi-field 1:1 을 인정하려면 source 쪽 relation scalar 집합에
+//   UNIQUE 가 있어야 한다. 그 UNIQUE 가 실제로 DB 에 있는지, 그리고 그것을
+//   추가하면서 기존 제약을 **하나도 건드리지 않았는지**를 함께 고정한다.
+// ═══════════════════════════════════════════════════════════════
+
+describe('★ R1~R7. default location 1:1 — source UNIQUE 추가 · 나머지 불변', () => {
+  it('R1. ★ warehouse (id, default_location_id) UNIQUE 가 카탈로그에 있다', async () => {
+    const rows = await getPrismaClient().$queryRaw<Array<{ indexname: string; indexdef: string }>>`
+      SELECT indexname, indexdef FROM pg_indexes
+       WHERE tablename = 'warehouse'
+         AND indexname = 'warehouse_id_default_location_id_key'`;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.indexdef).toContain('UNIQUE');
+    // 열 순서까지 relation 의 `fields: [id, defaultLocationId]` 와 같다.
+    expect(rows[0]?.indexdef).toMatch(/\(id, default_location_id\)/);
+    // ⛔ partial 이 아니다 — 모든 행에 적용된다.
+    expect(rows[0]?.indexdef).not.toContain('WHERE');
+  });
+
+  it('R2. ★ warehouse_location (warehouse_id, id) UNIQUE 가 그대로 있다', async () => {
+    const rows = await getPrismaClient().$queryRaw<Array<{ indexname: string; indexdef: string }>>`
+      SELECT indexname, indexdef FROM pg_indexes
+       WHERE tablename = 'warehouse_location'
+         AND indexname = 'warehouse_location_warehouse_id_id_key'`;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.indexdef).toContain('UNIQUE');
+    expect(rows[0]?.indexdef).toMatch(/\(warehouse_id, id\)/);
+  });
+
+  it('R3 · R4 · R5. ★ default composite FK 가 remediation 으로 바뀌지 않았다', async () => {
+    const rows = await getPrismaClient().$queryRaw<
+      Array<{ condeferrable: boolean; condeferred: boolean; def: string }>
+    >`
+      SELECT condeferrable, condeferred, pg_get_constraintdef(oid) AS def
+        FROM pg_constraint
+       WHERE conrelid = 'warehouse'::regclass
+         AND conname = 'warehouse_id_default_location_id_fkey'`;
+
+    expect(rows).toHaveLength(1);
+    // R3 — 컬럼·참조 대상·동작 전부 T08-1 원본 그대로다.
+    expect(rows[0]?.def).toBe(
+      'FOREIGN KEY (id, default_location_id) REFERENCES warehouse_location(warehouse_id, id) ' +
+        'ON UPDATE CASCADE ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED',
+    );
+    // R4 · R5 — deferrability 도 그대로다 (drop/recreate 하지 않았다).
+    expect(rows[0]?.condeferrable).toBe(true);
+    expect(rows[0]?.condeferred).toBe(true);
+  });
+
+  it('R6. ★ 다른 창고의 로케이션을 default 로 지정하면 여전히 거부된다', async () => {
+    const other = await createWarehouseWithDefault('R6-other');
+
+    await expect(
+      getPrismaClient().warehouse.create({
+        data: {
+          warehouseCode: CODE('R6'),
+          warehouseName: '남의 로케이션 (remediation 후)',
+          warehouseType: 'INTERNAL',
+          defaultLocationId: other.locationId,
+        },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('R7. ★ 올바른 창고/DEFAULT 쌍은 여전히 한 트랜잭션에서 commit 된다', async () => {
+    const { warehouseId, locationId } = await createWarehouseWithDefault('R7');
+
+    const row = await getPrismaClient().warehouse.findUniqueOrThrow({
+      where: { id: warehouseId },
+      select: { defaultLocationId: true, defaultLocation: { select: { warehouseId: true } } },
+    });
+
+    expect(row.defaultLocationId).toBe(locationId);
+    // ★ composite FK 가 보장하는 것 — default 로케이션의 소속 창고 = 자기 자신.
+    expect(row.defaultLocation.warehouseId).toBe(warehouseId);
+  });
+
+  it('★ 새 UNIQUE 는 정상 데이터를 막지 않는다 — 창고 2개가 각자 default 를 갖는다', async () => {
+    const a = await createWarehouseWithDefault('R7-a');
+    const b = await createWarehouseWithDefault('R7-b');
+
+    expect(a.warehouseId).not.toBe(b.warehouseId);
+    expect(a.locationId).not.toBe(b.locationId);
+    expect(
+      await getPrismaClient().warehouse.count({
+        where: { warehouseCode: { startsWith: `TWH-${RUN}-R7-` } },
+      }),
+    ).toBe(2);
+  });
+
+  it('★ inverse 를 singular 로 조회할 수 있다 — Prisma 1:1 이 실동작한다', async () => {
+    const { warehouseId, locationId } = await createWarehouseWithDefault('R7-inv');
+
+    const location = await getPrismaClient().warehouseLocation.findUniqueOrThrow({
+      where: { id: locationId },
+      select: { defaultForWarehouse: { select: { id: true } } },
+    });
+
+    // ★ 배열이 아니라 단일 객체다 — `Warehouse[]` 였다면 여기서 타입이 깨진다.
+    expect(location.defaultForWarehouse?.id).toBe(warehouseId);
+  });
+
+  it('★ DEFAULT 가 아닌 로케이션의 inverse 는 null 이다 (optional 이 옳다)', async () => {
+    const { warehouseId } = await createWarehouseWithDefault('R7-plain');
+    const plain = await getPrismaClient().warehouseLocation.create({
+      data: { warehouseId, locationCode: 'A-01', locationName: 'A 구역' },
+      select: { id: true },
+    });
+
+    const row = await getPrismaClient().warehouseLocation.findUniqueOrThrow({
+      where: { id: plain.id },
+      select: { defaultForWarehouse: { select: { id: true } } },
+    });
+
+    expect(row.defaultForWarehouse).toBeNull();
   });
 });
 
