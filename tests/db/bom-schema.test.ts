@@ -512,22 +512,35 @@ describe('FK 무결성 (D-2)', () => {
   });
 });
 
-describe('★ staged scalar — Warehouse FK 가 없다 (D-32)', () => {
-  it('20. 존재하지 않는 창고 UUID 를 헤더·라인에 저장할 수 있다', async () => {
+describe('★ Warehouse FK 가 landing 했다 (D-32 → docs/19 §W-D15)', () => {
+  it('20. ★ 존재하지 않는 창고 UUID 는 헤더·라인 모두 DB 가 거부한다', async () => {
+    // ⚠️ **T07-1 staged state 가 T08-1 에서 supersede 되었다.**
+    //    원래 이 테스트는 "FK 가 없어 임의 UUID 를 저장할 수 있다" 를 고정했고,
+    //    docs/18 §D-32 가 "T08-1 구현 시 연결" 을 예고했다. 이제 그 시점이다
+    //    (docs/19 §W-D15 #4·#5 · §W-D21).
     const parent = await newSku('staged');
     const child = await newSku('staged부품');
-    const headerId = await newHeader(parent, {
-      from: '2026-01-01',
-      destinationWarehouseId: ORPHAN_WAREHOUSE_ID,
-    });
-    const lineId = await newLine(headerId, child, { issueWarehouseId: ORPHAN_WAREHOUSE_ID });
+
+    await expect(
+      newHeader(parent, { from: '2026-01-01', destinationWarehouseId: ORPHAN_WAREHOUSE_ID }),
+    ).rejects.toThrow();
+
+    const headerId = await newHeader(parent, { from: '2026-01-01' });
+    await expect(
+      newLine(headerId, child, { issueWarehouseId: ORPHAN_WAREHOUSE_ID }),
+    ).rejects.toThrow();
+  });
+
+  it('20b. ★ null 은 계속 허용된다 — T07 API 는 이 필드를 그대로 둔다', async () => {
+    const parent = await newSku('staged널');
+    const child = await newSku('staged널부품');
+    const headerId = await newHeader(parent, { from: '2026-01-01' });
+    const lineId = await newLine(headerId, child);
 
     const header = await getPrismaClient().bomHeader.findUniqueOrThrow({ where: { id: headerId } });
     const line = await getPrismaClient().bomLine.findUniqueOrThrow({ where: { id: lineId } });
-    // ⚠️ 이것은 FK 누락 사고가 아니라 T08-1 을 기다리는 **의도된 staged state** 다.
-    //    T08-1 이 Warehouse 를 만들면 이 테스트는 반대 방향으로 바뀌어야 한다.
-    expect(header.destinationWarehouseId).toBe(ORPHAN_WAREHOUSE_ID);
-    expect(line.issueWarehouseId).toBe(ORPHAN_WAREHOUSE_ID);
+    expect(header.destinationWarehouseId).toBeNull();
+    expect(line.issueWarehouseId).toBeNull();
   });
 });
 
@@ -695,17 +708,27 @@ describe('★★ 카탈로그 — raw SQL 제약 (21·22·23)', () => {
     expect(rows).toHaveLength(0);
   });
 
-  it('⛔ staged scalar 2종에 FK 가 없다 (D-32)', async () => {
-    const rows = await getPrismaClient().$queryRawUnsafe<{ conname: string }[]>(
-      `SELECT c.conname
+  it('★ warehouse scalar 2종이 FK 로 landing 했다 (D-32 → docs/19 §W-D15)', async () => {
+    const rows = await getPrismaClient().$queryRawUnsafe<{ conname: string; def: string }[]>(
+      `SELECT c.conname, pg_get_constraintdef(c.oid) AS def
          FROM pg_constraint c
          JOIN pg_attribute a
            ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
         WHERE c.contype = 'f'
           AND c.conrelid IN ('bom_header'::regclass, 'bom_line'::regclass)
-          AND a.attname IN ('destination_warehouse_id', 'issue_warehouse_id')`,
+          AND a.attname IN ('destination_warehouse_id', 'issue_warehouse_id')
+        ORDER BY c.conname`,
     );
-    expect(rows).toHaveLength(0);
+
+    expect(rows.map((row) => row.conname)).toEqual([
+      'bom_header_destination_warehouse_id_fkey',
+      'bom_line_issue_warehouse_id_fkey',
+    ]);
+    for (const row of rows) {
+      expect(row.def, row.conname).toContain('REFERENCES warehouse(id)');
+      expect(row.def, row.conname).toContain('ON DELETE RESTRICT');
+      expect(row.def, row.conname).toContain('ON UPDATE CASCADE');
+    }
   });
 });
 

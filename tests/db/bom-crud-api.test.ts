@@ -26,6 +26,8 @@ import { ERROR_CODES } from '@/shared/errors';
 
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
 
+import { createTestWarehouse, deleteTestWarehouses } from './warehouse-fixture';
+
 /**
  * BOM CRUD API DB 통합 테스트 (T07-3) — 실제 PostgreSQL.
  *
@@ -162,6 +164,7 @@ async function cleanup(): Promise<void> {
   await client.sku.deleteMany({ where: { skuCode: { startsWith: 'TBC-' } } });
   await client.supplier.deleteMany({ where: { supplierCode: { startsWith: 'TBC-' } } });
   await client.user.deleteMany({ where: { id: { in: ACTOR_IDS } } });
+  await deleteTestWarehouses('TBC-');
 }
 
 beforeAll(async () => {
@@ -332,13 +335,18 @@ describe('BOM 생성 (D-14)', () => {
   });
 
   it('★ destinationWarehouseId 는 존재 조회 없이 UUID 그대로 저장된다 (D-32)', async () => {
+    // ✏️ T08-1 이 이 컬럼을 real FK 로 landing 시켰으므로(docs/19 §W-D15 #4)
+    //    유령 UUID 대신 **실재 창고**를 쓴다. 검증 대상은 창고의 존재가 아니라
+    //    "application 이 창고를 조회·join 하지 않는다" 는 계약 그대로다 —
+    //    ⛔ 아래 응답에 warehouse 객체·이름이 없다 (D-31·D-32).
     const parent = await newSku('wh', { status: 'ACTIVE' });
-    const ghostWarehouse = '77777777-7777-4777-8777-777777777777';
+    const warehouseId = await createTestWarehouse(CODE('WH1'));
     const { bom } = await createBom(
       STAFF,
-      bomInput(parent, { destinationWarehouseId: ghostWarehouse }),
+      bomInput(parent, { destinationWarehouseId: warehouseId }),
     );
-    expect(bom.destinationWarehouseId).toBe(ghostWarehouse);
+    expect(bom.destinationWarehouseId).toBe(warehouseId);
+    expect(bom).not.toHaveProperty('destinationWarehouse');
   });
 
   it('★ 날짜가 하루 밀리지 않는다 — date-only round-trip', async () => {
@@ -948,15 +956,17 @@ describe('BOM 라인 생성 (D-9·D-10·D-11·D-12)', () => {
   });
 
   it('★ issueWarehouseId 는 존재 조회 없이 저장된다 (D-32)', async () => {
+    // ✏️ T08-1 FK landing (docs/19 §W-D15 #5) — 실재 창고를 쓰되 계약은 동일하다.
     const { bomId } = await draftBom('lwh');
     const component = await newSku('lwh-c', { status: 'ACTIVE' });
-    const ghost = '66666666-6666-4666-8666-666666666666';
+    const warehouseId = await createTestWarehouse(CODE('WH2'));
     const { line } = await createBomLine(
       STAFF,
       bomId,
-      lineInput(component, { issueWarehouseId: ghost }),
+      lineInput(component, { issueWarehouseId: warehouseId }),
     );
-    expect(line.issueWarehouseId).toBe(ghost);
+    expect(line.issueWarehouseId).toBe(warehouseId);
+    expect(line).not.toHaveProperty('issueWarehouse');
   });
 
   it('AuditLog 는 BomLine CREATE 1건이다 (D-16)', async () => {

@@ -556,6 +556,10 @@ model ExternalSystem {
 
   mappings SkuExternalMapping[]
 
+  /// `Warehouse.externalSystem` 의 필수 inverse (T08-1, W-D14).
+  /// ⛔ 신규 업무 필드가 아니며 어떤 API 도 이 관계를 include 하지 않는다.
+  warehouses Warehouse[]
+
   @@map("external_system")
 }
 
@@ -576,9 +580,11 @@ model SkuExternalMapping {
   skuId            String @map("sku_id") @db.Uuid
   externalSystemId String @map("external_system_id") @db.Uuid
 
-  /// T05-1 Design Recovery: scalar 컬럼만 유지한다.
-  /// `Warehouse` 모델이 아직 없어 FK·relation 을 만들 수 없다 (T08-1).
-  /// ⛔ 이 컬럼을 삭제하지 말 것 — 원 설계에 명시된 3PL scope 다.
+  /// T05-1 Design Recovery 가 staged scalar 로 남겼고, **T08-1 이 real FK 로
+  /// landing 했다** (docs/19 §W-D15 #1). ⛔ 이 컬럼을 삭제하지 말 것 —
+  /// 원 설계에 명시된 3PL scope 다.
+  /// ⚠️ FK 가 생겼을 뿐 **public API 계약은 그대로다** — `warehouseId` 입력은
+  ///    여전히 400 이고 저장값은 항상 null 이다 (docs/13 §5).
   warehouseId String? @map("warehouse_id") @db.Uuid
 
   /// NULL 과 빈 문자열이 **모두** 허용된다 — 둘 다 조건부 UNIQUE predicate 밖이다.
@@ -599,6 +605,9 @@ model SkuExternalMapping {
   /// 마스터는 물리삭제 대상이 아니다 — 매핑이 딸려 지워지면 안 되므로 RESTRICT (CASCADE 금지).
   sku            Sku            @relation(fields: [skuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   externalSystem ExternalSystem @relation(fields: [externalSystemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// T08-1 landing (W-D15 #1). nullable optional FK — RESTRICT.
+  warehouse Warehouse? @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([skuId])
   @@index([externalSystemId, mappingStatus])
@@ -709,9 +718,9 @@ model Supplier {
   ///   ⛔ null 을 0 으로 자동 변환 금지 (§00 G-03). 음수만 CHECK 로 막는다.
   defaultLeadTimeDays Int? @map("default_lead_time_days")
 
-  /// ★ **staged scalar** — `warehouse` 테이블이 아직 없다(T08-1).
-  ///   FK·relation 없이 UUID 만 저장한다. 임의 UUID 가 들어가도 위반이 아니며
-  ///   이는 사고가 아니라 의도된 상태다 (`SkuExternalMapping.warehouseId` 선례).
+  /// T06-1 이 staged scalar 로 남겼고 **T08-1 이 real FK 로 landing 했다**
+  /// (docs/19 §W-D15 #2). 이제 존재하지 않는 UUID 는 DB 가 거부한다.
+  /// ⚠️ FK 만 생겼다 — T06-2 public API 는 여전히 이 필드를 받지 않는다.
   defaultWarehouseId String? @map("default_warehouse_id") @db.Uuid
 
   /// ★ 허용값 allow-list CHECK 없음 — blank 만 막는다 (docs/17 §5).
@@ -727,6 +736,15 @@ model Supplier {
   /// BOM 조립처 (T07-1). `BomHeader.productionPartner` 의 필수 inverse relation
   /// 이며 신규 업무 컬럼이 아니다. ⛔ Supplier business logic 은 그대로다.
   bomHeaders BomHeader[] @relation("BomProductionPartner")
+
+  /// T08-1 landing (W-D15 #2). ⚠️ 아래 `supplierSiteWarehouses` 와 **완전히
+  /// 다른 관계**다 — 이쪽은 "이 거래처가 기본 입고처로 쓰는 창고" 이고,
+  /// 저쪽은 "이 거래처가 사급자재를 보관하는 SUPPLIER_SITE 창고" 다.
+  defaultWarehouse Warehouse? @relation("SupplierDefaultWarehouse", fields: [defaultWarehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// `Warehouse.supplier`(SUPPLIER_SITE) 의 필수 inverse (T08-1, W-D13).
+  /// ⚠️ Phase 7(`T4-19`) 전까지 11개 SUPPLIER_SITE 창고는 이 관계가 비어 있다.
+  supplierSiteWarehouses Warehouse[] @relation("WarehouseSupplierSite")
 
   @@map("supplier")
 }
@@ -769,7 +787,8 @@ model SupplierSku {
   /// free string 이다. ⛔ CommonCode FK·`Sku.purchaseUom` 자동 상속·default 없음.
   purchaseUom String? @map("purchase_uom") @db.VarChar(20)
 
-  /// ★ **staged scalar** — `Supplier.defaultWarehouseId` 와 동일하게 T08-1 이다.
+  /// T06-1 staged scalar → **T08-1 real FK landing** (docs/19 §W-D15 #3).
+  /// ⚠️ T06-2/T06-3 public API 계약은 그대로다 — 입력을 받지 않는다.
   destinationWarehouseId String? @map("destination_warehouse_id") @db.Uuid
 
   /// ⛔ ISO 4217 enum·CommonCode·uppercase CHECK 없음. blank 만 막는다.
@@ -793,6 +812,9 @@ model SupplierSku {
   /// 마스터는 물리삭제 대상이 아니다 — 공급조건이 딸려 지워지면 안 되므로 RESTRICT.
   supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   sku      Sku      @relation(fields: [skuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// T08-1 landing (W-D15 #3). nullable optional FK — RESTRICT.
+  destinationWarehouse Warehouse? @relation(fields: [destinationWarehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   prices SupplierSkuPrice[]
 
@@ -960,7 +982,9 @@ model BomHeader {
   /// — staged scalar 가 아니다 (docs/18 §D-2, `01:157` P열 매핑).
   productionPartnerId String? @map("production_partner_id") @db.Uuid
 
-  /// ★ **staged scalar** — `Warehouse` 는 T08-1 이다. FK·relation 없음.
+  /// T07-1 staged scalar → **T08-1 real FK landing** (docs/19 §W-D15 #4).
+  /// ⚠️ T07 public `BomView`/`BomDetail` 은 그대로다 — 이름 join 없음,
+  ///    relation 객체 자동 include 없음 (docs/18 §D-31·§D-32).
   destinationWarehouseId String? @map("destination_warehouse_id") @db.Uuid
 
   /// 전체 로스율. null = 0 으로 본다 (⛔ 임의 추정 금지, `01:190`).
@@ -985,16 +1009,19 @@ model BomHeader {
   createdByUser     User?     @relation("BomHeaderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
   approvedByUser    User?     @relation("BomHeaderApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  lines BomLine[]
+  /// T08-1 landing (W-D15 #4). nullable optional FK — RESTRICT.
+  destinationWarehouse Warehouse? @relation(fields: [destinationWarehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
-  @@unique([parentSkuId, version])
-  @@index([parentSkuId, status])
-  @@map("bom_header")
+  lines BomLine[]
   // raw SQL (migration 참조):
   //   1) CHECK   bom_header_effective_period_check
   //        effective_to IS NULL OR effective_to > effective_from
   //   2) EXCLUDE bom_header_active_period_excl  ★ WHERE (status = 'ACTIVE')
   //        (parent_sku_id WITH =, daterange(effective_from, effective_to, '[)') WITH &&)
+
+  @@unique([parentSkuId, version])
+  @@index([parentSkuId, status])
+  @@map("bom_header")
 }
 
 /// BOM 라인 — 한 버전의 구성품 한 줄.
@@ -1041,7 +1068,9 @@ model BomLine {
 
   isRequired Boolean @default(true) @map("is_required")
 
-  /// ★ **staged scalar** — `Warehouse` 는 T08-1 이다. FK·relation 없음.
+  /// T07-1 staged scalar → **T08-1 real FK landing** (docs/19 §W-D15 #5).
+  /// ⚠️ T07 라인 public projection 은 그대로다 — scalar UUID 그대로 노출하고
+  ///    relation 을 자동 include 하지 않는다 (docs/18 §D-31·§D-32).
   issueWarehouseId String? @map("issue_warehouse_id") @db.Uuid
 
   /// ★ 포장 입수량. **소요량이 아니다** (위 모델 주석 참조).
@@ -1058,11 +1087,172 @@ model BomLine {
   bomHeader    BomHeader @relation(fields: [bomHeaderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   componentSku Sku       @relation("BomComponent", fields: [componentSkuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
+  /// T08-1 landing (W-D15 #5). nullable optional FK — RESTRICT.
+  issueWarehouse Warehouse? @relation(fields: [issueWarehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  // raw SQL (migration 참조):
+  //   3) UNIQUE INDEX ux_bom_line_component_group
+  //        (bom_header_id, component_sku_id, COALESCE(alternate_group, ''))
+
   @@unique([bomHeaderId, lineNo])
   /// 역전개(where-used)용. T07-3 `hasBomUsage` provider 가 이 인덱스를 탄다.
   @@index([componentSkuId])
   @@map("bom_line")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 창고 · 로케이션 (T08-1 = v0.2 T2-1A)
+//
+// 설계 문서: docs/19_설계복구_Warehouse.md (W-D1 ~ W-D42)
+//            원 설계는 docs/03_ERD와_Prisma스키마_v0.2.md §Layer 1(창고).
+//
+// T08-1 은 **테이블 · DB 제약 · relation landing 까지만** 만든다.
+// application service · API · DTO · permission · route-policy · seed 15종 ·
+// DEFAULT 자동생성 flow · UI(T2-20) 는 전부 T08-2 이후다 (W-D1).
+//
+// ── ★ defaultLocationId 는 NOT NULL 이다 (W-D5) ─────────────────────
+// `docs/03` 의 Prisma 블록은 `String?` 이었으나 같은 문서 §6.2 ERD 와
+// `docs/00 §2.2 G-05` 가 **NOT NULL** 을 명시한다 → NOT NULL 이 정본이다.
+//
+// ── ★ same-warehouse composite FK (W-D6) ───────────────────────────
+// 단일 `default_location_id → warehouse_location.id` FK 는 **다른 창고의**
+// 로케이션을 default 로 지정하는 것을 막지 못한다. 그래서 2열 FK 를 건다:
+//
+//     FOREIGN KEY (id, default_location_id)
+//     REFERENCES warehouse_location (warehouse_id, id)
+//     DEFERRABLE INITIALLY DEFERRED
+//
+// 첫 열이 `warehouse.id = warehouse_location.warehouse_id` 를 강제하므로
+// **DEFAULT 로케이션은 반드시 그 창고 소속**이다.
+//
+// ── ★ 순환 참조와 DEFERRABLE (W-D7) ────────────────────────────────
+// warehouse ↔ warehouse_location 은 서로를 참조한다. T08-2 의 생성
+// 트랜잭션은 location UUID 를 **미리 만들어** warehouse 를 먼저 INSERT 하고
+// location 을 이어서 INSERT 한 뒤 COMMIT 에서 검증받는다 — 사후 UPDATE 가
+// 없다. 그것이 가능하려면 이 FK 가 `DEFERRABLE INITIALLY DEFERRED` 여야 한다.
+// ⛔ Prisma 는 deferrability 를 표현하지 못하므로 migration raw SQL 이 담당한다.
+//
+// ── ★ Supplier staged link — one-way CHECK 만 (W-D13) ──────────────
+//     CHECK (supplier_id IS NULL OR warehouse_type = 'SUPPLIER_SITE')
+//
+// `SUPPLIER_SITE` + `supplier_id IS NULL` 은 **허용되는 transitional state**
+// 다. 거래처 정본은 마이그레이션 Phase 7(`T4-19`)에만 있어서 창고 seed
+// 시점에는 연결할 대상이 없다.
+// ⛔ 역방향 CHECK(`warehouse_type <> 'SUPPLIER_SITE' OR supplier_id IS NOT NULL`)
+//    를 T08 에서 추가하지 않는다 — seed 11건이 즉시 실패한다. two-way IFF 는
+//    11건 backfill 이 끝난 뒤 `T4-19` 가 추가한다 (W-D13 최종 운영 불변식).
+//
+// ⛔ T09 관계를 만들지 않는다 — `InventoryLedgerEntry` · `InventoryBalance` ·
+//    `ledgerEntries` · `balances` 는 전부 T09 소유다 (W-D18 · W-D40).
+// ⛔ `createdBy`·`updatedBy`·`deletedAt`·`version`·재고 캐시 컬럼 없음.
+// ⛔ seed row 0 — 15종 창고 · `DEFAULT` 로케이션 · `IN_TRANSIT` 은 T08-2 다.
+// ═══════════════════════════════════════════════════════════════
+
+/// 창고 유형 — **정확히 6종**이다 (W-D2).
+/// `docs/03` v0.1·v0.2 가 완전히 동일하며 ⛔ 그 외 값을 추가하지 않는다.
+enum WarehouseType {
+  INTERNAL
+  THREE_PL
+  SUPPLIER_SITE
+  OVERSEAS
+  VIRTUAL
+  IN_TRANSIT
+}
+
+/// 재고 보관 장소. 재고키(`(sku, warehouse, location, ...)`)의 한 축이다.
+///
+/// ★ 모든 창고는 `DEFAULT` 로케이션을 정확히 1개 가지며 `defaultLocationId`
+///   가 그것을 가리킨다 (§00 G-05). 그 로케이션은 **반드시 같은 창고 소속**
+///   이며 composite FK 가 이를 강제한다 (W-D6).
+model Warehouse {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// 전역 UNIQUE. blank 금지는 DB CHECK 가 맡는다 (`supplier_code` 선례).
+  warehouseCode String        @unique @map("warehouse_code") @db.VarChar(50)
+  warehouseName String        @map("warehouse_name") @db.VarChar(150)
+  warehouseType WarehouseType @map("warehouse_type")
+
+  /// 연동 외부시스템. ⛔ 특정 유형에서 required 로 만들지 않는다 — 근거가
+  ///   없다 (W-D14). T08-2 seed 는 15건 전부 `null` 이다.
+  externalSystemId String? @map("external_system_id") @db.Uuid
+
+  /// `SUPPLIER_SITE`(제조사 보관 사급자재) 창고의 거래처 (§00 G-10 · D-02).
+  /// ★ `SUPPLIER_SITE` + `null` 은 **정상 transitional state** 다 (W-D13).
+  ///   ⛔ null 이라는 이유로 corruption 취급하지 않는다.
+  supplierId String? @map("supplier_id") @db.Uuid
+
+  /// ★ **NOT NULL** 이다 (W-D5). nullable 초안은 supersede 되었다.
+  ///   같은 창고의 로케이션만 가리킬 수 있다 (W-D6 composite FK).
+  defaultLocationId String @map("default_location_id") @db.Uuid
+
+  /// 업무일자(`business_date`) 파생 기준 (§00 G-08). ⛔ explicit null 금지.
+  timezone String  @default("Asia/Seoul") @db.VarChar(50)
+  address  String?
+  active   Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// 마스터는 물리삭제 대상이 아니다 — RESTRICT (CASCADE 금지, W-D19).
+  supplier       Supplier?       @relation("WarehouseSupplierSite", fields: [supplierId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  externalSystem ExternalSystem? @relation(fields: [externalSystemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// ★ composite relation — `(id, defaultLocationId)` → `(warehouseId, id)`.
+  ///   ⛔ `defaultLocationId → WarehouseLocation.id` 단일 FK 로 바꾸지 않는다.
+  ///      그러면 다른 창고의 로케이션을 default 로 지정할 수 있다.
+  defaultLocation WarehouseLocation @relation("WarehouseDefaultLocation", fields: [id, defaultLocationId], references: [warehouseId, id], onDelete: Restrict, onUpdate: Cascade)
+
+  locations WarehouseLocation[] @relation("WarehouseLocations")
+
+  /// ── staged scalar 5종의 inverse (W-D15) ──────────────────────────
+  /// ⚠️ relation field 추가는 **public API projection 추가가 아니다**.
+  ///    ⛔ 어떤 기존 API 도 이 관계를 include 하지 않는다.
+  externalMappings           SkuExternalMapping[]
+  defaultForSuppliers        Supplier[]           @relation("SupplierDefaultWarehouse")
+  destinationForSupplierSkus SupplierSku[]
+  destinationForBomHeaders   BomHeader[]
+  issueForBomLines           BomLine[]
   // raw SQL (migration 참조):
-  //   3) UNIQUE INDEX ux_bom_line_component_group
-  //        (bom_header_id, component_sku_id, COALESCE(alternate_group, ''))
+  //   1) CHECK  warehouse_code_not_blank / warehouse_name_not_blank /
+  //             warehouse_timezone_not_blank
+  //   2) CHECK  warehouse_supplier_site_check   ★ one-way 전용
+  //        supplier_id IS NULL OR warehouse_type = 'SUPPLIER_SITE'
+  //   3) UNIQUE INDEX ux_warehouse_in_transit_singleton
+  //        ON warehouse ((true)) WHERE warehouse_type = 'IN_TRANSIT'
+  //   4) FK warehouse_id_default_location_id_fkey 를
+  //        DEFERRABLE INITIALLY DEFERRED 로 생성 (Prisma 가 못 만든다)
+
+  @@map("warehouse")
+}
+
+/// 창고 내 로케이션. 로케이션을 쓰지 않는 창고도 `DEFAULT` 1개는 갖는다.
+///
+/// ⛔ 감사 컬럼(`createdAt`·`updatedAt`)이 없다 — 원 선언 그대로다 (W-D4).
+/// ⛔ `isDefault` boolean 을 두지 않는다 — default 는 `warehouse` 쪽 FK 다.
+model WarehouseLocation {
+  id           String  @id @default(uuid()) @db.Uuid
+  warehouseId  String  @map("warehouse_id") @db.Uuid
+  /// 로케이션 미사용 창고는 `'DEFAULT'`. ★ 예약 코드다 (W-D9).
+  locationCode String  @map("location_code") @db.VarChar(50)
+  locationName String  @map("location_name") @db.VarChar(150)
+  locationType String? @map("location_type") @db.VarChar(30)
+  active       Boolean @default(true)
+
+  warehouse Warehouse @relation("WarehouseLocations", fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// composite FK 의 inverse.
+  ///
+  /// ★ 실제로는 **최대 1건**이다 — FK 의 첫 열이 `warehouse.id`(PK) 라서
+  ///   한 로케이션을 default 로 갖는 창고는 구조적으로 하나뿐이다.
+  ///   그럼에도 1:1 이 아니라 1:N 으로 선언하는 이유는, Prisma 가 1:1 을
+  ///   위해 `@@unique([id, defaultLocationId])` 를 요구하는데 그것이
+  ///   **PK 위에 얹히는 완전 중복 인덱스**이기 때문이다. 불변식은 이미
+  ///   PK + composite FK 가 강제하므로 인덱스를 하나 더 만들지 않는다.
+  defaultForWarehouses Warehouse[] @relation("WarehouseDefaultLocation")
+
+  @@unique([warehouseId, locationCode])
+  /// ★ business identity 가 아니라 **composite FK 의 참조 대상**이다 (W-D6).
+  ///   `warehouse (id, default_location_id)` 가 이 UNIQUE 를 가리킨다.
+  ///   ⛔ 삭제하지 말 것 — 지우면 default FK 를 걸 수 없다.
+  @@unique([warehouseId, id])
+  @@map("warehouse_location")
 }
