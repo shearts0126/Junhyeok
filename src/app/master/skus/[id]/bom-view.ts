@@ -285,21 +285,21 @@ export const BOM_TAB_WHERE_USED_COLUMNS = [
  * ★ D-30 항목 3 navigation 의 **deferred rendering 토글** (`docs/18` §D-30 부록).
  *
  * `docs/18` §D-30 ⑦탭 "최소" 항목 3 은 각 행에서 `/master/boms/{id}` 로 가는
- * 링크를 요구한다. 그 route 의 owner 는 **T07-8** 이며 아직 착지하지 않았다
- * (§5 구현 순서에서 T1-6B5 는 T07-8 보다 앞이다). 없는 화면으로 보내는 활성
- * 링크는 사용자에게 404 를 주므로 **T07-8 착지 전까지 렌더하지 않는다.**
+ * 링크를 요구한다. 그 route 의 owner 는 **T07-8** 이었고, T1-6B5 시점에는 아직
+ * 없었으므로 404 링크를 만들지 않기 위해 렌더를 연기해 두었다.
  *
- * ⚠️ 이것은 D-30 기능의 **삭제가 아니라 task-order dependency 에 따른 연기**다.
+ * ## ★ T07-8 이 착지하여 켰다
  *
- * ## 이 상수는 dead marker 가 아니다
+ * `src/app/master/boms/[id]/page.tsx` 가 생겼으므로 예고한 대로 **이 한 줄만**
+ * `true` 로 바꿨다 — `bom-tab.tsx` 의 두 조건 분기와 `bomManageLinkPath` 경로
+ * 계약은 그대로다.
  *
- * `bom-tab.tsx` 의 두 표가 실제로 이 값을 조건으로 링크 열을 렌더한다.
- * T07-8 이 `/master/boms/{id}` 를 만들면 **이 한 줄을 `true` 로 바꾸는 것**이
- * 활성화 절차의 전부이며, 경로 계약은 아래 `bomManageLinkPath` 가 고정한다.
+ * ⛔ 이 토글을 지우지 않는다 — 두 표가 여전히 이 값을 조건으로 쓰며, 링크 열의
+ *    존재 근거를 이 주석이 계속 들고 있다.
  */
-export const BOM_TAB_MANAGE_LINK_ENABLED = false;
+export const BOM_TAB_MANAGE_LINK_ENABLED = true;
 
-/** T07-8 standalone BOM 상세 경로. ⛔ 토글이 켜지기 전에는 렌더되지 않는다. */
+/** T07-8 standalone BOM 상세 경로 — 이제 실제로 존재한다. */
 export function bomManageLinkPath(bomHeaderId: string): string {
   return `/master/boms/${bomHeaderId}`;
 }

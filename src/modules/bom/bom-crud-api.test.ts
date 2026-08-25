@@ -613,7 +613,7 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
     );
   });
 
-  it('★ route 목록 — T07-6 explode · T07-7B cost 가 들어왔다 (예상된 회귀)', async () => {
+  it('★ route 목록 — explode(T07-6) · cost(T07-7B) · history(T07-8) 가 들어왔다', async () => {
     const { readdirSync } = await import('node:fs');
     const { fileURLToPath } = await import('node:url');
     const bomsDir = fileURLToPath(new URL('../../app/api/boms', import.meta.url));
@@ -628,6 +628,8 @@ describe('★ route-policy — BOM 경로 (D-15)', () => {
       'cost',
       'deactivate',
       'explode',
+      // ✏️ T07-8 변경이력 supporting read endpoint.
+      'history',
       'lines',
       'reject',
       'route.ts',

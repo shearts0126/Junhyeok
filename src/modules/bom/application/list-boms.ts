@@ -1,10 +1,21 @@
 import type { Prisma } from '@/generated/prisma/client';
+import {
+  defaultBomAuditReadPort,
+  type BomAuditReadPort,
+} from '@/modules/audit/application/bom-activity';
 import { assertPermission, type ActorContext } from '@/modules/auth/application';
+import { businessDateOf } from '@/shared/business-date';
 
-import { BOM_PAGE_SIZE, parseDateOnly, type ListBomsQuery } from './dto';
+import { costBomsBatch, type BomCostFacts } from './cost-boms-batch';
+import { BOM_PAGE_SIZE, parseDateOnly, toDateOnlyString, type ListBomsQuery } from './dto';
 import { BOM_READ_PERMISSION } from './policy';
-import type { BomReadClient } from './refs';
-import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './views';
+import type { BomCostReadClient, BomReadClient } from './refs';
+import {
+  BOM_HEADER_VIEW_INCLUDE,
+  toBomHeaderView,
+  type BomListItemView,
+  type BomReferenceCostView,
+} from './views';
 
 /**
  * `GET /api/boms` — BOM 목록 (T07-3).
@@ -58,7 +69,7 @@ import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './
  */
 
 export interface BomListResult {
-  readonly items: readonly BomHeaderView[];
+  readonly items: readonly BomListItemView[];
   readonly page: number;
   readonly pageSize: number;
   readonly total: number;
@@ -67,6 +78,8 @@ export interface BomListResult {
 
 export interface BomReadDependencies {
   readonly db?: BomReadClient;
+  /** ★ T07-8 — 목록 `수정일` 용 audit read port (U8-1). 테스트가 주입한다. */
+  readonly auditPort?: BomAuditReadPort;
 }
 
 export async function defaultBomClient(): Promise<BomReadClient> {
@@ -148,14 +161,63 @@ export async function listBoms(
     if (line.quantityStatus !== 'CONFIRMED') bucket.unconfirmedCount += 1;
   }
 
+  // ★ U8-1 — `수정일` 은 schema 컬럼이 아니라 audit 파생값이며 **batch 1회**다.
+  //   ⛔ audit infrastructure 를 직접 부르지 않고 port 를 통한다 (R8 §28).
+  const auditPort = dependencies.auditPort ?? (await defaultBomAuditReadPort());
+  const activity =
+    ids.length === 0 ? new Map<string, Date>() : await auditPort.readLatestBomActivityByBomIds(ids);
+
+  // ★ U8-7 — 기준일은 `effectiveOn ?? 업무일자`. ⛔ 8번째 query 없음.
+  const referenceAsOf = parseDateOnly(query.effectiveOn ?? businessDateOf(new Date()));
+  const referenceAsOfLabel = toDateOnlyString(referenceAsOf);
+
+  // ★ U8-8 · R8-2 — **multi-root batch + root 별 실패 격리**.
+  //   ⛔ `for (bom) costBom(...)` 금지 · ⛔ 바깥 try/catch 금지.
+  const costs =
+    ids.length === 0
+      ? new Map<string, BomCostFacts>()
+      : await costBomsBatch(db as unknown as BomCostReadClient, {
+          bomHeaderIds: ids,
+          asOf: referenceAsOf,
+          // ★ U8-6 — 제품 1 unit. ⛔ `outputQty` 로 치환하지 않는다.
+          requestedQty: '1',
+        });
+
   return {
-    items: rows.map((row) =>
-      toBomHeaderView(row, counts.get(row.id) ?? { lineCount: 0, unconfirmedCount: 0 }),
-    ),
+    items: rows.map((row) => ({
+      ...toBomHeaderView(row, counts.get(row.id) ?? { lineCount: 0, unconfirmedCount: 0 }),
+      // ★ U8-3 — audit 이 0건일 때만 `createdAt` 으로 되돌아간다.
+      lastModifiedAt: (activity.get(row.id) ?? row.createdAt).toISOString(),
+      referenceCost: toReferenceCostView(referenceAsOfLabel, costs.get(row.id)),
+    })),
     page: query.page,
     pageSize: BOM_PAGE_SIZE,
     // ★ 0건이면 0 — Math.max(1, …) 로 올리지 않는다 (기존 convention).
     total,
     totalPages: Math.ceil(total / BOM_PAGE_SIZE),
+  };
+}
+
+/**
+ * 원가 사실 → 목록 cell (U8-10 · R8-3).
+ *
+ * ⛔ 단일 총액 없음 · ⛔ FX 0 · ⛔ KRW 의 VAT 두 bucket 을 합치지 않는다.
+ * ★ `UNAVAILABLE` 에 `AVAILABLE` 전용 필드를 섞지 않는다 (R8-5).
+ */
+function toReferenceCostView(asOf: string, facts: BomCostFacts | undefined): BomReferenceCostView {
+  if (facts?.status === 'UNAVAILABLE') {
+    return { status: 'UNAVAILABLE', asOf, errorCode: facts.errorCode };
+  }
+  const subtotals = facts?.status === 'AVAILABLE' ? facts.subtotals : [];
+  return {
+    status: 'AVAILABLE',
+    asOf,
+    // ★ `vatIncluded` 별로 **분리 보존**한다 (D-27).
+    krwSubtotals: subtotals
+      .filter((row) => row.currency === 'KRW')
+      .map((row) => ({ vatIncluded: row.vatIncluded, amount: row.amount })),
+    // ★ 계산 가능한 비KRW 가 있으면 `+` 표식 (D-26). ⛔ 더하지 않는다.
+    hasOtherCurrency: subtotals.some((row) => row.currency !== 'KRW'),
+    isProvisional: facts?.status === 'AVAILABLE' ? facts.isProvisional : false,
   };
 }

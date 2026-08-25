@@ -104,6 +104,8 @@ export {
   type BomDetailView,
   type BomHeaderView,
   type BomLineView,
+  type BomListItemView,
+  type BomReferenceCostView,
   type BomWhereUsedView,
   type ComponentSkuRefView,
   type ExplodedNodeView,
@@ -216,6 +218,24 @@ export {
   type DirectCostLine,
   type DirectCostResult,
 } from './cost-direct-bom';
+
+// ── T07-8 supporting read-model ──────────────────────────────
+export {
+  costBomsBatch,
+  isListReferenceCostIntegrityError,
+  LIST_REFERENCE_COST_INTEGRITY_ERROR_CODES,
+  type BomCostFacts,
+  type CostBomsBatchInput,
+  type ListReferenceCostIntegrityErrorCode,
+} from './cost-boms-batch';
+export {
+  listBomHistory,
+  parseBomHistoryQuery,
+  BOM_HISTORY_PAGE_SIZE,
+  type BomHistoryDependencies,
+  type BomHistoryQuery,
+  type BomHistoryResult,
+} from './list-bom-history';
 
 // ── T07-7B multi-level cost roll-up ──────────────────────────
 // ★ terminal cost-bearing occurrence 만 산입한다 (docs/18 R-1·R-2).

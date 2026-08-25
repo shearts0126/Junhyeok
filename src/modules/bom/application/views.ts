@@ -127,6 +127,55 @@ export interface BomDetailView extends BomHeaderView {
   readonly lines: readonly BomLineView[];
 }
 
+/**
+ * 목록 `기준원가` cell (T07-8 U8-10 · R8-3).
+ *
+ * ★ **판별 union** 이다 — "원가가 없다/미확정" 과 "계산 자체가 불가능" 을 절대
+ *   같은 것으로 취급하지 않는다.
+ *
+ * | 상황 | status |
+ * |---|---|
+ * | 가격 없음 · 수량 미확정 | `AVAILABLE` + `isProvisional = true` |
+ * | 실제 0원 | `AVAILABLE` |
+ * | 순환 · chain 충돌 등 무결성 오류 | **`UNAVAILABLE`** + `errorCode` |
+ *
+ * ⛔ 단일 `totalCost` 없음 · ⛔ FX 환산 0 · ⛔ VAT normalize 0.
+ * ⛔ `referenceCost` 자체를 `null` 로 만들지 않는다.
+ */
+export type BomReferenceCostView =
+  | {
+      readonly status: 'AVAILABLE';
+      /** 이 원가를 계산한 기준일 (`effectiveOn ?? 업무일자`). */
+      readonly asOf: string;
+      /** KRW subtotal 을 `vatIncluded` 별로 **분리 보존**한다 (D-27). */
+      readonly krwSubtotals: readonly {
+        readonly vatIncluded: boolean;
+        readonly amount: string;
+      }[];
+      /** 계산 가능한 비KRW subtotal 이 있으면 `true` → UI 는 `+` 표식 (D-26). */
+      readonly hasOtherCurrency: boolean;
+      /** `true` 면 `잠정` 배지. 금액이 partial known sum 이어도 표시는 유지한다. */
+      readonly isProvisional: boolean;
+    }
+  | {
+      readonly status: 'UNAVAILABLE';
+      readonly asOf: string;
+      /** ★ exact 7-code whitelist 중 하나 (R8-6). */
+      readonly errorCode: string;
+    };
+
+/**
+ * 목록 item (T07-8 U8-5).
+ *
+ * `BomHeaderView` + 목록 전용 파생값 2개. ⛔ 이것 때문에 `BomDetailView` 를
+ * 확장하지 않는다 — 상세는 원가·전개를 섞지 않는다 (D-14).
+ */
+export interface BomListItemView extends BomHeaderView {
+  /** ★ schema 컬럼이 아니라 **audit 파생값**이다 (U8-1). */
+  readonly lastModifiedAt: string;
+  readonly referenceCost: BomReferenceCostView;
+}
+
 export const BOM_HEADER_VIEW_INCLUDE = {
   parentSku: { select: { id: true, skuCode: true, skuName: true } },
   productionPartner: { select: { id: true, supplierCode: true, supplierName: true } },

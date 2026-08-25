@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -511,10 +511,12 @@ describe('★★ read-only — mutation helper 가 하나도 없다', () => {
     }
   });
 
-  it('★ T07-8 이 없으므로 관리 링크를 렌더하지 않는다 (R4 — deferred rendering)', () => {
-    // `/master/boms/{id}` 는 T07-8 소관이라 아직 404 다. 활성 링크를 만들면
-    // 사용자를 없는 화면으로 보내므로, route 가 생길 때 함께 켠다.
-    expect(BOM_TAB_MANAGE_LINK_ENABLED).toBe(false);
+  it('★ T07-8 이 착지했으므로 관리 링크를 렌더한다 (R4 토글 해제)', () => {
+    // T1-6B5 는 `/master/boms/{id}` 가 없어 404 를 피하려고 렌더를 연기했다.
+    // T07-8 이 그 route 를 만들었으므로 예고한 대로 토글만 켰다.
+    expect(BOM_TAB_MANAGE_LINK_ENABLED).toBe(true);
+    // ★ 켠 근거 — page 파일이 실제로 존재한다. ⛔ 토글만 켜고 화면이 없는 상태 금지.
+    expect(existsSync(new URL('../../boms/[id]/page.tsx', import.meta.url))).toBe(true);
   });
 
   it('★ 토글은 dead marker 가 아니다 — 컴포넌트가 실제로 조건으로 쓴다 (R4)', () => {

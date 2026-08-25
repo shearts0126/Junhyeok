@@ -91,3 +91,128 @@ export async function findAuditHistoryPage(
 
   return { items: rows.map(toAuditHistoryItem), total };
 }
+
+// ═══════════════════════════════════════════════════════════════
+// BOM 귀속 read (T07-8)
+// 근거: `docs/18` `★ T07-8 BOM UI read-model gap closure` U8-1·U8-2·U8-13
+// ═══════════════════════════════════════════════════════════════
+
+/** ⚠️ audit 의 `entityType` 문자열 — BOM 모듈 상수와 값이 같아야 한다. */
+const BOM_HEADER_AUDIT_ENTITY = 'BomHeader';
+const BOM_LINE_AUDIT_ENTITY = 'BomLine';
+
+/**
+ * ★ **`BomLine` audit 을 그 BOM 에 귀속시키는 predicate** (U8-2).
+ *
+ * ⛔ **현재 존재하는 `BomLine` id 로 `entityId IN (...)` 하지 않는다** — `BomLine`
+ *    은 물리삭제되므로(`deleteBomLine`) 그 방식은 **삭제된 라인의 CREATE·UPDATE·
+ *    DELETE 이력을 통째로 잃는다.** SKU 선례(`SkuBarcode`)는 삭제가 없어 이
+ *    문제를 겪지 않았다.
+ *
+ * ★ 대신 audit snapshot 안의 `bomHeaderId` 로 판정한다. `BomLine` audit 을 남기는
+ *   4곳(`create-line`·`update-line`·`delete-line`·`clone-bom`)이 **전부
+ *   `BomLineView` 를 직렬화**하고 그 타입은 `bomHeaderId` 를 required 로 갖는다.
+ */
+function bomScopedWhere(bomId: string): Prisma.AuditLogWhereInput {
+  return {
+    OR: [
+      { entityType: BOM_HEADER_AUDIT_ENTITY, entityId: bomId },
+      {
+        entityType: BOM_LINE_AUDIT_ENTITY,
+        OR: [
+          { beforeValue: { path: ['bomHeaderId'], equals: bomId } },
+          { afterValue: { path: ['bomHeaderId'], equals: bomId } },
+        ],
+      },
+    ],
+  };
+}
+
+export interface BomAuditHistoryPageQuery {
+  readonly bomId: string;
+  /** 1-base */
+  readonly page: number;
+  readonly pageSize: number;
+}
+
+/**
+ * 한 BOM 의 변경이력 한 페이지 (U8-13).
+ *
+ * ⛔ N+1 없음 — `count` + `findMany` 정확히 2회이며 정렬·페이징을 DB 가 한다.
+ */
+export async function findBomAuditHistoryPage(
+  db: AuditReadClient,
+  query: BomAuditHistoryPageQuery,
+): Promise<AuditHistoryPage> {
+  const where = bomScopedWhere(query.bomId);
+
+  const [total, rows] = await Promise.all([
+    db.auditLog.count({ where }),
+    db.auditLog.findMany({
+      where,
+      orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+      select: HISTORY_SELECT,
+    }),
+  ]);
+
+  return { items: rows.map(toAuditHistoryItem), total };
+}
+
+/**
+ * ★ **여러 BOM 의 `lastModifiedAt` 을 한 번에** (U8-1·U8-4).
+ *
+ * ⛔ 목록 50건마다 쿼리하지 않는다 — 이 함수가 존재하는 이유다.
+ *    반환 `Map` 에는 값이 있는 id 만 담기며 fallback 은 호출부가 정한다.
+ */
+export async function findLatestBomActivityByBomIds(
+  db: AuditReadClient,
+  bomIds: readonly string[],
+): Promise<Map<string, Date>> {
+  const ids = [...new Set(bomIds)];
+  const result = new Map<string, Date>();
+  if (ids.length === 0) return result;
+
+  // ── header — `groupBy` 로 id 별 MAX(occurredAt) 를 DB 가 계산한다.
+  const headerRows = await db.auditLog.groupBy({
+    by: ['entityId'],
+    where: { entityType: BOM_HEADER_AUDIT_ENTITY, entityId: { in: ids } },
+    _max: { occurredAt: true },
+  });
+  for (const row of headerRows) {
+    const at = row._max.occurredAt;
+    if (at !== null) result.set(row.entityId, at);
+  }
+
+  // ── line — `bomHeaderId` 가 JSONB 안이라 `groupBy` 로 접을 수 없다.
+  //    ★ **요청한 id 들로 좁힌 단일 쿼리** 다 — OR 절 수는 page size(50)로 묶인다.
+  //    ⛔ id 마다 쿼리하지 않고 ⛔ 전체 BomLine audit 을 스캔하지도 않는다.
+  const lineRows = await db.auditLog.findMany({
+    where: {
+      entityType: BOM_LINE_AUDIT_ENTITY,
+      OR: ids.flatMap((id) => [
+        { beforeValue: { path: ['bomHeaderId'], equals: id } },
+        { afterValue: { path: ['bomHeaderId'], equals: id } },
+      ]),
+    },
+    select: { occurredAt: true, beforeValue: true, afterValue: true },
+  });
+
+  const wanted = new Set(ids);
+  for (const row of lineRows) {
+    const bomId = bomHeaderIdOf(row.afterValue) ?? bomHeaderIdOf(row.beforeValue);
+    if (bomId === null || !wanted.has(bomId)) continue;
+    const current = result.get(bomId);
+    if (current === undefined || row.occurredAt > current) result.set(bomId, row.occurredAt);
+  }
+
+  return result;
+}
+
+/** audit snapshot 에서 `bomHeaderId` 를 꺼낸다. 없으면 `null`. */
+function bomHeaderIdOf(value: unknown): string | null {
+  if (value === null || typeof value !== 'object') return null;
+  const candidate = (value as Record<string, unknown>)['bomHeaderId'];
+  return typeof candidate === 'string' ? candidate : null;
+}
