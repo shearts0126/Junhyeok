@@ -175,6 +175,8 @@
 | PATCH | `/api/warehouses/{id}` | 수정 | A | 재고 존재 시 비활성 차단 | — |
 | GET/POST | `/api/warehouses/{id}/locations` | 로케이션 | 전체 / A | `(warehouseId, code)` 중복 | ✅ |
 
+> ✏️ **2026-08-25 설계복구 (Warehouse, T08)**: 위 4행은 원문으로 보존하되 계약은 **`19_설계복구_Warehouse.md`** 가 확정한다 — ① GET 권한 **`전체`** 는 `SUPERSEDED BY §W-D22` 다. 같은 문서 **§11.22 `창고 관리 = S:R L:R A:RW F:— E:—`** 가 더 좁고 정확하므로 그것을 채택한다 — permission 은 **`warehouse.read`(A·L·S) / `warehouse.create`(A) / `warehouse.update`(A)** 정확히 3종이며 **FINANCE·EXECUTIVE 는 창고 조회 권한이 없다**. ⛔ 4번째 key 없음(물리삭제 금지이므로 `warehouse.delete` 도 없다). route↔permission 대응은 **§W-D23** 이며 `POST .../locations` 는 `warehouse.update` 다. ⛔ ADMIN bypass 없이 RolePermission 데이터로만 판정한다. ② `POST` 행의 **`SUPPLIER_SITE`는 `supplierId` 필수** 는 **runtime create 규칙으로는 유지**되지만 DB 제약으로는 T08 시점에 **one-way CHECK `(supplier_id IS NULL OR warehouse_type = 'SUPPLIER_SITE')`** 만 존재한다 — 마이그레이션 Phase 7(`T4-19`) 전까지 seed 된 11개 `SUPPLIER_SITE` 창고가 `supplier_id = NULL` 인 **staged 상태**로 살아 있어야 하기 때문이다(**§W-D13** staged-link lifecycle · **§W-D38**). 양방향 IFF CHECK 는 링크가 전부 해소된 뒤 추가한다. ③ `PATCH` 행의 **`재고 존재 시 비활성 차단`** 은 `DEFERRED BY §W-D27` 다 — 재고 모델(T09) 없이 이 게이트를 만들 수 없으므로 **`active` mutation 자체를 `T2-20` 으로 연기**하며, T2-1 단계 PATCH 는 `active` 를 받으면 **400** 이다(⛔ 조용한 무시 없음 · ⛔ `hasInventory=false` 상수 가정 없음 · ⛔ 라우트 stub 없음). ④ `warehouseType` 필터를 포함한 list 계약(응답 envelope · `pageSize` 50 고정 · 미지원 파라미터 400)은 **§W-D30·§W-D31**, DTO 는 **§W-D24·§W-D25·§W-D26**, 로케이션 2종은 **§W-D32·§W-D33·§W-D34** 가 확정한다. ⑤ **DEFAULT 로케이션 자동 생성(동일 트랜잭션)** 은 유지되고 순서만 **§W-D7** 로 clarify 된다(pre-generated UUID → `warehouse` INSERT → `warehouse_location` INSERT → COMMIT 시 deferred composite FK 검증, 사후 UPDATE 없음). `DEFAULT` 는 예약 코드다(**§W-D9·§W-D10**). ⑥ `IN_TRANSIT` 는 시스템 예약 singleton 이며 public mutation 대상이 아니다(**§W-D11·§W-D12**). Audit·Idempotency 는 **§W-D35·§W-D36**.
+
 ## 10.10 현재고 · 원장 · 수불부
 
 | Method | URL | 목적 | 요청 | 응답 | 권한 | 주요 검증 | 멱등 |
@@ -504,6 +506,8 @@ DEEPPOINT SCM OS
 | 버튼 | 신규 창고 / 로케이션 관리 / 비활성 |
 | ✏️ 신규 창고 폼 | 유형 선택 → `SUPPLIER_SITE` 선택 시 **거래처 필수 입력**. 저장 시 **DEFAULT 로케이션 자동 생성 안내** |
 | 권한 | 조회 전체 / 작성·수정 **A** |
+
+> ✏️ **2026-08-25 설계복구 (Warehouse, T08)**: **이 화면은 `T2-20` 소유이며 T08(=`T2-1`) 범위가 아니다**(`DEFERRED BY 19_설계복구_Warehouse.md §W-D1·§W-D27·§W-D28`). `docs/07` v0.1 의 `T08-3`(창고 화면)은 v0.2 가 화면을 `T2-20` 으로 옮기면서 **SUPERSEDED** 되었고, 그 이유는 위 `버튼` 행의 **`비활성`** 과 `05 §10.9` PATCH 의 **`재고 존재 시 비활성 차단`** 이 current-stock capability(T09)를 요구하기 때문이다 — 재고 모델 없이 만들면 `hasInventory=false` 같은 **가짜 구현**이 필요해져 안전장치가 무효화된다. 따라서 T08 단계에서는 **UI 를 0줄도 만들지 않는다**(⛔ placeholder 화면·라우트 stub 없음). 원문 요구는 폐기가 아니라 **`T2-20` 으로 유예**된 것이다. 또한 `권한` 행의 **`조회 전체`** 는 같은 문서 **§11.22 `창고 관리 = S:R L:R A:RW F:— E:—`** 가 정본이며 `SUPERSEDED BY §W-D22` 다(FINANCE·EXECUTIVE 제외). 목록 열의 **`재고 SKU 수`** 도 T09 의존이라 `T2-20` 에서 결정한다.
 
 ## 11.11 현재고 `/inventory/balances`
 

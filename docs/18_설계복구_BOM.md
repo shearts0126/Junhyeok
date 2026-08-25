@@ -4357,6 +4357,8 @@ reference-cost batch 쿼리 자체가 infrastructure 실패
 | **BOM import** | PENDING #7 확정 후 (D-1) |
 | **test framework** | Vitest · DB integration(Testcontainers/외부 PG) · Playwright. ⛔ **새 framework 도입 금지** |
 
+> ✏️ **2026-08-25 설계복구 (Warehouse, T08)**: 위 **T08 Warehouse** 행의 "T08-1 구현 시 연결" 은 **`19_설계복구_Warehouse.md §W-D15` 가 인수**했다 — `BomHeader.destinationWarehouseId`(#4)·`BomLine.issueWarehouseId`(#5) 는 T08-1(= v0.2 `T2-1A`)에서 **staged scalar → real FK/relation 으로 landing 되는 5종**에 포함된다. `onDelete`/`onUpdate` 는 **§W-D19 FK matrix**, `Warehouse` 쪽 inverse relation 이름은 **§W-D16** 이 확정한다. **`max-assembly-qty`** 행은 그대로 유지된다 — 창고가 생겨도 현재고(T09/R1a-2)가 없으면 계산할 수 없으므로 **T08 범위가 아니다**(**§W-D41**). BOM UI 의 **`입고처·투입창고` UUID 표시**(§D-31)도 이번 단계에서 바뀌지 않는다 — 창고 이름 lookup·선택 UI 는 창고 화면(`T2-20`) 이후 별도로 결정한다(**§W-D28·§W-D42**). **legacy migration** 행의 `T4-19`/Phase 8 은 유지되며, 같은 `T4-19` 의 **Phase 7** 이 `SUPPLIER_SITE` 창고 11건의 supplier-link closure 도 함께 소유한다(**§W-D13·§W-D38**).
+
 #### `hasBomUsage` provider
 
 `canArchiveSku({hasTransaction, hasBomUsage})` 와 `SkuArchiveBlocker='BOM_USAGE'`
