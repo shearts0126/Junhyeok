@@ -212,9 +212,10 @@ test.describe('B. BOM 상세 (ADMIN)', () => {
     await expect(page.getByRole('button', { name: '사용종료' })).toBeVisible();
   });
 
-  test('★★ B3 — 라인 그리드는 15열이다 (ACTIVE 이므로 작업 열 없음)', async ({ page }) => {
+  test('★★★ B3 — 라인 그리드는 **정확히 15열**이다 (읽기전용 ACTIVE)', async ({ page }) => {
     await openDetail(page, 'ZZS-E2E-020', 'ZZB-1.0');
     const headers = page.locator('[data-testid="bom-line-grid"] thead th');
+    await expect(headers).toHaveCount(15);
     await expect(headers).toHaveText([
       '순번',
       '구성품 SKU',
@@ -232,6 +233,14 @@ test.describe('B. BOM 상세 (ADMIN)', () => {
       '입수량',
       '상세사양',
     ]);
+  });
+
+  test('★★★ B3b — ACTIVE 행은 클릭해도 수정 dialog 가 열리지 않는다', async ({ page }) => {
+    await openDetail(page, 'ZZS-E2E-020', 'ZZB-1.0');
+    await page.getByTestId('line-1').click();
+    await expect(page.getByRole('dialog', { name: '구성품 수정' })).toHaveCount(0);
+    // 행 자체가 상호작용 요소로 노출되지도 않는다.
+    await expect(page.getByTestId('line-1')).not.toHaveAttribute('role', 'button');
   });
 
   test('★★ B4 — 진행률은 SUGGESTED 를 미확정으로 센다 → "확정 1 / 전체 3"', async ({ page }) => {
@@ -313,7 +322,9 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
     await login(page, ADMIN);
   });
 
-  test('★★ C1 — DRAFT 는 편집 컨트롤과 작업 열이 보인다', async ({ page }) => {
+  test('★★★ C1 — DRAFT 도 **정확히 15열**이다 — 편집 컨트롤은 toolbar 에 있다', async ({
+    page,
+  }) => {
     await openDetail(page, 'ZZS-E2E-027', 'ZZB-EDIT-1.0');
     await expect(page.getByRole('button', { name: '헤더 수정' })).toBeVisible();
     await expect(page.getByRole('button', { name: '구성품 추가' })).toBeVisible();
@@ -321,8 +332,27 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
     await expect(page.getByRole('button', { name: '승인 요청' })).toBeVisible();
 
     const headers = page.locator('[data-testid="bom-line-grid"] thead th');
-    await expect(headers).toHaveCount(16); // 15열 + 작업 열
-    await expect(headers.last()).toHaveText('작업');
+    await expect(headers).toHaveCount(15);
+    await expect(headers).toHaveText([
+      '순번',
+      '구성품 SKU',
+      '상품명',
+      '소요량',
+      '소요량 상태',
+      '단위',
+      '로스율',
+      '실제 필요량',
+      '구성품 유형',
+      '공급유형',
+      '대체그룹',
+      '필수',
+      '투입창고',
+      '입수량',
+      '상세사양',
+    ]);
+    // ⛔ 편집 가능해도 열은 늘지 않는다 — CRUD 는 행 클릭 + dialog 다.
+    await expect(page.getByRole('columnheader', { name: '작업' })).toHaveCount(0);
+    await expect(page.getByRole('columnheader', { name: '관리' })).toHaveCount(0);
   });
 
   test('★★★ C2 — 입수량 30 이면 `1/30 = 0.033333` 을 **추천만** 한다', async ({ page }) => {
@@ -372,7 +402,8 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
 
   test('★★ C5 — 라인을 수정하면 값이 반영된다', async ({ page }) => {
     await openDetail(page, 'ZZS-E2E-027', 'ZZB-EDIT-1.0');
-    await page.getByTestId('line-2').getByLabel('2 수정').click();
+    // ★ 행을 클릭하면 수정 dialog 가 열린다 (별도 action 열 없음).
+    await page.getByTestId('line-2').click();
 
     const dialog = page.getByRole('dialog', { name: '구성품 수정' });
     await dialog.getByLabel('소요량', { exact: true }).fill('7');
@@ -385,13 +416,29 @@ test.describe('C. BOM 편집 (ADMIN · DRAFT)', () => {
     await expect(page.getByTestId('line-2').locator('td').nth(7)).toHaveText('7.7');
   });
 
-  test('★★ C6 — 라인을 삭제하면 그리드에서 사라진다', async ({ page }) => {
+  test('★★★ C6 — 삭제는 수정 dialog 안에 있고, 실행하면 그리드에서 사라진다', async ({ page }) => {
     await openDetail(page, 'ZZS-E2E-027', 'ZZB-EDIT-1.0');
+    await page.getByTestId('line-2').click();
+
+    const dialog = page.getByRole('dialog', { name: '구성품 수정' });
+    const remove = dialog.getByRole('button', { name: '삭제' });
+    await expect(remove).toBeVisible();
+
     page.once('dialog', (confirm) => void confirm.accept());
-    await page.getByTestId('line-2').getByLabel('2 삭제').click();
+    await remove.click();
 
     await expect(page.getByTestId('line-2')).toHaveCount(0);
     await expect(page.getByTestId('line-1')).toBeVisible();
+  });
+
+  test('★★★ C6b — 신규 추가 dialog 에는 삭제 버튼이 없다', async ({ page }) => {
+    await openDetail(page, 'ZZS-E2E-027', 'ZZB-EDIT-1.0');
+    await page.getByRole('button', { name: '구성품 추가' }).click();
+    const dialog = page.getByRole('dialog', { name: '구성품 추가' });
+    await expect(dialog).toBeVisible();
+    // 아직 존재하지 않는 라인이므로 삭제할 대상이 없다.
+    await expect(dialog.getByRole('button', { name: '삭제' })).toHaveCount(0);
+    await dialog.getByRole('button', { name: '취소' }).click();
   });
 
   test('★★ C7 — 삭제된 라인의 이력은 변경이력에 남는다 (U8-2)', async ({ page }) => {
@@ -468,8 +515,13 @@ test.describe('D. 권한', () => {
     ]) {
       await expect(page.getByRole('button', { name: label, exact: true })).toHaveCount(0);
     }
-    // 읽기는 된다.
+    // 읽기는 된다 — 열은 그대로 15개다.
     await expect(page.getByTestId('bom-line-grid')).toBeVisible();
+    await expect(page.locator('[data-testid="bom-line-grid"] thead th')).toHaveCount(15);
+
+    // ★★ 행을 클릭해도 mutation dialog 가 열리지 않는다 (권한 없음).
+    await page.getByTestId('line-1').click();
+    await expect(page.getByRole('dialog', { name: '구성품 수정' })).toHaveCount(0);
   });
 
   test('★★ D3 — SCM_STAFF 는 편집·제출은 되지만 승인 계열이 없다', async ({ page }) => {

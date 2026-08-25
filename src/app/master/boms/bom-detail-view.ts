@@ -43,6 +43,50 @@ export const BOM_SUPPLY_TYPE_OPTIONS = ['SELF_SUPPLIED', 'TURNKEY'] as const;
 export const BOM_QUANTITY_STATUS_OPTIONS = ['CONFIRMED', 'SUGGESTED', 'UNKNOWN'] as const;
 
 // ═══════════════════════════════════════════════════════════════
+// D-31 — 구성품 그리드 열 정의
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * ★★ **구성품 그리드는 정확히 15열이다** (D-31 정본).
+ *
+ * 그리드가 이 배열을 그대로 `map` 해서 머리글을 그린다 — 열 개수 계약이
+ * 마크업이 아니라 **데이터**에 있으므로 단위 테스트가 직접 셀 수 있다.
+ *
+ * ⛔ `작업`·`관리`·`Action`·`수정`·`삭제` 같은 16번째 열을 만들지 않는다.
+ *    라인 CRUD 는 **행 클릭 → dialog**, 삭제는 **그 dialog 안**이다.
+ * ⛔ 데이터 열 안에 CRUD 버튼을 끼워 넣지 않는다 — 열의 의미가 오염된다.
+ * ⛔ `비고`(`note`)는 이 그리드에 없다. 컬럼·API 는 그대로 두고 dialog 에서만
+ *    편집한다.
+ */
+export const BOM_LINE_GRID_COLUMNS = [
+  '순번',
+  '구성품 SKU',
+  '상품명',
+  '소요량',
+  '소요량 상태',
+  '단위',
+  '로스율',
+  '실제 필요량',
+  '구성품 유형',
+  '공급유형',
+  '대체그룹',
+  '필수',
+  '투입창고',
+  '입수량',
+  '상세사양',
+] as const;
+
+/**
+ * ★ 행 클릭으로 수정 dialog 를 열 수 있는가.
+ *
+ * 편집 가능 상태(`DRAFT`·`REJECTED`)이고 `bom.update` 를 가진 경우에만 true 다.
+ * ⛔ role 이름을 보지 않는다 — permission 데이터만 본다.
+ */
+export function canEditLineByRowClick(status: string, permissions: readonly string[]): boolean {
+  return resolveBomActions(status, permissions).canMutateLines;
+}
+
+// ═══════════════════════════════════════════════════════════════
 // U8-12 — 라인 그리드 `실제 필요량`
 // ═══════════════════════════════════════════════════════════════
 

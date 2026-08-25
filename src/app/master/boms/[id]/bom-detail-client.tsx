@@ -14,6 +14,7 @@ import {
   resolveBomActions,
   suggestQuantityPer,
   BOM_COMPONENT_ROLE_OPTIONS,
+  BOM_LINE_GRID_COLUMNS,
   BOM_QUANTITY_STATUS_OPTIONS,
   BOM_SUPPLY_TYPE_OPTIONS,
 } from '../bom-detail-view';
@@ -403,12 +404,18 @@ export function BomDetailClient({ bomId }: { bomId: string }) {
     if (ok) setLineForm(null);
   };
 
-  /** ⛔ 되돌릴 수 없으므로 확인을 받는다. 응답은 204 다. */
-  const deleteLine = async (line: LineView) => {
-    if (!window.confirm(`${line.lineNo}번 라인(${line.componentSku.skuCode})을 삭제할까요?`)) {
-      return;
-    }
-    await send('DELETE', `/api/boms/${bomId}/lines/${line.id}`);
+  /**
+   * 라인 삭제 — **수정 dialog 안에서만** 호출된다.
+   *
+   * ⛔ 그리드에 삭제 버튼 열(16번째)을 만들지 않기 위한 배치다.
+   * ⛔ 되돌릴 수 없으므로 확인을 받는다 (기존 화면들과 같은 `confirm` 패턴).
+   *    응답은 204 다.
+   */
+  const deleteLineFromDialog = async () => {
+    if (lineForm === null || lineForm.mode !== 'edit' || lineForm.lineId === null) return;
+    if (!window.confirm(`${lineForm.componentSkuLabel} 구성품을 삭제할까요?`)) return;
+    const ok = await send('DELETE', `/api/boms/${bomId}/lines/${lineForm.lineId}`);
+    if (ok) setLineForm(null);
   };
 
   const submitHeader = async () => {
@@ -626,7 +633,6 @@ export function BomDetailClient({ bomId }: { bomId: string }) {
           onBulkConfirm={() => void submitBulkConfirm()}
           onAddLine={() => setLineForm(EMPTY_LINE_FORM)}
           onEditLine={(line) => setLineForm(lineFormOf(line))}
-          onDeleteLine={(line) => void deleteLine(line)}
         />
       ) : null}
       {tab === 'explode' ? <ExplodeTab bomId={bomId} /> : null}
@@ -637,9 +643,13 @@ export function BomDetailClient({ bomId }: { bomId: string }) {
         <LineDialog
           form={lineForm}
           busy={busy}
+          // ★ 삭제는 dialog 안에 있다 — 그리드에 16번째 열을 만들지 않기 위해서다.
+          //   편집 가능 상태 + `bom.update` 일 때만 넘어간다.
+          canDelete={actions.canMutateLines}
           onChange={setLineForm}
           onCancel={() => setLineForm(null)}
           onSubmit={() => void submitLine()}
+          onDelete={() => void deleteLineFromDialog()}
           onError={setError}
         />
       ) : null}
@@ -693,7 +703,6 @@ function ComponentsTab({
   onBulkConfirm,
   onAddLine,
   onEditLine,
-  onDeleteLine,
 }: {
   detail: DetailView;
   canMutate: boolean;
@@ -704,7 +713,6 @@ function ComponentsTab({
   onBulkConfirm: () => void;
   onAddLine: () => void;
   onEditLine: (line: LineView) => void;
-  onDeleteLine: (line: LineView) => void;
 }) {
   return (
     <section>
@@ -729,23 +737,13 @@ function ComponentsTab({
       <table className="w-full border-collapse text-sm" data-testid="bom-line-grid">
         <thead>
           <tr className="border-b text-left text-neutral-500">
-            <th className="px-2 py-2">순번</th>
-            <th className="px-2 py-2">구성품 SKU</th>
-            <th className="px-2 py-2">상품명</th>
-            <th className="px-2 py-2">소요량</th>
-            <th className="px-2 py-2">소요량 상태</th>
-            <th className="px-2 py-2">단위</th>
-            <th className="px-2 py-2">로스율</th>
-            <th className="px-2 py-2">실제 필요량</th>
-            <th className="px-2 py-2">구성품 유형</th>
-            <th className="px-2 py-2">공급유형</th>
-            <th className="px-2 py-2">대체그룹</th>
-            <th className="px-2 py-2">필수</th>
-            <th className="px-2 py-2">투입창고</th>
-            <th className="px-2 py-2">입수량</th>
-            <th className="px-2 py-2">상세사양</th>
-            {/* ★ 작업 열은 **15열 계약 밖의 control 열**이다 — 편집 가능할 때만 존재한다. */}
-            {canMutate ? <th className="px-2 py-2">작업</th> : null}
+            {/* ★★ **정확히 15열** — 배열이 계약이고 마크업은 그것을 그린다 (D-31).
+                ⛔ `작업`·`관리` 같은 16번째 열 없음. 라인 CRUD 는 행 클릭 + dialog. */}
+            {BOM_LINE_GRID_COLUMNS.map((column) => (
+              <th key={column} className="px-2 py-2">
+                {column}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
@@ -762,13 +760,40 @@ function ComponentsTab({
               <tr
                 key={line.id}
                 // ★ ① UNKNOWN 행 강조 (D-31).
-                className={`border-b ${unknown ? 'bg-red-50' : ''}`}
+                className={`border-b ${unknown ? 'bg-red-50' : ''} ${
+                  canMutate ? 'cursor-pointer hover:bg-neutral-50' : ''
+                }`}
                 data-testid={`line-${line.lineNo}`}
+                /* ★★ 라인 수정은 **행 상호작용**이다 — 16번째 열을 만들지 않는다.
+                   편집 불가 상태이거나 `bom.update` 가 없으면 핸들러 자체가 없다
+                   (⛔ 열어 놓고 막는 방식이 아니다). */
+                {...(canMutate
+                  ? {
+                      role: 'button' as const,
+                      tabIndex: 0,
+                      'aria-label': `${line.lineNo}번 라인 수정`,
+                      onClick: () => onEditLine(line),
+                      onKeyDown: (event: React.KeyboardEvent<HTMLTableRowElement>) => {
+                        if (event.key !== 'Enter' && event.key !== ' ') return;
+                        // 행 안의 입력·버튼에서 온 키는 그 컨트롤의 것이다.
+                        if (event.target !== event.currentTarget) return;
+                        event.preventDefault();
+                        onEditLine(line);
+                      },
+                    }
+                  : {})}
               >
                 <td className="px-2 py-2">{line.lineNo}</td>
                 <td className="px-2 py-2">{line.componentSku.skuCode}</td>
                 <td className="px-2 py-2">{line.componentSku.skuName}</td>
-                <td className="px-2 py-2">
+                {/* ★ 이 칸은 일괄확정용 입력이다 — 행 클릭(수정 dialog)과 겹치지
+                    않도록 이벤트를 여기서 멈춘다. */}
+                <td
+                  className="px-2 py-2"
+                  onClick={(event) => {
+                    if (canMutate) event.stopPropagation();
+                  }}
+                >
                   {canMutate ? (
                     <span className="flex items-center gap-1">
                       <input
@@ -805,30 +830,6 @@ function ComponentsTab({
                 <td className="px-2 py-2">{formatOptional(line.issueWarehouseId)}</td>
                 <td className="px-2 py-2">{formatOptional(line.packQuantity)}</td>
                 <td className="px-2 py-2">{formatOptional(line.specification)}</td>
-                {canMutate ? (
-                  <td className="px-2 py-2">
-                    <span className="flex gap-1">
-                      <button
-                        type="button"
-                        className="text-xs underline"
-                        aria-label={`${line.lineNo} 수정`}
-                        disabled={busy}
-                        onClick={() => onEditLine(line)}
-                      >
-                        수정
-                      </button>
-                      <button
-                        type="button"
-                        className="text-xs text-red-600 underline"
-                        aria-label={`${line.lineNo} 삭제`}
-                        disabled={busy}
-                        onClick={() => onDeleteLine(line)}
-                      >
-                        삭제
-                      </button>
-                    </span>
-                  </td>
-                ) : null}
               </tr>
             );
           })}
@@ -973,16 +974,20 @@ function HeaderDialog({
 function LineDialog({
   form,
   busy,
+  canDelete,
   onChange,
   onCancel,
   onSubmit,
+  onDelete,
   onError,
 }: {
   form: LineForm;
   busy: boolean;
+  canDelete: boolean;
   onChange: (next: LineForm) => void;
   onCancel: () => void;
   onSubmit: () => void;
+  onDelete: () => void;
   onError: (error: UiError) => void;
 }) {
   const title = form.mode === 'create' ? '구성품 추가' : '구성품 수정';
@@ -1143,13 +1148,25 @@ function LineDialog({
           </Field>
         </div>
 
-        <div className="mt-4 flex justify-end gap-2">
-          <Button variant="secondary" onClick={onCancel}>
-            취소
-          </Button>
-          <Button disabled={busy || form.componentSkuId === ''} onClick={onSubmit}>
-            저장
-          </Button>
+        <div className="mt-4 flex items-center justify-between gap-2">
+          {/* ★ 삭제는 여기 있다 — 그리드 16번째 열 대신 dialog 안이다.
+              편집 가능 상태 + `bom.update` 이고 **기존 라인**일 때만 렌더된다.
+              ⛔ 권한이 없으면 disabled 가 아니라 아예 없다. */}
+          {canDelete && form.mode === 'edit' ? (
+            <Button variant="destructive" disabled={busy} onClick={onDelete}>
+              삭제
+            </Button>
+          ) : (
+            <span />
+          )}
+          <span className="flex gap-2">
+            <Button variant="secondary" onClick={onCancel}>
+              취소
+            </Button>
+            <Button disabled={busy || form.componentSkuId === ''} onClick={onSubmit}>
+              저장
+            </Button>
+          </span>
         </div>
       </div>
     </div>

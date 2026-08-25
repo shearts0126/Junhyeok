@@ -12,8 +12,10 @@ import {
   BOM_COMPONENT_ROLE_OPTIONS,
   BOM_QUANTITY_STATUS_OPTIONS,
   BOM_SUPPLY_TYPE_OPTIONS,
+  BOM_LINE_GRID_COLUMNS,
   COST_SHARE_SCALE,
   EDITABLE_STATUSES,
+  canEditLineByRowClick,
 } from './bom-detail-view';
 import {
   buildBomListParams,
@@ -654,6 +656,45 @@ describe('H. action 노출 (D-6 · D-31)', () => {
     }
   });
 
+  it('★★★ D·E — DRAFT·REJECTED + bom.update 는 행 클릭으로 수정 dialog 를 연다', () => {
+    for (const status of ['DRAFT', 'REJECTED']) {
+      expect(canEditLineByRowClick(status, ALL_PERMISSIONS), status).toBe(true);
+      expect(canEditLineByRowClick(status, ['bom.read', 'bom.update']), status).toBe(true);
+    }
+  });
+
+  it('★★★ F — 읽기전용 status 는 행 클릭으로 mutation dialog 를 열지 않는다', () => {
+    for (const status of ['PENDING_APPROVAL', 'APPROVED', 'ACTIVE', 'INACTIVE', 'ARCHIVED']) {
+      expect(canEditLineByRowClick(status, ALL_PERMISSIONS), status).toBe(false);
+    }
+  });
+
+  it('★★★ G — bom.update 가 없으면 편집 가능 status 라도 행 클릭이 열리지 않는다', () => {
+    for (const status of ['DRAFT', 'REJECTED']) {
+      expect(canEditLineByRowClick(status, ['bom.read']), status).toBe(false);
+      // ⛔ 승인 권한이 편집 권한을 대신하지 않는다.
+      expect(canEditLineByRowClick(status, ['bom.read', 'bom.approve']), status).toBe(false);
+      expect(canEditLineByRowClick(status, []), status).toBe(false);
+    }
+  });
+
+  it('★★★ H — dialog 삭제 버튼은 편집 가능 + 권한 + 기존 라인일 때만 렌더된다', () => {
+    const code = codeOnly(sourceOf('./[id]/bom-detail-client.tsx'));
+    // 그리드가 아니라 dialog 가 삭제를 갖는다.
+    expect(code).toContain('canDelete={actions.canMutateLines}');
+    expect(code).toContain("canDelete && form.mode === 'edit'");
+    // ⛔ 권한이 없으면 disabled 가 아니라 렌더되지 않는다.
+    expect(code).not.toContain('disabled={!canDelete}');
+  });
+
+  it('★★★ I — 삭제는 기존 DELETE 라인 API 를 그대로 호출한다', () => {
+    const code = codeOnly(sourceOf('./[id]/bom-detail-client.tsx'));
+    expect(code).toContain("send('DELETE', `/api/boms/${bomId}/lines/${lineForm.lineId}`)");
+    // ⛔ 새 endpoint 를 만들지 않았다.
+    expect(code).not.toContain('/lines/delete');
+    expect(code).not.toContain('/lines/bulk-delete');
+  });
+
   it('★ 진행률은 SUGGESTED 를 미확정으로 센다 (D-31 ⑤)', () => {
     expect(confirmProgress(10, 3)).toBe('확정 7 / 전체 10');
     expect(confirmProgress(0, 0)).toBe('확정 0 / 전체 0');
@@ -706,8 +747,9 @@ describe('J. 화면 소스 계약 (D-30 · D-31)', () => {
     }
   });
 
-  it('★★ 라인 그리드는 정확히 15열이다 (+ 편집 시 작업 열)', () => {
-    const headers = [
+  it('★★★ 라인 그리드는 정확히 15열이다 — ⛔ 16번째 action 열 금지', () => {
+    // 열 계약은 **데이터**다 — 마크업이 이 배열을 그대로 map 해서 그린다.
+    expect(BOM_LINE_GRID_COLUMNS).toEqual([
       '순번',
       '구성품 SKU',
       '상품명',
@@ -723,13 +765,37 @@ describe('J. 화면 소스 계약 (D-30 · D-31)', () => {
       '투입창고',
       '입수량',
       '상세사양',
-    ];
-    expect(headers).toHaveLength(15);
-    for (const header of headers) {
-      expect(detailSource, header).toContain(`>${header}</th>`);
+    ]);
+    expect(BOM_LINE_GRID_COLUMNS).toHaveLength(15);
+  });
+
+  it('★★★ 열 정의에 action 계열 label 이 하나도 없다', () => {
+    for (const forbidden of ['작업', '관리', 'Action', '수정', '삭제', '비고']) {
+      expect(BOM_LINE_GRID_COLUMNS as readonly string[], forbidden).not.toContain(forbidden);
     }
-    // ★ `비고`(note) 는 그리드 15열에 **없다** — dialog 에서만 편집한다.
-    expect(detailSource).not.toContain('>비고</th>');
+  });
+
+  it('★★★ 그리드가 그 배열을 그대로 그린다 — 하드코딩 `<th>` 가 없다', () => {
+    const code = codeOnly(detailSource);
+    expect(code).toContain('BOM_LINE_GRID_COLUMNS.map(');
+    // ⛔ 16번째 열을 마크업으로 몰래 덧붙이는 경로가 없다.
+    expect(code).not.toContain('>작업</th>');
+    expect(code).not.toContain('>관리</th>');
+    expect(code).not.toContain('>비고</th>');
+    // 그리드 머리글에 조건부 `<th>` 자체가 없다.
+    expect(code).not.toMatch(/canMutate \? <th/);
+  });
+
+  it('★★★ 라인 CRUD 는 행 클릭 + dialog 다 — 셀 안의 수정/삭제 버튼 0', () => {
+    const code = codeOnly(detailSource);
+    // 행이 수정 dialog 를 연다.
+    expect(code).toContain('onEditLine(line)');
+    expect(code).toContain("role: 'button' as const");
+    // 삭제는 dialog 안에서만 일어난다.
+    expect(code).toContain('deleteLineFromDialog');
+    // ⛔ 그리드 셀 안에 `수정`/`삭제` 버튼을 두지 않는다.
+    expect(code).not.toContain('aria-label={`${line.lineNo} 수정`}');
+    expect(code).not.toContain('aria-label={`${line.lineNo} 삭제`}');
   });
 
   it('★★ 일괄 확정은 top-level 배열을 보낸다 — ⛔ `{items: […]}` wrapper 금지', () => {
