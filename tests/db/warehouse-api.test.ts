@@ -14,7 +14,7 @@ import {
   updateWarehouse,
 } from '@/modules/warehouse/application';
 import { disconnectPrisma, getPrismaClient } from '@/shared/db';
-import { ERROR_CODES } from '@/shared/errors';
+import { AppError, ERROR_CODES } from '@/shared/errors';
 
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
 
@@ -77,6 +77,17 @@ const codeOf = async (promise: Promise<unknown>): Promise<string> => {
     return 'NO_ERROR';
   } catch (error) {
     return (error as { code?: string }).code ?? 'UNKNOWN';
+  }
+};
+
+/** 오류 객체 자체가 필요할 때 — 계약(코드·publicDetails·누출 여부)을 본다. */
+const errorOf = async (promise: Promise<unknown>): Promise<AppError> => {
+  try {
+    await promise;
+    throw new Error('오류가 발생하지 않았습니다.');
+  } catch (error) {
+    if (!(error instanceof AppError)) throw error;
+    return error;
   }
 };
 
@@ -603,20 +614,46 @@ describe('★ locations (W-D32 · W-D34)', () => {
     ).toBe(1);
   });
 
-  it('★ POST — 같은 창고의 중복 코드는 409 다', async () => {
+  it('★★ POST — 같은 창고의 중복 코드는 generic CONFLICT(409) 다 (§W-D34)', async () => {
     const created = await createWarehouse(ADMIN, input('G3'));
     await createWarehouseLocation(ADMIN, created.warehouse.id, {
       locationCode: 'A-01',
       locationName: 'A',
     });
-    expect(
-      await codeOf(
-        createWarehouseLocation(ADMIN, created.warehouse.id, {
-          locationCode: 'A-01',
-          locationName: 'A 중복',
-        }),
-      ),
-    ).toBe(ERROR_CODES.WAREHOUSE_LOCATION_CODE_DUPLICATE);
+
+    const error = await errorOf(
+      createWarehouseLocation(ADMIN, created.warehouse.id, {
+        locationCode: 'A-01',
+        locationName: 'A 중복',
+      }),
+    );
+
+    // ⛔ 로케이션 전용 error code 를 만들지 않았다 — 기존 generic 계약이다.
+    expect(error.code).toBe(ERROR_CODES.CONFLICT);
+    expect(error.httpStatus).toBe(409);
+    // 어떤 중복인지는 publicDetails 로만 구분한다.
+    expect(error.publicDetails).toEqual({
+      warehouseId: created.warehouse.id,
+      locationCode: 'A-01',
+    });
+
+    // ★ Prisma 원본(P2002·23505·제약 이름·컬럼명)이 응답에 새지 않는다.
+    const exposed = JSON.stringify({
+      code: error.code,
+      publicMessage: error.publicMessage,
+      message: error.message,
+      publicHint: error.publicHint,
+      publicDetails: error.publicDetails,
+    });
+    for (const leak of [
+      'P2002',
+      '23505',
+      'warehouse_location',
+      'location_code',
+      'Unique constraint',
+    ]) {
+      expect(exposed, leak).not.toContain(leak);
+    }
   });
 
   it('★ POST — 다른 창고면 같은 코드를 써도 된다', async () => {

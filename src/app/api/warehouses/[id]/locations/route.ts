@@ -26,7 +26,9 @@ import { createSupabaseServerClient } from '@/shared/supabase';
  *   - `id`·`warehouseId`·`active` 는 입력 불가 — 400 (§W-D33).
  *   - ★ `locationCode` 가 예약어 `DEFAULT`(대소문자 무시)면 **400** (§W-D9) —
  *     자동 생성만이 DEFAULT 의 owner 다. 단 일반 코드는 대소문자를 보존한다.
- *   - `(warehouseId, locationCode)` 중복 409 `WAREHOUSE_LOCATION_CODE_DUPLICATE`.
+ *   - `(warehouseId, locationCode)` 중복은 **generic `CONFLICT`(409)** 다 —
+ *     ⛔ 로케이션 전용 error code 를 만들지 않는다 (§W-D34). 어떤 중복인지는
+ *     `publicDetails.warehouseId`·`publicDetails.locationCode` 로 구분한다.
  *   - `IN_TRANSIT` 창고에는 추가 로케이션을 만들지 않는다 — 400 (§W-D12).
  *   - `Idempotency-Key` 헤더(선택): scope 에 실제 `warehouseId` 가 들어간다.
  *

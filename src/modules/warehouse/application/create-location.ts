@@ -77,7 +77,7 @@ async function performCreateLocation(
       },
     });
   } catch (error) {
-    translateLocationWriteError(error, input.locationCode);
+    translateLocationWriteError(error, warehouseId, input.locationCode);
   }
 
   const view = toLocationView(created);

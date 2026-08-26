@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { Prisma } from '@/generated/prisma/client';
 import { ERROR_CODES, httpStatusForCode } from '@/shared/errors';
 
+import { locationCodeDuplicate, translateLocationWriteError } from './constraint-errors';
 import {
   DEFAULT_TIMEZONE,
   WAREHOUSE_TYPES,
@@ -291,10 +293,71 @@ describe('W-D33. CreateLocationDto', () => {
 // 오류코드 등록
 // ═══════════════════════════════════════════════════════════════
 
+/** `(warehouse_id, location_code)` UNIQUE 위반을 흉내낸 Prisma 오류. */
+function locationUniqueViolation(): Prisma.PrismaClientKnownRequestError {
+  return new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+    code: 'P2002',
+    clientVersion: 'test',
+    meta: { target: ['warehouse_id', 'location_code'] },
+  });
+}
+
 describe('창고 오류코드', () => {
-  it('★ 중복 코드는 409 다', () => {
+  it('★ 창고코드 중복은 409 다', () => {
     expect(httpStatusForCode(ERROR_CODES.WAREHOUSE_CODE_DUPLICATE)).toBe(409);
-    expect(httpStatusForCode(ERROR_CODES.WAREHOUSE_LOCATION_CODE_DUPLICATE)).toBe(409);
+  });
+
+  it('★★ 로케이션 코드 중복은 **generic CONFLICT(409)** 다 (§W-D34)', () => {
+    const error = locationCodeDuplicate(VALID_UUID, 'A-01');
+
+    expect(error.code).toBe(ERROR_CODES.CONFLICT);
+    expect(httpStatusForCode(error.code)).toBe(409);
+    // 어떤 중복인지는 code 가 아니라 publicDetails 로 구분한다.
+    expect(error.publicDetails).toEqual({ warehouseId: VALID_UUID, locationCode: 'A-01' });
+    expect(error.retryable).toBe(false);
+  });
+
+  it('⛔ 로케이션 전용 duplicate error code 를 만들지 않았다', () => {
+    // ★ 금지된 이름을 이 파일에 literal 로 적지 않는다 — 저장소 전역 grep 이
+    //   0건이어야 한다. 대신 **패턴**으로 재발을 막는다.
+    const locationDuplicateCodes = Object.keys(ERROR_CODES).filter(
+      (key) => key.includes('LOCATION') && key.includes('DUPLICATE'),
+    );
+    expect(locationDuplicateCodes).toEqual([]);
+  });
+
+  it('★★ P2002 를 번역해도 Prisma 원본이 응답에 새지 않는다', () => {
+    let thrown: unknown;
+    try {
+      translateLocationWriteError(locationUniqueViolation(), VALID_UUID, 'A-01');
+    } catch (error) {
+      thrown = error;
+    }
+
+    const conflict = thrown as ReturnType<typeof locationCodeDuplicate>;
+    expect(conflict.code).toBe(ERROR_CODES.CONFLICT);
+
+    // 공개되는 문자열 어디에도 P2002·23505·제약 이름·컬럼명이 없다.
+    const exposed = JSON.stringify({
+      code: conflict.code,
+      publicMessage: conflict.publicMessage,
+      message: conflict.message,
+      publicHint: conflict.publicHint,
+      publicDetails: conflict.publicDetails,
+    });
+    for (const leak of ['P2002', '23505', 'warehouse_id', 'location_code', 'Unique constraint']) {
+      expect(exposed, leak).not.toContain(leak);
+    }
+  });
+
+  it('⛔ 로케이션과 무관한 P2002 는 삼키지 않는다 — 원본을 그대로 던진다', () => {
+    const other = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: { target: ['warehouse_code'] },
+    });
+
+    expect(() => translateLocationWriteError(other, VALID_UUID, 'A-01')).toThrow(other);
   });
 
   it('⛔ WAREHOUSE_NOT_FOUND runtime code 를 만들지 않았다', () => {
