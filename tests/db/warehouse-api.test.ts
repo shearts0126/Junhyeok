@@ -748,12 +748,34 @@ describe('⛔ T08-2 범위 밖 (W-D27 · W-D28 · W-D40)', () => {
     ).toEqual(['locations', 'route.ts']);
   });
 
-  it('⛔ T09 재고 테이블이 여전히 없다', async () => {
+  /**
+   * ✏️ **2026-08-26 (T2-2)**: 재고 테이블 3개는 `T2-2` 가 landing 시켰다.
+   *    이 파일이 지키려던 것은 "재고 테이블의 부재" 가 아니라 **창고 API 가
+   *    재고에 손대지 않는다**는 계약이므로, 그 계약 쪽으로 다시 겨눈다.
+   */
+  it('⛔ 창고 API 는 재고 테이블에 아무것도 쓰지 않는다', async () => {
+    const client = getPrismaClient();
+    const before = await client.inventoryLedgerEntry.count();
+    const beforeBalance = await client.inventoryBalance.count();
+    const beforeTxn = await client.inventoryTransaction.count();
+
+    const created = await createWarehouse(ADMIN, input('noinv'));
+    await createWarehouseLocation(ADMIN, created.warehouse.id, {
+      locationCode: 'INV-CHK',
+      locationName: '재고 무영향 확인',
+    });
+    await updateWarehouse(ADMIN, created.warehouse.id, { warehouseName: '변경' });
+
+    expect(await client.inventoryLedgerEntry.count()).toBe(before);
+    expect(await client.inventoryBalance.count()).toBe(beforeBalance);
+    expect(await client.inventoryTransaction.count()).toBe(beforeTxn);
+  });
+
+  it('⛔ T2-5 이후(posting)·T2-19 테이블은 여전히 없다', async () => {
     const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public'
-         AND table_name IN ('inventory_transaction', 'inventory_ledger_entry',
-                            'inventory_balance')`;
+         AND table_name IN ('balance_rebuild_snapshot', 'inventory_exception')`;
     expect(rows).toEqual([]);
   });
 });

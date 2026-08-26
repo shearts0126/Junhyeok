@@ -76,6 +76,12 @@ model User {
   createdBomHeaders  BomHeader[] @relation("BomHeaderCreatedBy")
   approvedBomHeaders BomHeader[] @relation("BomHeaderApprovedBy")
 
+  /// 재고거래 actor (T2-2). `createdBy` 는 NOT NULL, `approvedBy` 는 nullable
+  /// 이라 두 관계를 named relation 으로 구분한다. Prisma compile 에 필요한
+  /// 최소 inverse 이며 ⛔ 새 business semantics 를 부여하지 않는다.
+  createdInventoryTransactions  InventoryTransaction[] @relation("InventoryTransactionCreatedBy")
+  approvedInventoryTransactions InventoryTransaction[] @relation("InventoryTransactionApprovedBy")
+
   @@map("user")
 }
 
@@ -416,6 +422,12 @@ model Sku {
   bomHeaders BomHeader[] @relation("BomParent")
   bomLines   BomLine[]   @relation("BomComponent")
 
+  /// 재고 코어 (T2-2). `InventoryLedgerEntry.sku` · `InventoryBalance.sku` 의
+  /// 필수 inverse 다 — ⛔ 신규 업무 컬럼이 아니고 어떤 API 도 include 하지 않는다.
+  /// ⛔ 현재고 숫자 파생 필드를 여기에 만들지 않는다 (T2-16 소관).
+  inventoryLedgerEntries InventoryLedgerEntry[]
+  inventoryBalances      InventoryBalance[]
+
   @@index([status])
   @@index([itemType])
   @@index([brandId, majorCategoryId, minorCategoryId])
@@ -559,6 +571,9 @@ model ExternalSystem {
   /// `Warehouse.externalSystem` 의 필수 inverse (T08-1, W-D14).
   /// ⛔ 신규 업무 필드가 아니며 어떤 API 도 이 관계를 include 하지 않는다.
   warehouses Warehouse[]
+
+  /// `InventoryTransaction.externalSystem` 의 필수 inverse (T2-2). 위와 같다.
+  inventoryTransactions InventoryTransaction[]
 
   @@map("external_system")
 }
@@ -1211,6 +1226,12 @@ model Warehouse {
   destinationForSupplierSkus SupplierSku[]
   destinationForBomHeaders   BomHeader[]
   issueForBomLines           BomLine[]
+
+  /// ── 재고 코어 inverse (T2-2, W-D18 이 예고한 landing) ─────────────
+  /// W-D18 이 "T09 authoritative schema landing 시 추가한다" 고 유예해 둔
+  /// 두 relation 이다. ⛔ 여전히 어떤 API 도 include 하지 않는다.
+  inventoryLedgerEntries InventoryLedgerEntry[]
+  inventoryBalances      InventoryBalance[]
   // raw SQL (migration 참조):
   //   1) CHECK  warehouse_code_not_blank / warehouse_name_not_blank /
   //             warehouse_timezone_not_blank
@@ -1264,10 +1285,296 @@ model WarehouseLocation {
   /// ⛔ `Warehouse[]` 로 되돌리지 않는다.
   defaultForWarehouse Warehouse? @relation("WarehouseDefaultLocation")
 
+  /// ── 재고 코어 inverse (T2-2) ──────────────────────────────────────
+  /// 재고 두 모델은 `(warehouseId, locationId)` composite FK 로 이 모델을
+  /// 참조한다 — `defaultForWarehouse` 와 같은 이유로, 단일 FK 로는 **다른
+  /// 창고의 로케이션**을 재고키에 넣는 것을 막을 수 없기 때문이다.
+  /// ⛔ relation field 추가일 뿐 DB 컬럼이 늘지 않는다.
+  inventoryLedgerEntries InventoryLedgerEntry[] @relation("LedgerEntryLocation")
+  inventoryBalances      InventoryBalance[]     @relation("BalanceLocation")
+
   @@unique([warehouseId, locationCode])
   /// ★ business identity 가 아니라 **composite FK 의 참조 대상**이다 (W-D6).
   ///   `warehouse (id, default_location_id)` 가 이 UNIQUE 를 가리킨다.
   ///   ⛔ 삭제하지 말 것 — 지우면 default FK 를 걸 수 없다.
   @@unique([warehouseId, id])
   @@map("warehouse_location")
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 재고 코어 (T2-2, legacy alias T09-1)
+//
+// 설계 문서: docs/03_ERD와_Prisma스키마_v0.2.md §Layer 3 — 재고 코어 ★
+//            docs/04_재고_PostingService와_현재고전략_v0.2.md §8·§9
+//            docs/00_요구사항_이해와_충돌검토_v0.2.md C-09 · C-10 · C-14
+//
+// ★ 이 task 는 **schema foundation 전용**이다.
+// ⛔ `InventoryPostingService`(T2-5) · balance 갱신(T2-9) · 원장 생성(T2-10) ·
+//    음수재고 판정(T2-9·T2-14) · 잠금(T2-9·T2-12) · 현재고 조회(T2-16) ·
+//    화면(T2-20) — 전부 이 task 가 아니다. runtime 코드 0 줄이다.
+// ⛔ `BalanceRebuildSnapshot` 은 T2-19 소유다 — 여기서 만들지 않는다.
+// ⛔ `InventoryException`(T2-14) · `OpeningBalanceBatch`(T11-1) 도 아니다.
+// ⛔ REVERSAL 재취소 차단 트리거(`reject_reversal_of_reversal`)는 **T2-3** 이다.
+//    이 migration 에는 `reversalOfId` FK 와 `ux_txn_reversal` 만 들어간다.
+// ═══════════════════════════════════════════════════════════════
+
+/// 재고 상태 — 정확히 9종. 재고키의 한 축이다.
+/// ⚠️ `IN_TRANSIT` 은 `WarehouseType.IN_TRANSIT` 과 **이름만 같은 별개 enum**
+///    이다. DB 타입도 다르다 — 서로 대입하거나 재사용하지 않는다.
+enum InventoryStatus {
+  AVAILABLE
+  RESERVED
+  OUTBOUND_PENDING
+  HOLD
+  INSPECTION
+  DEFECTIVE
+  RETURN_PENDING
+  DISPOSAL_PENDING
+  IN_TRANSIT
+}
+
+/// 재고거래 유형 — **정확히 24종**이다.
+/// `docs/03` v0.1·v0.2 가 값·순서까지 완전히 동일하다. ⛔ 임의 추가·삭제 금지.
+enum TransactionType {
+  OPENING_BALANCE
+  PURCHASE_RECEIPT
+  PRODUCTION_RECEIPT
+  RETURN_RECEIPT
+  WAREHOUSE_TRANSFER_IN
+  ASSEMBLY_RECEIPT
+  DISASSEMBLY_RECEIPT
+  SALES_SHIPMENT
+  B2B_SHIPMENT
+  MARKETING_SHIPMENT
+  CS_SHIPMENT
+  SAMPLE_SHIPMENT
+  EMPLOYEE_USE
+  VENDOR_RETURN
+  DISPOSAL
+  WAREHOUSE_TRANSFER_OUT
+  ASSEMBLY_CONSUMPTION
+  DISASSEMBLY_CONSUMPTION
+  STATUS_CHANGE
+  STOCK_COUNT_ADJUSTMENT
+  MANUAL_ADJUSTMENT
+  REVERSAL
+  RESERVATION
+  RESERVATION_RELEASE
+}
+
+enum TransactionStatus {
+  POSTED
+  REVERSED
+}
+
+/// 출고 목적 — 출고 원장행 전용. 정확히 8종.
+enum OutboundPurpose {
+  SALES_B2C
+  SALES_B2B
+  WAREHOUSE_REPLENISHMENT
+  MARKETING
+  CS
+  SAMPLE
+  EMPLOYEE_USE
+  OTHER
+}
+
+/// 재고거래 헤더. 원장행(`InventoryLedgerEntry`)의 묶음 단위다.
+model InventoryTransaction {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// 거래번호. ⛔ **채번 규칙은 이 task 가 만들지 않는다** — prefix·일자·
+  ///   sequence·DB default·runtime allocator 전부 없다. 컬럼 계약만 잠근다.
+  transactionNo   String          @unique @map("transaction_no") @db.VarChar(50)
+  transactionType TransactionType @map("transaction_type")
+
+  /// ★ **원장 집계 시 이 필드로 필터하지 않는다** (C-10). 모든 원장행을
+  ///   합산한다. 이 값은 UI 표시와 재취소 차단용이다.
+  status TransactionStatus @default(POSTED)
+
+  occurredAt DateTime @map("occurred_at") @db.Timestamptz
+
+  /// ★ `(occurred_at AT TIME ZONE 'Asia/Seoul')::date` — 집계·마감의 유일 기준.
+  /// ⛔ 파생 로직은 **T2-4** 소유다. 여기서는 컬럼만 만든다.
+  /// ⛔ `Warehouse.timezone` 과 연결하지 않는다 — 기준은 KST 고정이다.
+  businessDate DateTime  @map("business_date") @db.Date
+  postedAt     DateTime  @default(now()) @map("posted_at") @db.Timestamptz
+  importedAt   DateTime? @map("imported_at") @db.Timestamptz
+
+  /// 원인문서. ⛔ `sourceDocumentId` 는 **scalar-only** 다 — PO·SO·입출고·
+  ///    조정·이동 모델이 아직 없고, 미래 모델용 placeholder FK 를 만들지 않는다.
+  sourceDocumentType String? @map("source_document_type") @db.VarChar(50)
+  sourceDocumentId   String? @map("source_document_id") @db.Uuid
+  sourceDocumentNo   String? @map("source_document_no") @db.VarChar(100)
+
+  externalSystemId      String? @map("external_system_id") @db.Uuid
+  externalTransactionId String? @map("external_transaction_id") @db.VarChar(200)
+  idempotencyKey        String? @map("idempotency_key") @db.VarChar(300)
+
+  /// C-14 — 이 값이 가리키는 거래의 `transactionType` 이 `REVERSAL` 이면
+  /// 도메인·API·DB 트리거 모두에서 차단된다. ★ 그 **트리거는 T2-3** 이다.
+  reversalOfId String? @map("reversal_of_id") @db.Uuid
+
+  reasonCode   String? @map("reason_code") @db.VarChar(50)
+  reasonDetail String? @map("reason_detail")
+
+  /// ⛔ scalar-only — `Attachment` 모델이 아직 없다.
+  attachmentGroupId String? @map("attachment_group_id") @db.Uuid
+
+  createdBy  String   @map("created_by") @db.Uuid
+  approvedBy String?  @map("approved_by") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  /// ★ 전 FK 가 `onDelete: Restrict` 다.
+  ///   `Cascade` 면 원거래 삭제가 REVERSAL 을 연쇄 삭제해 감사 추적이 붕괴하고,
+  ///   `SetNull` 이면 `ux_txn_reversal` 이 의미를 잃는다.
+  reversalOf InventoryTransaction?  @relation("Reversal", fields: [reversalOfId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  reversedBy InventoryTransaction[] @relation("Reversal")
+
+  externalSystem ExternalSystem? @relation(fields: [externalSystemId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  creator        User            @relation("InventoryTransactionCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  approver       User?           @relation("InventoryTransactionApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  entries          InventoryLedgerEntry[]
+  lastForBalances  InventoryBalance[]     @relation("BalanceLastTransaction")
+
+  @@index([businessDate])
+  @@index([transactionType, businessDate])
+  @@index([sourceDocumentType, sourceDocumentId])
+  @@index([externalSystemId, externalTransactionId])
+  @@map("inventory_transaction")
+  // raw SQL (migration 참조):
+  //   1) UNIQUE INDEX ux_txn_idem      ON inventory_transaction(idempotency_key)
+  //        WHERE idempotency_key IS NOT NULL
+  //   2) UNIQUE INDEX ux_txn_reversal  ON inventory_transaction(reversal_of_id)
+  //        WHERE reversal_of_id IS NOT NULL AND status = 'POSTED'
+  //   3) CHECK ck_source_doc
+  //        transaction_type = 'OPENING_BALANCE' OR source_document_type IS NOT NULL
+  // ⛔ trg_no_reversal_of_reversal 은 **T2-3** 이다 — 여기에 넣지 않는다.
+}
+
+/// ★ **불변 원장 (INSERT only)**. UPDATE/DELETE 는 DB 트리거가 차단한다.
+///
+/// ✏️ 하나의 거래 안에 **동일 재고키가 여러 행**으로 존재할 수 있다 (C-13).
+///    검증·balance 갱신은 재고키 그룹의 **합산값**으로 하고, 저장은 원본 행
+///    그대로다 — 그 합산 로직은 T2-6 이후 소유다.
+model InventoryLedgerEntry {
+  id            String @id @default(uuid()) @db.Uuid
+  transactionId String @map("transaction_id") @db.Uuid
+
+  /// 원본 entry 순서 보존 (감사 추적).
+  lineNo Int @map("line_no")
+
+  // ── 재고키 8열 (NULL 정규화 센티넬 — C-09) ────────────────────────
+  // ★ NULL 을 허용하면 PostgreSQL 이 NULL 을 서로 다른 값으로 취급해
+  //   **현재고가 조용히 쪼개진다**. 음수재고보다 치명적이라 센티넬을 쓴다.
+  //   `NULLS NOT DISTINCT` 는 C-09 결정에 따라 쓰지 않는다.
+  skuId           String          @map("sku_id") @db.Uuid
+  warehouseId     String          @map("warehouse_id") @db.Uuid
+  locationId      String          @map("location_id") @db.Uuid
+  inventoryStatus InventoryStatus @map("inventory_status")
+  lotNo           String          @default("") @map("lot_no") @db.VarChar(100)
+  expiryKey       DateTime        @default(dbgenerated("'9999-12-31'::date")) @map("expiry_key") @db.Date
+  serialNo        String          @default("") @map("serial_no") @db.VarChar(200)
+  ownerCode       String          @default("DEEPPOINT") @map("owner_code") @db.VarChar(30)
+  // ──────────────────────────────────────────────────────────────────
+
+  /// 표시용. 센티넬을 쓰는 `expiryKey` 와 달리 **nullable 을 유지**한다.
+  expiryDate       DateTime? @map("expiry_date") @db.Date
+  manufacturedDate DateTime? @map("manufactured_date") @db.Date
+
+  /// ★ signed quantity — 증가는 양수, 감소는 음수.
+  /// ⛔ `direction` · `movementType` enum 을 만들지 않는다.
+  /// `CHECK (quantity_delta <> 0)` 는 **개별 entry 기준**이다 — 그룹 net 은 0 가능.
+  quantityDelta    Decimal  @map("quantity_delta") @db.Decimal(18, 6)
+  baseUom          String   @map("base_uom") @db.VarChar(20)
+  originalQuantity Decimal? @map("original_quantity") @db.Decimal(18, 6)
+  originalUom      String?  @map("original_uom") @db.VarChar(20)
+  conversionFactor Decimal? @map("conversion_factor") @db.Decimal(18, 6)
+
+  /// 출고 전용. ⛔ **scalar-only** — `Channel` 모델이 문서·저장소 어디에도 없다.
+  channelId       String?          @map("channel_id") @db.Uuid
+  outboundPurpose OutboundPurpose? @map("outbound_purpose")
+  externalLineId  String?          @map("external_line_id") @db.VarChar(200)
+  note            String?
+
+  /// 비정규화 (집계 성능). 헤더의 같은 값과 일치해야 한다.
+  businessDate DateTime @map("business_date") @db.Date
+  occurredAt   DateTime @map("occurred_at") @db.Timestamptz
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  transaction InventoryTransaction @relation(fields: [transactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  sku         Sku                  @relation(fields: [skuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  warehouse   Warehouse            @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// ★ composite FK — `(warehouseId, locationId)` → `(warehouseId, id)`.
+  ///   `Warehouse.defaultLocation`(W-D6)과 같은 이유다: 단일
+  ///   `locationId → warehouse_location.id` FK 는 **다른 창고의 로케이션**을
+  ///   재고키에 넣는 것을 막지 못한다. 재고키에 창고와 로케이션이 함께 들어가는
+  ///   이상 그 조합의 정합성은 DB 가 보장해야 한다.
+  ///   ⛔ 단일 FK 로 바꾸지 않는다.
+  location WarehouseLocation @relation("LedgerEntryLocation", fields: [warehouseId, locationId], references: [warehouseId, id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([transactionId, lineNo])
+  /// ★ 재고키 기간 집계용 (핵심). ⛔ `locationId` 를 임의로 넣지 않는다 —
+  ///   `docs/03` 원문이 8열을 그대로 명시한다.
+  @@index([skuId, warehouseId, inventoryStatus, lotNo, expiryKey, serialNo, ownerCode, businessDate])
+  @@index([warehouseId, businessDate])
+  @@index([businessDate, transactionId])
+  @@map("inventory_ledger_entry")
+  // raw SQL (migration 참조):
+  //   1) CHECK ck_qty_nonzero  quantity_delta <> 0
+  //   2) FUNCTION raise_immutable_violation()
+  //   3) TRIGGER trg_ledger_immutable BEFORE UPDATE OR DELETE FOR EACH ROW
+  //      ⛔ TRUNCATE 트리거는 만들지 않는다 — 문서가 UPDATE/DELETE 만 명시한다.
+  //   4) INDEX ix_ledger_channel (channel_id, business_date)
+  //        WHERE channel_id IS NOT NULL
+}
+
+/// 조회 성능용 **캐시**. 원장에서 언제든 재구축 가능하며 원본이 아니다.
+/// ✏️ `InventoryPostingService`(T2-5~) 가 재고키 그룹당 정확히 1회 갱신한다.
+model InventoryBalance {
+  id String @id @default(uuid()) @db.Uuid
+
+  // ── 재고키 8열 (ledger 와 동일한 센티넬 규약) ──────────────────────
+  skuId           String          @map("sku_id") @db.Uuid
+  warehouseId     String          @map("warehouse_id") @db.Uuid
+  locationId      String          @map("location_id") @db.Uuid
+  inventoryStatus InventoryStatus @map("inventory_status")
+  lotNo           String          @default("") @map("lot_no") @db.VarChar(100)
+  expiryKey       DateTime        @default(dbgenerated("'9999-12-31'::date")) @map("expiry_key") @db.Date
+  serialNo        String          @default("") @map("serial_no") @db.VarChar(200)
+  ownerCode       String          @default("DEEPPOINT") @map("owner_code") @db.VarChar(30)
+  // ──────────────────────────────────────────────────────────────────
+
+  /// ★ 수량 필드는 **이것 하나뿐**이다.
+  /// ⛔ `onHandQty`·`availableQty`·`reservedQty` 를 만들지 않는다 — 가용/예약/
+  ///    실물/총보유 등 파생 수량 9종은 `inventoryStatus` 별 `SUM(quantity)` 로
+  ///    계산하며 그것은 **T2-16** 소유다.
+  /// ⛔ `quantity >= 0` CHECK 를 걸지 않는다 — 음수재고 판정은 posting 시점의
+  ///    **그룹 net 기준 runtime 규칙**이다 (T2-9 · 예외 5요건은 T2-14).
+  quantity Decimal @default(0) @db.Decimal(18, 6)
+
+  lastTransactionId String?  @map("last_transaction_id") @db.Uuid
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  /// ✏️ 거래당 +1 (entry 수가 아니라 **그룹 갱신 1회** 기준).
+  lockVersion Int @default(0) @map("lock_version")
+
+  sku       Sku       @relation(fields: [skuId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  warehouse Warehouse @relation(fields: [warehouseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// ★ ledger 와 동일한 composite FK — 사유도 같다.
+  location WarehouseLocation @relation("BalanceLocation", fields: [warehouseId, locationId], references: [warehouseId, id], onDelete: Restrict, onUpdate: Cascade)
+
+  lastTransaction InventoryTransaction? @relation("BalanceLastTransaction", fields: [lastTransactionId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  /// ★ **재고키 전체 UNIQUE**. 이것이 없으면 현재고가 조용히 쪼개진다 (C-09).
+  ///   Prisma selector 와 DB 제약 이름을 **둘 다 `stock_key`** 로 고정한다.
+  @@unique([skuId, warehouseId, locationId, inventoryStatus, lotNo, expiryKey, serialNo, ownerCode], name: "stock_key", map: "stock_key")
+  /// ⛔ `(sku_id, warehouse_id)` 별도 index 를 만들지 않는다 — `stock_key` 가
+  ///    이미 그 prefix 를 제공한다 (중복 index 금지).
+  @@index([skuId])
+  @@index([warehouseId, inventoryStatus])
+  @@map("inventory_balance")
 }

@@ -793,11 +793,22 @@ describe('★ staged warehouse scalar 5종 — 이제 FK 가 강제된다 (W-D15
 // FK action matrix — 9종 (W-D19)
 // ═══════════════════════════════════════════════════════════════
 
-describe('★ Warehouse 관련 FK 9종의 delete/update action (W-D19)', () => {
-  /** T08-1 이 landing 한 FK 9개 — 이름은 Prisma 생성 규칙 그대로다. */
+describe('★ Warehouse 관련 FK 의 delete/update action (W-D19)', () => {
+  /**
+   * T08-1 이 landing 한 FK 9개 — 이름은 Prisma 생성 규칙 그대로다.
+   *
+   * ✏️ **2026-08-26 (T2-2)**: 재고 코어가 `warehouse` · `warehouse_location` 을
+   *    참조하는 FK 4개를 추가했다. W-D19 의 계약(**전부 RESTRICT/CASCADE**)은
+   *    그대로이며, 이 목록이 **늘어난 것까지 정확히** 고정한다 —
+   *    ⛔ 개수 검사를 느슨하게 바꾸지 않는다.
+   */
   const EXPECTED = [
     ['bom_header', 'bom_header_destination_warehouse_id_fkey'],
     ['bom_line', 'bom_line_issue_warehouse_id_fkey'],
+    ['inventory_balance', 'inventory_balance_warehouse_id_fkey'],
+    ['inventory_balance', 'inventory_balance_warehouse_id_location_id_fkey'],
+    ['inventory_ledger_entry', 'inventory_ledger_entry_warehouse_id_fkey'],
+    ['inventory_ledger_entry', 'inventory_ledger_entry_warehouse_id_location_id_fkey'],
     ['sku_external_mapping', 'sku_external_mapping_warehouse_id_fkey'],
     ['supplier', 'supplier_default_warehouse_id_fkey'],
     ['supplier_sku', 'supplier_sku_destination_warehouse_id_fkey'],
@@ -807,7 +818,7 @@ describe('★ Warehouse 관련 FK 9종의 delete/update action (W-D19)', () => {
     ['warehouse_location', 'warehouse_location_warehouse_id_fkey'],
   ] as const;
 
-  it('정확히 9개이며 전부 ON DELETE RESTRICT · ON UPDATE CASCADE 다', async () => {
+  it('정확히 13개이며 전부 ON DELETE RESTRICT · ON UPDATE CASCADE 다', async () => {
     const rows = await getPrismaClient().$queryRaw<
       Array<{ table_name: string; conname: string; def: string }>
     >`
@@ -848,12 +859,31 @@ describe('★ Warehouse 관련 FK 9종의 delete/update action (W-D19)', () => {
 // ═══════════════════════════════════════════════════════════════
 
 describe('⛔ T08-1 범위 밖 (W-D18 · W-D37)', () => {
-  it('⛔ T09 재고 테이블이 DB 에 없다', async () => {
+  /**
+   * ✏️ **2026-08-26 (T2-2)**: 원래는 "재고 테이블이 **아직** 없다" 를 고정했다.
+   *    `T2-2`(= legacy `T09-1`)가 그 3테이블을 landing 시켰으므로 방향을 뒤집되,
+   *    ⛔ **그 다음 단계(T2-19 재구축 스냅샷 등)는 여전히 없다**를 이어서 지킨다.
+   */
+  it('✏️ T09 재고 테이블 3개는 T2-2 가 만들었다', async () => {
     const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public'
          AND table_name IN ('inventory_transaction', 'inventory_ledger_entry',
-                            'inventory_balance')`;
+                            'inventory_balance')
+       ORDER BY table_name`;
+    expect(rows.map((row) => row.table_name)).toEqual([
+      'inventory_balance',
+      'inventory_ledger_entry',
+      'inventory_transaction',
+    ]);
+  });
+
+  it('⛔ 그 다음 단계 테이블은 여전히 없다 (T2-14 · T2-19 · T11-1)', async () => {
+    const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
+      SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public'
+         AND table_name IN ('balance_rebuild_snapshot', 'inventory_exception',
+                            'opening_balance_batch')`;
     expect(rows).toEqual([]);
   });
 
