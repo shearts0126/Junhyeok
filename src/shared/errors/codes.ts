@@ -110,6 +110,14 @@ export const ERROR_CODES = {
   BOM_PERIOD_OVERLAP: 'BOM_PERIOD_OVERLAP',
   BOM_LINE_DUPLICATE: 'BOM_LINE_DUPLICATE',
 
+  // ── 창고 (T08-2, docs/19_설계복구_Warehouse.md) ──────────
+  // ⛔ `WAREHOUSE_NOT_FOUND` 를 만들지 않는다 — 존재하지 않는 창고 참조는
+  //    `productionPartnerNotFound` 선례대로 generic `NOT_FOUND`(404) 다.
+  //    (`docs/06` 의 동명 코드는 **마이그레이션 DataIssue** 이며 runtime API
+  //    error contract 가 아니다 — 혼동하지 말 것.)
+  WAREHOUSE_CODE_DUPLICATE: 'WAREHOUSE_CODE_DUPLICATE',
+  WAREHOUSE_LOCATION_CODE_DUPLICATE: 'WAREHOUSE_LOCATION_CODE_DUPLICATE',
+
   // ── 재고 (R1a-2, 설계 05 v0.2 §10.18) ────────────────────
   INSUFFICIENT_STOCK: 'INSUFFICIENT_STOCK',
   REVERSAL_OF_REVERSAL_NOT_ALLOWED: 'REVERSAL_OF_REVERSAL_NOT_ALLOWED',
@@ -210,6 +218,10 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.BOM_VERSION_DUPLICATE]: 409,
   [ERROR_CODES.BOM_PERIOD_OVERLAP]: 409,
   [ERROR_CODES.BOM_LINE_DUPLICATE]: 409,
+
+  // 창고 (T08-2). 중복 코드는 기존 `*_CODE_DUPLICATE` 계열과 같이 409 다.
+  [ERROR_CODES.WAREHOUSE_CODE_DUPLICATE]: 409,
+  [ERROR_CODES.WAREHOUSE_LOCATION_CODE_DUPLICATE]: 409,
 
   [ERROR_CODES.ENVIRONMENT_ERROR]: 500,
   [ERROR_CODES.INTERNAL_ERROR]: 500,
@@ -320,6 +332,9 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.BOM_VERSION_DUPLICATE]: '같은 상위 SKU 에 동일한 버전이 이미 있습니다.',
   [ERROR_CODES.BOM_PERIOD_OVERLAP]: '같은 상위 SKU 에 적용기간이 겹치는 활성 BOM 이 이미 있습니다.',
   [ERROR_CODES.BOM_LINE_DUPLICATE]: '같은 구성품·대체그룹의 라인이 이미 있습니다.',
+  [ERROR_CODES.WAREHOUSE_CODE_DUPLICATE]: '이미 사용 중인 창고 코드입니다.',
+  [ERROR_CODES.WAREHOUSE_LOCATION_CODE_DUPLICATE]:
+    '같은 창고에 동일한 로케이션 코드가 이미 있습니다.',
   [ERROR_CODES.ENVIRONMENT_ERROR]: '서버 설정 오류가 발생했습니다.',
   [ERROR_CODES.INTERNAL_ERROR]: '요청을 처리하지 못했습니다.',
 };

@@ -18,7 +18,7 @@ import { normalizeAlternateGroup, parseBomId, parseBomLineId, type UpdateLineInp
 import { assertBomEditable } from './editability';
 import { lockBomHeaderRow, lockSkuRows } from './locks';
 import { BOM_UPDATE_PERMISSION } from './policy';
-import { bomLineNotFound, bomNotFound, loadBomSkuRef } from './refs';
+import { assertWarehouseExists, bomLineNotFound, bomNotFound, loadBomSkuRef } from './refs';
 import { BOM_LINE_VIEW_INCLUDE, toBomLineView, type BomLineView } from './views';
 
 /**
@@ -213,6 +213,12 @@ async function performUpdateLine(
     quantityStatus: nextStatus as 'CONFIRMED' | 'SUGGESTED' | 'UNKNOWN',
     lineNo: before.lineNo,
   });
+
+  // ★ T08-1 이 warehouse FK 를 landing 시켰다 — 없는 UUID 가 raw P2003 으로
+  //   새지 않게 미리 확인한다 (docs/19 §W-D15). null 은 여전히 정상값이다.
+  if ('issueWarehouseId' in data && data['issueWarehouseId'] !== null) {
+    await assertWarehouseExists(tx, data['issueWarehouseId'] as string);
+  }
 
   let updated;
   try {

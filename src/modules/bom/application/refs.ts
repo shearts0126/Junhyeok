@@ -11,7 +11,10 @@ import { DomainError, ERROR_CODES } from '@/shared/errors';
  * (T06 `SupplierReadClient` 와 같은 방식). 트랜잭션 클라이언트도 같은 타입으로
  * 받으므로 resolver·validator 가 `withTransaction` 안팎에서 같이 쓰인다.
  */
-export type BomReadClient = Pick<PrismaClient, 'bomHeader' | 'bomLine' | 'sku' | 'supplier'>;
+export type BomReadClient = Pick<
+  PrismaClient,
+  'bomHeader' | 'bomLine' | 'sku' | 'supplier' | 'warehouse'
+>;
 export type BomDbClient = BomReadClient | TransactionClient;
 
 /**
@@ -97,4 +100,29 @@ export async function assertProductionPartnerExists(
 ): Promise<void> {
   const row = await db.supplier.findUnique({ where: { id: supplierId }, select: { id: true } });
   if (row === null) throw productionPartnerNotFound(supplierId);
+}
+
+/**
+ * ★ **T08-1 이 warehouse FK 를 landing 시킨 뒤부터 존재 검증이 필요하다.**
+ *
+ * `destinationWarehouseId`·`issueWarehouseId` 는 T07 당시 staged scalar 라
+ * "존재 조회 없음"(D-32)이 계약이었다. `docs/19_설계복구_Warehouse.md §W-D15`
+ * 가 이 두 컬럼을 **real FK** 로 landing 시켰으므로, 이제 없는 UUID 는 DB 가
+ * 거부한다 — 그 결과가 raw `P2003` 으로 새면 사용자는 500 을 본다.
+ *
+ * ⛔ 전용 `WAREHOUSE_NOT_FOUND` runtime code 를 만들지 않는다 — 바로 위
+ *    `productionPartnerNotFound` 와 같은 **generic `NOT_FOUND`(404)** 다.
+ *    (`docs/06` 의 동명 코드는 마이그레이션 DataIssue 이며 별개다.)
+ * ★ null 은 검사 대상이 아니다 — 여전히 정상값이다.
+ */
+export function warehouseRefNotFound(warehouseId: string): DomainError {
+  return new DomainError(ERROR_CODES.NOT_FOUND, {
+    message: `창고 '${warehouseId}' 이(가) 없습니다.`,
+    context: { warehouseId },
+  });
+}
+
+export async function assertWarehouseExists(db: BomDbClient, warehouseId: string): Promise<void> {
+  const row = await db.warehouse.findUnique({ where: { id: warehouseId }, select: { id: true } });
+  if (row === null) throw warehouseRefNotFound(warehouseId);
 }

@@ -21,7 +21,7 @@ import { normalizeAlternateGroup, parseBomId, type CreateLineInput } from './dto
 import { assertBomEditable } from './editability';
 import { lockBomHeaderRow, lockSkuRows } from './locks';
 import { BOM_UPDATE_PERMISSION } from './policy';
-import { bomNotFound, loadBomSkuRef } from './refs';
+import { assertWarehouseExists, bomNotFound, loadBomSkuRef } from './refs';
 import { BOM_LINE_VIEW_INCLUDE, toBomLineView, type BomLineView } from './views';
 
 /**
@@ -131,6 +131,12 @@ async function performCreateLine(
   const quantityPer = input.quantityPer ?? null;
   assertQuantityConsistency({ quantityPer, quantityStatus });
 
+  // ★ T08-1 이 warehouse FK 를 landing 시켰다 — 없는 UUID 가 raw P2003 으로
+  //   새지 않게 미리 확인한다 (docs/19 §W-D15). null 은 여전히 정상값이다.
+  if (input.issueWarehouseId !== undefined && input.issueWarehouseId !== null) {
+    await assertWarehouseExists(tx, input.issueWarehouseId);
+  }
+
   const lineNo =
     input.lineNo ??
     ((
@@ -157,7 +163,7 @@ async function performCreateLine(
         //   `''` 이 저장되지 않는다 (D-3).
         alternateGroup: normalizeAlternateGroup(input.alternateGroup),
         isRequired: input.isRequired ?? true,
-        // ★ staged scalar — Warehouse 존재 조회 없음 (D-32).
+        // ★ T08-1 FK landing 이후 위에서 존재를 검증한다 (docs/19 §W-D15).
         issueWarehouseId: input.issueWarehouseId ?? null,
         packQuantity: input.packQuantity ?? null,
         specification: input.specification ?? null,

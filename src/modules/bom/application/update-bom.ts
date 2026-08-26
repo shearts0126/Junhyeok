@@ -18,7 +18,12 @@ import {
 import { assertBomEditable } from './editability';
 import { lockBomHeaderRow } from './locks';
 import { BOM_UPDATE_PERMISSION } from './policy';
-import { assertProductionPartnerExists, bomNotFound, loadBomSkuRef } from './refs';
+import {
+  assertProductionPartnerExists,
+  assertWarehouseExists,
+  bomNotFound,
+  loadBomSkuRef,
+} from './refs';
 import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './views';
 
 /**
@@ -199,6 +204,12 @@ async function performUpdate(
   }
   if ('productionPartnerId' in data && data['productionPartnerId'] !== null) {
     await assertProductionPartnerExists(tx, data['productionPartnerId'] as string);
+  }
+
+  // ★ T08-1 이 warehouse FK 를 landing 시켰다 — 없는 UUID 가 raw P2003 으로
+  //   새지 않게 미리 확인한다 (docs/19 §W-D15). null 은 여전히 정상값이다.
+  if ('destinationWarehouseId' in data && data['destinationWarehouseId'] !== null) {
+    await assertWarehouseExists(tx, data['destinationWarehouseId'] as string);
   }
 
   let updated;

@@ -44,7 +44,7 @@ export async function createTestWarehouse(warehouseCode: string): Promise<string
         id: locationId,
         warehouseId,
         locationCode: 'DEFAULT',
-        locationName: '기본 로케이션',
+        locationName: 'DEFAULT',
       },
     });
   });

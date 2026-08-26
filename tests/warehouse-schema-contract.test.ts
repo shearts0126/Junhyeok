@@ -432,7 +432,7 @@ describe('S10. ⛔ T09 재고 모델·관계가 추가되지 않았다 (W-D18 ·
 // 범위 밖 — T08-2 / T2-20 산출물이 하나도 없다 (W-D1)
 // ═══════════════════════════════════════════════════════════════
 
-describe('⛔ T08-1 범위 밖 산출물 0 (W-D1)', () => {
+describe('범위 경계 — T08-2 는 landing, UI 는 여전히 T2-20 (W-D1 · W-D28)', () => {
   const exists = (relative: string): boolean => {
     try {
       readFileSync(fileURLToPath(new URL(relative, import.meta.url)));
@@ -442,15 +442,19 @@ describe('⛔ T08-1 범위 밖 산출물 0 (W-D1)', () => {
     }
   };
 
-  it('⛔ Warehouse API route 가 없다 (T08-2)', () => {
-    expect(exists('../src/app/api/warehouses/route.ts')).toBe(false);
+  // ⚠️ 아래 둘은 T08-1 당시 "아직 없다" 를 고정했던 단언이다. **T08-2 가
+  //    구현하면서 방향이 반대로 바뀌었다** — staged-state supersession 이며
+  //    T08-1 의 schema/constraint 검증 의미와는 무관하다.
+  it('★ Warehouse API route 가 landing 했다 (T08-2)', () => {
+    expect(exists('../src/app/api/warehouses/route.ts')).toBe(true);
   });
 
-  it('⛔ Warehouse application module 이 없다 (T08-2)', () => {
-    expect(exists('../src/modules/warehouse/application/dto.ts')).toBe(false);
+  it('★ Warehouse application module 이 landing 했다 (T08-2)', () => {
+    expect(exists('../src/modules/warehouse/application/dto.ts')).toBe(true);
   });
 
-  it('⛔ Warehouse 화면이 없다 (T2-20)', () => {
+  // ★ 이 단언은 **그대로 유지된다** — UI 는 `T2-20` 이고 T08-2 범위가 아니다.
+  it('⛔ Warehouse 화면은 여전히 없다 (T2-20, W-D28)', () => {
     expect(exists('../src/app/master/warehouses/page.tsx')).toBe(false);
   });
 });
