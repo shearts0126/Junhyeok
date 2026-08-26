@@ -61,6 +61,13 @@ export const PERMISSION_SEED: ReadonlyArray<{ permissionKey: string; description
   { permissionKey: 'bom.update', description: 'BOM 수정 (라인 추가·수정·삭제 포함)' },
   { permissionKey: 'bom.submit', description: 'BOM 승인 요청' },
   { permissionKey: 'bom.approve', description: 'BOM 승인·반려·활성화·사용종료' },
+  // 창고·로케이션 (T08-2, docs/19_설계복구_Warehouse.md §W-D22) — 정확히 3종.
+  // ⛔ `warehouse.delete` 를 만들지 않는다 (물리삭제 금지).
+  // ⛔ location 전용 permission 을 만들지 않는다 — 로케이션 추가는
+  //    `warehouse.update` 다 (§W-D23).
+  { permissionKey: 'warehouse.read', description: '창고·로케이션 조회' },
+  { permissionKey: 'warehouse.create', description: '창고 생성' },
+  { permissionKey: 'warehouse.update', description: '창고 수정 (로케이션 추가 포함)' },
 ];
 
 /**
@@ -197,6 +204,13 @@ export const ROLE_PERMISSION_SEED: ReadonlyArray<{
   { roleCode: 'SCM_STAFF', permissionKey: 'bom.submit' },
   { roleCode: 'ADMIN', permissionKey: 'bom.approve' },
   { roleCode: 'SCM_LEADER', permissionKey: 'bom.approve' },
+  // 창고 (T08-2, §W-D22) — ★ read 는 A·L·S 뿐이다. FINANCE·EXECUTIVE 는
+  //   조회도 제외된다(`05 v0.2 §11.22` 창고 관리 = S:R L:R A:RW F:— E:—).
+  { roleCode: 'ADMIN', permissionKey: 'warehouse.read' },
+  { roleCode: 'SCM_LEADER', permissionKey: 'warehouse.read' },
+  { roleCode: 'SCM_STAFF', permissionKey: 'warehouse.read' },
+  { roleCode: 'ADMIN', permissionKey: 'warehouse.create' },
+  { roleCode: 'ADMIN', permissionKey: 'warehouse.update' },
 ];
 
 /** 시드가 실행할 수 있는 최소 클라이언트 인터페이스. 트랜잭션 클라이언트도 받는다. */

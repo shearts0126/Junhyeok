@@ -4,6 +4,7 @@ import { disconnectPrisma, getPrismaClient } from '@/shared/db';
 
 import { formatCommonCodeSeedSummary, seedCommonCodes } from './common-codes';
 import { seedRolesAndPermissions } from './roles';
+import { formatWarehouseSeedSummary, seedWarehouses } from './warehouses';
 
 /**
  * 시드 진입점.
@@ -20,10 +21,13 @@ import { seedRolesAndPermissions } from './roles';
 async function main(): Promise<void> {
   const prisma = getPrismaClient();
 
-  const { roles, commonCodes } = await prisma.$transaction(async (tx) => {
+  const { roles, commonCodes, warehouses } = await prisma.$transaction(async (tx) => {
     const rolesResult = await seedRolesAndPermissions(tx);
     const commonCodesResult = await seedCommonCodes(tx);
-    return { roles: rolesResult, commonCodes: commonCodesResult };
+    // ★ 창고 15종 + DEFAULT 로케이션 15개 (T08-2, docs/19 §W-D37).
+    //   ⛔ AuditLog 를 남기지 않는다 — seed 는 runtime actor mutation 이 아니다.
+    const warehousesResult = await seedWarehouses(tx);
+    return { roles: rolesResult, commonCodes: commonCodesResult, warehouses: warehousesResult };
   });
 
   console.log(
@@ -31,6 +35,7 @@ async function main(): Promise<void> {
       `역할-권한 ${roles.rolePermissions}건, 시스템 설정 ${roles.systemSettings}행`,
   );
   console.log(formatCommonCodeSeedSummary(commonCodes));
+  console.log(formatWarehouseSeedSummary(warehouses));
 }
 
 main()

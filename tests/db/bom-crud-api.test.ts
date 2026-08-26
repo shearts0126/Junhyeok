@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -347,6 +347,37 @@ describe('BOM 생성 (D-14)', () => {
     );
     expect(bom.destinationWarehouseId).toBe(warehouseId);
     expect(bom).not.toHaveProperty('destinationWarehouse');
+  });
+
+  it('★★ 없는 창고 UUID 는 404 다 — raw P2003 이 새지 않는다 (T08-2)', async () => {
+    // ⚠️ T08-1 이 FK 를 landing 시킨 뒤 T08-2 가 사전검증을 붙였다
+    //    (docs/19 §W-D15). 전용 error code 없이 generic NOT_FOUND 를 쓴다.
+    const parent = await newSku('whghost', { status: 'ACTIVE' });
+    const ghost = randomUUID();
+    const code = await codeOf(
+      createBom(STAFF, bomInput(parent, { destinationWarehouseId: ghost })),
+    );
+    expect(code).toBe(ERROR_CODES.NOT_FOUND);
+  });
+
+  it('★ null 은 여전히 정상값이다', async () => {
+    const parent = await newSku('whnull', { status: 'ACTIVE' });
+    const { bom } = await createBom(STAFF, bomInput(parent, { destinationWarehouseId: null }));
+    expect(bom.destinationWarehouseId).toBeNull();
+  });
+
+  it('★★ PATCH — 없는 창고 UUID 는 404, 실재 UUID 는 정상이다 (T08-2)', async () => {
+    const parent = await newSku('whpatch', { status: 'ACTIVE' });
+    const { bom } = await createBom(STAFF, bomInput(parent));
+
+    expect(await codeOf(updateBom(STAFF, bom.id, { destinationWarehouseId: randomUUID() }))).toBe(
+      ERROR_CODES.NOT_FOUND,
+    );
+
+    const warehouseId = await createTestWarehouse(CODE('WH3'));
+    const updated = await updateBom(STAFF, bom.id, { destinationWarehouseId: warehouseId });
+    expect(updated.destinationWarehouseId).toBe(warehouseId);
+    expect(updated).not.toHaveProperty('destinationWarehouse');
   });
 
   it('★ 날짜가 하루 밀리지 않는다 — date-only round-trip', async () => {
@@ -967,6 +998,30 @@ describe('BOM 라인 생성 (D-9·D-10·D-11·D-12)', () => {
     );
     expect(line.issueWarehouseId).toBe(warehouseId);
     expect(line).not.toHaveProperty('issueWarehouse');
+  });
+
+  it('★★ 라인 — 없는 창고 UUID 는 404 다 (T08-2)', async () => {
+    const { bomId } = await draftBom('lwhghost');
+    const component = await newSku('lwhghost-c', { status: 'ACTIVE' });
+    const code = await codeOf(
+      createBomLine(STAFF, bomId, lineInput(component, { issueWarehouseId: randomUUID() })),
+    );
+    expect(code).toBe(ERROR_CODES.NOT_FOUND);
+  });
+
+  it('★★ 라인 PATCH — 없는 창고 UUID 는 404, 실재 UUID 는 정상이다 (T08-2)', async () => {
+    const { bomId } = await draftBom('lwhpatch');
+    const component = await newSku('lwhpatch-c', { status: 'ACTIVE' });
+    const { line } = await createBomLine(STAFF, bomId, lineInput(component));
+    expect(line.issueWarehouseId).toBeNull();
+
+    expect(
+      await codeOf(updateBomLine(STAFF, bomId, line.id, { issueWarehouseId: randomUUID() })),
+    ).toBe(ERROR_CODES.NOT_FOUND);
+
+    const warehouseId = await createTestWarehouse(CODE('WH4'));
+    const updated = await updateBomLine(STAFF, bomId, line.id, { issueWarehouseId: warehouseId });
+    expect(updated.issueWarehouseId).toBe(warehouseId);
   });
 
   it('AuditLog 는 BomLine CREATE 1건이다 (D-16)', async () => {

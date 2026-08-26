@@ -278,6 +278,38 @@ export const ROUTE_PERMISSIONS: readonly RoutePermissionPolicy[] = [
   //   D-15 가 `bom.read` 로 확정했으므로 함께 예약한다.
   { prefix: '/master/boms', methods: ['GET', 'HEAD'], permission: 'bom.read' },
 
+  // 창고·로케이션 (T08-2, docs/19_설계복구_Warehouse.md §W-D22·§W-D23) —
+  // **독립 capability** 3종이며 ⛔ `warehouse.delete` 는 없다(물리삭제 금지).
+  // ★ `warehouse.read` 는 **A·L·S 뿐**이다 — FINANCE·EXECUTIVE 제외(§W-D22).
+  //
+  // ⚠️ nested `/locations` 를 **일반 `/api/warehouses` 규칙보다 먼저** 둔다.
+  //    첫 일치 우선이므로 뒤에 두면 `POST …/{id}/locations` 가 창고 생성으로
+  //    오인돼 `warehouse.create` 로 잡힌다 — 로케이션 추가는 **창고 수정**이다
+  //    (§W-D23). T06-3 가격 정책·T07-3 라인 정책과 같은 배치 이유다.
+  {
+    prefix: '/api/warehouses',
+    contains: '/locations',
+    methods: ['GET', 'HEAD'],
+    permission: 'warehouse.read',
+  },
+  {
+    prefix: '/api/warehouses',
+    contains: '/locations',
+    methods: ['POST', 'PATCH', 'PUT', 'DELETE'],
+    permission: 'warehouse.update',
+  },
+  { prefix: '/api/warehouses', methods: ['GET', 'HEAD'], permission: 'warehouse.read' },
+  { prefix: '/api/warehouses', methods: ['POST'], permission: 'warehouse.create' },
+  // ⚠️ DELETE 라우트는 존재하지 않지만(405), 1차 가드는 update 로 묶어
+  //    read 권한만 가진 사용자의 변경성 요청이 핸들러에 닿지 않게 한다.
+  {
+    prefix: '/api/warehouses',
+    methods: ['PATCH', 'PUT', 'DELETE'],
+    permission: 'warehouse.update',
+  },
+  // ⛔ `/master/warehouses` 화면 정책은 **예약하지 않는다** — 화면은 `T2-20`
+  //    이고 그 단계에서 active lifecycle·현재고 연동과 함께 결정된다(§W-D28).
+
   // 외부시스템 lookup (T05-4A) — 관리 UI 의 선택 수단 전용, read-only.
   // ⛔ 신규 permission 을 만들지 않는다 — 매핑 조회 권한을 그대로 쓴다.
   {

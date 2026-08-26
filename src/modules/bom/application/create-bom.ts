@@ -11,7 +11,7 @@ import { assertParentEligible, assertUomMatchesBase } from '../domain';
 import { translateBomHeaderWriteError } from './constraint-errors';
 import { assertPeriodOrder, parseDateOnly, type CreateBomInput } from './dto';
 import { BOM_CREATE_PERMISSION } from './policy';
-import { assertProductionPartnerExists, loadBomSkuRef } from './refs';
+import { assertProductionPartnerExists, assertWarehouseExists, loadBomSkuRef } from './refs';
 import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './views';
 
 /**
@@ -42,7 +42,8 @@ import { BOM_HEADER_VIEW_INCLUDE, toBomHeaderView, type BomHeaderView } from './
  * - `outputUom` 생략 → parent `baseUom` 을 서버가 채운다. 명시했는데 다르면
  *   422 `BOM_UOM_MISMATCH` (D-11). ⛔ 환산하지 않는다.
  * - `productionPartnerId` 는 **실제 FK** 라 존재를 검증한다.
- *   ⛔ `destinationWarehouseId` 는 staged scalar — 존재 조회 없음 (D-32).
+ *   ★ `destinationWarehouseId` 는 T08-1 FK landing 이후 **존재를 검증**한다
+ *     (docs/19 §W-D15) — D-32 의 "조회 없음" 은 그때까지의 계약이었다.
  *
  * ## 중복 버전
  *
@@ -112,6 +113,12 @@ async function performCreate(
 
   if (input.productionPartnerId !== undefined && input.productionPartnerId !== null) {
     await assertProductionPartnerExists(tx, input.productionPartnerId);
+  }
+
+  // ★ T08-1 이 warehouse FK 를 landing 시켰다 — 없는 UUID 가 raw P2003 으로
+  //   새지 않게 미리 확인한다 (docs/19 §W-D15). null 은 여전히 정상값이다.
+  if (input.destinationWarehouseId !== undefined && input.destinationWarehouseId !== null) {
+    await assertWarehouseExists(tx, input.destinationWarehouseId);
   }
 
   let created;

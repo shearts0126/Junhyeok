@@ -124,7 +124,7 @@ async function createWarehouseWithDefault(
         id: locationId,
         warehouseId: overrides.locationWarehouseId ?? warehouseId,
         locationCode: 'DEFAULT',
-        locationName: '기본 로케이션',
+        locationName: 'DEFAULT',
       },
     });
   });
