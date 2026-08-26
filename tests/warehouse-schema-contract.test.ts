@@ -171,10 +171,20 @@ describe('S2. Warehouse — scalar 필드 inventory exact (W-D3)', () => {
     'destinationForSupplierSkus',
     'destinationForBomHeaders',
     'issueForBomLines',
+    // ✏️ **T2-2 landing** — W-D18 이 "T09 authoritative schema landing 시
+    //    추가한다" 고 유예해 둔 두 inverse 다. ⛔ scalar 컬럼은 늘지 않았다.
+    'inventoryLedgerEntries',
+    'inventoryBalances',
   ] as const;
 
   it('scalar + relation 필드 집합이 정확히 일치한다', () => {
     expect(fieldNames('Warehouse')).toEqual([...SCALARS, ...RELATIONS]);
+  });
+
+  it('★ scalar 컬럼은 T08-1 확정분 12개 그대로다 (T2-2 가 늘리지 않았다)', () => {
+    expect(SCALARS).toHaveLength(12);
+    const relationSet = new Set<string>(RELATIONS);
+    expect(fieldNames('Warehouse').filter((name) => !relationSet.has(name))).toEqual([...SCALARS]);
   });
 
   it('★ defaultLocationId 는 nullable 이 아니다 (W-D5)', () => {
@@ -238,6 +248,10 @@ describe('S3. WarehouseLocation — scalar 필드 inventory exact (W-D4)', () =>
       'active',
       'warehouse',
       'defaultForWarehouse',
+      // ✏️ **T2-2 landing** — 재고 두 모델이 `(warehouseId, locationId)`
+      //    composite FK 로 이 모델을 참조한다. relation field 일 뿐 컬럼은 그대로다.
+      'inventoryLedgerEntries',
+      'inventoryBalances',
     ]);
   });
 
@@ -403,28 +417,44 @@ describe('★ staged warehouse scalar 5종이 real relation 으로 landing 했�
 // S10 — 범위 밖: T09 관계는 하나도 없다
 // ═══════════════════════════════════════════════════════════════
 
-describe('S10. ⛔ T09 재고 모델·관계가 추가되지 않았다 (W-D18 · W-D40)', () => {
-  it('⛔ Inventory 계열 model 이 없다', () => {
-    for (const model of [
-      'InventoryTransaction',
-      'InventoryLedgerEntry',
-      'InventoryBalance',
-      'InventoryPosting',
-    ]) {
+/**
+ * ✏️ **2026-08-26 (T2-2)**: 이 블록은 원래 "T09 재고 모델이 **아직** 없다" 를
+ *    고정하던 scope guard 였다. `T2-2`(= legacy `T09-1`)가 바로 그 모델을
+ *    landing 시키는 task 이므로 — W-D18 이 "T09 authoritative schema landing 시
+ *    추가한다" 고 명시한 그 시점이다 — guard 를 **방향만 뒤집어** 유지한다.
+ *    ⛔ 삭제하지 않는다: 지금 지키는 것은 "재고 모델은 **T2-2 소유**이고
+ *       Warehouse 쪽에는 relation 말고 **컬럼이 늘지 않았다**" 는 계약이다.
+ */
+describe('S10. ✏️ T09 재고 모델은 T2-2 가 landing 시킨다 (W-D18 · W-D40)', () => {
+  it('✏️ Inventory 3모델이 이제 존재한다 — T2-2 소유', () => {
+    for (const model of ['InventoryTransaction', 'InventoryLedgerEntry', 'InventoryBalance']) {
+      expect(SCHEMA_SOURCE, model).toMatch(new RegExp(`^\\s*model\\s+${model}\\b`, 'm'));
+    }
+  });
+
+  it('⛔ posting service 계열 model 은 여전히 없다 (T2-5 이후)', () => {
+    for (const model of ['InventoryPosting', 'BalanceRebuildSnapshot', 'InventoryException']) {
       expect(SCHEMA_SOURCE, model).not.toMatch(new RegExp(`^\\s*model\\s+${model}\\b`, 'm'));
     }
   });
 
-  it('⛔ Warehouse 에 ledgerEntries · balances 가 없다', () => {
+  it('★ Warehouse inverse 이름은 T2-2 가 정한 것뿐이다 — 초안 이름을 쓰지 않았다', () => {
     const names = fieldNames('Warehouse');
+    // `docs/03` 초안의 `ledgerEntries`·`balances` 가 아니라 모듈 접두를 붙였다.
     expect(names).not.toContain('ledgerEntries');
     expect(names).not.toContain('balances');
+    expect(names).toContain('inventoryLedgerEntries');
+    expect(names).toContain('inventoryBalances');
   });
 
-  it('⛔ WarehouseLocation 에 재고 inverse 가 없다', () => {
-    const names = fieldNames('WarehouseLocation');
-    expect(names).not.toContain('ledgerEntries');
-    expect(names).not.toContain('balances');
+  it('★★ Warehouse · WarehouseLocation 에 재고 scalar 컬럼이 늘지 않았다', () => {
+    // relation field 는 DB 컬럼이 아니다. 재고 캐시 컬럼을 마스터에 두지 않는다.
+    for (const model of ['Warehouse', 'WarehouseLocation']) {
+      const body = codeOnly(modelBody(model));
+      for (const forbidden of ['quantity', 'stock', 'onHand', 'inventoryQty', 'skuCount']) {
+        expect(body.toLowerCase(), `${model}.${forbidden}`).not.toContain(forbidden.toLowerCase());
+      }
+    }
   });
 });
 
