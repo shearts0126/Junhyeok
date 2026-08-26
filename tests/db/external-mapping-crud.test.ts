@@ -1413,11 +1413,13 @@ describe('★ T05-2 범위 고정', () => {
     expect(readdirSync(dir).sort()).toEqual(['[id]', 'route.ts']);
   });
 
-  it('⛔ Warehouse·ExternalInventorySnapshot·ImportJob 테이블이 여전히 없다', async () => {
+  it('⛔ ExternalInventorySnapshot·ImportJob 테이블이 여전히 없다', async () => {
+    // ⚠️ `warehouse` 는 **T08-1 에서 생겼다** — 이 목록에서 빠졌다
+    //    (docs/19 §W-D15). 나머지 셋은 T17-1 · T15 소유로 그대로다.
     const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('warehouse', 'external_inventory_snapshot', 'import_job', 'import_row')`;
+        AND table_name IN ('external_inventory_snapshot', 'import_job', 'import_row')`;
     expect(rows).toEqual([]);
   });
 });

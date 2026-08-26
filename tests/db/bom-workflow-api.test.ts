@@ -38,6 +38,8 @@ import { ERROR_CODES } from '@/shared/errors';
 
 import { seedRolesAndPermissions } from '../../prisma/seed/roles';
 
+import { createTestWarehouse, deleteTestWarehouses } from './warehouse-fixture';
+
 /**
  * BOM workflow DB 통합 테스트 (T07-5) — 실제 PostgreSQL.
  *
@@ -268,6 +270,7 @@ async function cleanup(): Promise<void> {
   await client.bomHeader.deleteMany({ where: { parentSku: { skuCode: { startsWith: 'TWF-' } } } });
   await client.sku.deleteMany({ where: { skuCode: { startsWith: 'TWF-' } } });
   await client.user.deleteMany({ where: { id: { in: ACTOR_IDS } } });
+  await deleteTestWarehouses('TWF-');
 }
 
 beforeAll(async () => {
@@ -1340,15 +1343,19 @@ describe('★★ clone — Header/Line matrix (W-5 · W-6)', () => {
         note: '비고',
       }),
     );
-    // legacy·issueWarehouseId 는 server-owned/staged 라 DTO 로 못 넣는다 —
-    // 마이그레이션 유입분과 T08-1 staged 값을 흉내낸다.
+    // legacy·issueWarehouseId 는 server-owned 라 DTO 로 못 넣는다 —
+    // 마이그레이션 유입분을 흉내낸다.
+    // ✏️ T08-1 이 issueWarehouseId 를 real FK 로 landing 시켰으므로
+    //    (docs/19 §W-D15 #5) 유령 UUID 대신 실재 창고를 쓴다. clone 이 이 값을
+    //    **COPY** 하는지가 검증 대상이며 그 계약은 그대로다.
     const client = getPrismaClient();
+    const warehouseId = await createTestWarehouse(CODE('WHCLONE'));
     await client.bomLine.update({
       where: { id: line.line.id },
       data: {
         legacyBomCode: 'LEG-1',
         legacyCommonBomCode: 'LEG-C',
-        issueWarehouseId: 'fff00000-0000-4000-8000-0000000f7101',
+        issueWarehouseId: warehouseId,
       },
     });
     const source = await client.bomLine.findUniqueOrThrow({ where: { id: line.line.id } });
@@ -1378,7 +1385,7 @@ describe('★★ clone — Header/Line matrix (W-5 · W-6)', () => {
     expect(cloned.quantityStatus).toBe('SUGGESTED'); // ⛔ 자동 CONFIRMED 아님
     expect(cloned.lossRate?.toFixed()).toBe('0.02');
     expect(cloned.uom).toBe(source.uom);
-    expect(cloned.issueWarehouseId).toBe('fff00000-0000-4000-8000-0000000f7101');
+    expect(cloned.issueWarehouseId).toBe(warehouseId);
     expect(cloned.packQuantity?.toFixed()).toBe('30');
 
     // NEW 2 — 둘 다 source 와 다르다.

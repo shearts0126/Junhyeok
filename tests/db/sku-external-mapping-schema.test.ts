@@ -345,30 +345,46 @@ describe('★ 외래키', () => {
     }
   });
 
-  it('★ warehouse_id 는 임의 UUID 도 저장된다 — FK 가 아직 없다 (의도된 staged state)', async () => {
-    // T05-1 Design Recovery:
-    // warehouse FK deferred to T08-1
-    //
-    // `Warehouse` 모델이 아직 없어(T08-1, 선행 T02-1) FK 를 만들 수 없다.
-    // 원 설계에 명시된 3PL scope 컬럼이므로 삭제하지 않고 scalar 로만 보존한다.
-    // ⚠️ T08-1 에서 Warehouse 를 구현하면 이 테스트는 **반대로 바뀌어야 한다**
-    //    (임의 UUID → P2003 FK 위반). relation·inverse·FK 를 함께 추가할 것.
+  it('★ warehouse_id 는 이제 FK 로 강제된다 — 임의 UUID 는 거부된다 (T08-1 landing)', async () => {
+    // ⚠️ **T05-1 staged state 가 T08-1 에서 supersede 되었다.**
+    //    원래 이 테스트는 "`Warehouse` 모델이 없어 임의 UUID 도 저장된다" 를
+    //    고정했다. `docs/19_설계복구_Warehouse.md §W-D15` 가 이 컬럼을
+    //    **real FK 로 landing** 시켰으므로 방향이 반대로 바뀐다
+    //    (docs/12 §3 이 예고한 그대로다 — §W-D21).
+    //    ⛔ 컬럼 자체는 여전히 삭제하지 않는다(아래 별도 테스트).
     const orphanWarehouseId = '11111111-1111-4111-8111-111111111111';
 
-    const row = await getPrismaClient().skuExternalMapping.create({
-      data: {
-        skuId: await newSku('warehouse staged'),
-        externalSystemId: await newSystem('WH1'),
-        warehouseId: orphanWarehouseId,
-      },
-    });
-    expect(row.warehouseId).toBe(orphanWarehouseId);
+    await expect(
+      getPrismaClient().skuExternalMapping.create({
+        data: {
+          skuId: await newSku('warehouse orphan'),
+          externalSystemId: await newSystem('WH0'),
+          warehouseId: orphanWarehouseId,
+        },
+      }),
+    ).rejects.toThrow();
 
-    // 카탈로그에도 warehouse_id FK 가 없어야 한다.
+    // 카탈로그에 warehouse_id FK 가 **있어야** 한다 (RESTRICT · CASCADE).
     const fks = await getPrismaClient().$queryRaw<Array<{ def: string }>>`
       SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint
       WHERE conrelid = 'sku_external_mapping'::regclass AND contype = 'f'`;
-    expect(fks.some((f) => f.def.includes('warehouse_id'))).toBe(false);
+    const warehouseFk = fks.find((f) => f.def.includes('warehouse_id'));
+    expect(warehouseFk).toBeDefined();
+    expect(warehouseFk?.def).toContain('REFERENCES warehouse(id)');
+    expect(warehouseFk?.def).toContain('ON DELETE RESTRICT');
+    expect(warehouseFk?.def).toContain('ON UPDATE CASCADE');
+  });
+
+  it('★ warehouse_id 는 여전히 nullable 이고 null 저장이 정상이다', async () => {
+    // T05-2 public API 는 이 필드를 받지 않으므로 실제 값은 항상 null 이다
+    // (docs/13 §5). FK landing 이 그 계약을 바꾸지 않는다.
+    const row = await getPrismaClient().skuExternalMapping.create({
+      data: {
+        skuId: await newSku('warehouse null'),
+        externalSystemId: await newSystem('WH1'),
+      },
+    });
+    expect(row.warehouseId).toBeNull();
   });
 });
 
@@ -713,20 +729,29 @@ describe('★ T05-1 범위 고정', () => {
     expect(SCHEMA_SOURCE).not.toMatch(/^\s*snapshots\s+ExternalInventorySnapshot\[\]/m);
   });
 
-  it('⛔ Warehouse 모델이 아직 없다 — T08-1 로 연기', () => {
-    // warehouse_id 컬럼은 유지하되(§2) 모델·relation·FK 는 T08-1 이다.
-    expect(SCHEMA_SOURCE).not.toMatch(/^\s*model\s+Warehouse\b/m);
-    expect(SCHEMA_SOURCE).not.toMatch(/^\s*model\s+WarehouseLocation\b/m);
-    expect(SCHEMA_SOURCE).not.toMatch(/^\s*warehouse\s+Warehouse\??\s/m);
+  it('★ Warehouse 모델·relation 이 landing 했다 (T08-1)', () => {
+    // ⚠️ T05-1 이 "T08-1 로 연기" 로 고정했던 단언의 **반대 방향**이다
+    //    (docs/19 §W-D15 · §W-D21).
+    expect(SCHEMA_SOURCE).toMatch(/^\s*model\s+Warehouse\b/m);
+    expect(SCHEMA_SOURCE).toMatch(/^\s*model\s+WarehouseLocation\b/m);
+    expect(SCHEMA_SOURCE).toMatch(/^\s*warehouse\s+Warehouse\?\s/m);
   });
 
-  it('⛔ 관련 테이블이 DB 에도 없다', async () => {
+  it('⛔ ExternalInventorySnapshot 은 여전히 없다 — T17-1 이다', async () => {
     const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
       WHERE table_schema = 'public'
-        AND table_name IN ('warehouse', 'warehouse_location',
-                           'external_inventory_snapshot', 'external_inventory_snapshot_line')`;
+        AND table_name IN ('external_inventory_snapshot', 'external_inventory_snapshot_line')`;
     expect(rows).toEqual([]);
+  });
+
+  it('★ warehouse · warehouse_location 테이블이 DB 에 있다 (T08-1)', async () => {
+    const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'public'
+        AND table_name IN ('warehouse', 'warehouse_location')
+      ORDER BY table_name`;
+    expect(rows.map((row) => row.table_name)).toEqual(['warehouse', 'warehouse_location']);
   });
 
   it('★ warehouse_id 컬럼 자체는 존재한다 — 삭제하지 않았다', async () => {

@@ -278,6 +278,8 @@ erDiagram
 > ✏️ **2026-08-13 설계복구 (BOM, T07)**: `bom_line` 의 `UNIQUE(bom_header_id, component_sku_id, alternate_group)` 은 `alternate_group` 이 nullable 이라 **PostgreSQL 이 NULL 을 서로 다른 값으로 취급해 중복 구성품을 전혀 막지 못한다**(실측상 383행 전량 NULL — `01 §2.3` "대체 부자재 미관리"). `SUPERSEDED BY 18_설계복구_BOM.md §D-3` — `CREATE UNIQUE INDEX ux_bom_line_component_group ON bom_line (bom_header_id, component_sku_id, COALESCE(alternate_group, ''))` 표현식 UNIQUE 로 구현한다(NULL 을 하나의 동일 그룹으로 취급). `NULLS NOT DISTINCT` 는 `00 §C-09` 의 기존 결정에 따라 사용하지 않으며, 센티넬 정규화는 C-09 자신이 채택한 방식과 같다. `bom_header` 의 EXCLUDE 의미는 **§D-7** 이 확정한다.
 | `warehouse_location` | `UNIQUE(warehouse_id, location_code)` | |
 
+> ✏️ **2026-08-25 설계복구 (Warehouse, T08)**: `model Warehouse` 의 **`defaultLocationId String?`(nullable)** 선언은 `SUPERSEDED BY 19_설계복구_Warehouse.md §W-D5` 다 — 같은 문서 §6.2 ERD 의 `default_location_id FK "★NOT NULL 강제"` 및 `00 §2.2 G-05` 가 **NOT NULL** 을 정본으로 명시한다. T08-1 은 `warehouse_location (warehouse_id, id)` 보조 UNIQUE 위에 **`(id, default_location_id) REFERENCES warehouse_location (warehouse_id, id) DEFERRABLE INITIALLY DEFERRED`** composite FK 를 걸어 **DEFAULT 로케이션이 반드시 그 창고 소속**임을 DB 가 강제하게 한다(**§W-D6**). 생성 순서는 pre-generated UUID 방식이며 사후 UPDATE 가 없다(**§W-D7**). `supplier_id` 는 T08 시점에 **one-way CHECK `(supplier_id IS NULL OR warehouse_type = 'SUPPLIER_SITE')`** 만 존재하고, ✏️ D-02 가 요구하는 양방향 IFF 는 마이그레이션 Phase 7(`T4-19`)에서 11개 링크가 전부 해소된 뒤 추가한다(**§W-D13·§W-D38**). `ledgerEntries`·`balances` inverse relation 은 **T09 전까지 선언하지 않는다**(**§W-D18**) — 지금 선언하면 존재하지 않는 모델을 참조해 스키마가 깨진다.
+
 ## 6.4 ERD — Layer 3 (재고 코어) ★
 
 ```mermaid

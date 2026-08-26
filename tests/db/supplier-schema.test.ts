@@ -216,14 +216,21 @@ describe('Supplier — defaultLeadTimeDays', () => {
   });
 });
 
-describe('Supplier — defaultWarehouseId staged scalar', () => {
-  it('11·12. ★ 임의 UUID 가 저장된다 — FK 가 없다 (T08-1 대기, 의도된 상태)', async () => {
+describe('Supplier — defaultWarehouseId (T08-1 FK landing)', () => {
+  it('11·12. ★ 임의 UUID 는 이제 FK 가 거부한다 (T08-1 이 staged state 를 supersede)', async () => {
+    // ⚠️ **T06-1 staged state 가 T08-1 에서 supersede 되었다.**
+    //    원래 이 테스트는 "warehouse 테이블이 없어 참조 무결성이 걸리지 않는다"
+    //    를 고정했다. `docs/19_설계복구_Warehouse.md §W-D15 #2` 가 이 컬럼을
+    //    real FK 로 landing 시켰으므로 방향이 반대다 (docs/17 §8 예고 · §W-D21).
     const orphan = '99999999-9999-4999-8999-999999999999';
-    const id = await newSupplier('창고 staged', { defaultWarehouseId: orphan });
-    const row = await getPrismaClient().supplier.findUniqueOrThrow({ where: { id } });
 
-    // warehouse 테이블이 없으므로 참조 무결성이 걸리지 않는다.
-    expect(row.defaultWarehouseId).toBe(orphan);
+    await expect(newSupplier('창고 orphan', { defaultWarehouseId: orphan })).rejects.toThrow();
+  });
+
+  it('★ null 은 계속 허용된다 — T06-2 API 가 이 필드를 받지 않는다', async () => {
+    const id = await newSupplier('창고 null');
+    const row = await getPrismaClient().supplier.findUniqueOrThrow({ where: { id } });
+    expect(row.defaultWarehouseId).toBeNull();
   });
 });
 
@@ -376,20 +383,28 @@ describe('SupplierSku — 수량·리드타임·정밀도', () => {
     expect(row.orderMultiple?.toString()).toBe('123456789012.123456');
   });
 
-  it('27·28. ★ destinationWarehouseId 는 임의 UUID 를 받는다 — FK 없음 (T08-1 대기)', async () => {
+  it('27·28. ★ destinationWarehouseId 의 임의 UUID 는 FK 가 거부한다 (T08-1 landing)', async () => {
+    // ⚠️ T06-1 staged state → T08-1 supersede (docs/19 §W-D15 #3 · §W-D21).
     const orphan = '77777777-7777-4777-8777-777777777777';
-    const supplierId = await newSupplier('입고처 staged');
-    const skuId = await newSku('입고처 staged');
-    const row = await getPrismaClient().supplierSku.create({
-      data: {
-        supplierId,
-        skuId,
-        effectiveFrom: d('2026-01-01'),
-        destinationWarehouseId: orphan,
-      },
-    });
+    const supplierId = await newSupplier('입고처 orphan');
+    const skuId = await newSku('입고처 orphan');
 
-    expect(row.destinationWarehouseId).toBe(orphan);
+    await expect(
+      getPrismaClient().supplierSku.create({
+        data: {
+          supplierId,
+          skuId,
+          effectiveFrom: d('2026-01-01'),
+          destinationWarehouseId: orphan,
+        },
+      }),
+    ).rejects.toThrow();
+
+    // null 은 계속 허용된다 — T06-2 API 는 이 필드를 받지 않는다.
+    const row = await getPrismaClient().supplierSku.create({
+      data: { supplierId, skuId, effectiveFrom: d('2026-01-01') },
+    });
+    expect(row.destinationWarehouseId).toBeNull();
   });
 
   it('★ purchaseUom 은 free string 이고 currency blank 는 거부된다', async () => {
@@ -872,7 +887,10 @@ describe('★ PostgreSQL 카탈로그 — raw SQL 제약의 실제 존재', () =
     expect(predicate).not.toContain('status');
   });
 
-  it('65. ★ staged scalar 3종에는 FK 가 하나도 없다 (T08-1 / Attachment 대기)', async () => {
+  it('65. ★ warehouse scalar 2종은 FK 로 landing 했고 attachment_id 는 여전히 staged 다', async () => {
+    // ⚠️ **T08-1 이 warehouse 쪽만 supersede 했다** (docs/19 §W-D15 · §W-D21).
+    //    `attachment_id` 는 `Attachment` 모델이 backlog 미배정이라 그대로다
+    //    (docs/17 §28 · §19 pointer).
     const rows = await getPrismaClient().$queryRaw<Array<{ table_name: string; column: string }>>`
       SELECT t.relname AS table_name,
              a.attname AS column
@@ -881,18 +899,22 @@ describe('★ PostgreSQL 카탈로그 — raw SQL 제약의 실제 존재', () =
         JOIN unnest(c.conkey) AS k(attnum) ON true
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
        WHERE c.contype = 'f'
+         AND t.relname IN ('supplier', 'supplier_sku', 'supplier_sku_price')
          AND a.attname IN ('default_warehouse_id', 'destination_warehouse_id', 'attachment_id')
+       ORDER BY t.relname, a.attname
     `;
 
-    // ⚠️ T08-1 / Attachment 구현 시 이 단언은 **반대 방향으로 바뀌어야 한다.**
-    expect(rows).toEqual([]);
+    expect(rows).toEqual([
+      { table_name: 'supplier', column: 'default_warehouse_id' },
+      { table_name: 'supplier_sku', column: 'destination_warehouse_id' },
+    ]);
 
-    // 참조 테이블 자체가 아직 없다는 것도 함께 고정한다.
+    // 참조 테이블 상태: warehouse 는 생겼고 attachment 는 아직 없다.
     const tables = await getPrismaClient().$queryRaw<Array<{ table_name: string }>>`
       SELECT table_name FROM information_schema.tables
        WHERE table_schema = 'public' AND table_name IN ('warehouse', 'attachment')
     `;
-    expect(tables).toEqual([]);
+    expect(tables.map((row) => row.table_name)).toEqual(['warehouse']);
   });
 
   it('66. ★ 세 테이블의 index·unique·CHECK·FK 집합이 기대와 정확히 일치한다', async () => {
@@ -950,7 +972,11 @@ describe('★ PostgreSQL 카탈로그 — raw SQL 제약의 실제 존재', () =
        ORDER BY c.conname
     `;
     // 'r' = RESTRICT. ⛔ CASCADE('c')·SET NULL('n') 이 하나도 없어야 한다.
+    // ✏️ T08-1 이 warehouse FK 2개를 추가했다 (docs/19 §W-D15 #2·#3 · §W-D19).
+    //    ⛔ `attachment_id` 는 여전히 FK 가 없다 — `Attachment` 미배정.
     expect(foreignKeys).toEqual([
+      { conname: 'supplier_default_warehouse_id_fkey', action: 'r' },
+      { conname: 'supplier_sku_destination_warehouse_id_fkey', action: 'r' },
       { conname: 'supplier_sku_price_approved_by_fkey', action: 'r' },
       { conname: 'supplier_sku_price_created_by_fkey', action: 'r' },
       { conname: 'supplier_sku_price_supplier_sku_id_fkey', action: 'r' },
