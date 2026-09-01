@@ -13,6 +13,12 @@
 src/modules/inventory-ledger/application/services/InventoryPostingService.ts
 ```
 
+> ✏️ **2026-09-01 설계복구 (T2-5) — path CLARIFIED**: 실제 production 경로는 **`src/modules/inventory/application/`** 이다 (`docs/02 §5.2` 의 같은 clarification 참조). canonical module root 를 `src/modules/inventory` 로 고정한 근거는 `T0-5` 가 merge 한 `eslint-rules/inventory-boundary.ts` 의 allowlist `src/modules/inventory/infrastructure/**` 이며, 그것이 최신 executable architecture contract 다. ⛔ **경로 표기만 바뀐다** — 아래 §8.0 원칙표, §8.1~§8.13 의 DTO·검증·업무규칙은 하나도 바뀌지 않는다.
+>
+> ★ 또한 `class InventoryPostingService` 라는 **class 형태는 계약이 아니다** — §8.12 는 스스로 *"의사코드"* 임을 선언하며, 이 저장소에는 application service class 선례가 0개이고 전부 named function 이다. **이름 `InventoryPostingService` 는 계약이 맞고**(`docs/02 §4.2` 불변식 · `src/modules/README.md` 규칙 5 · `eslint-rules/inventory-boundary.ts` 안내문), 구현은 그 이름을 파일·doc-comment 로 보존한다.
+>
+> ★ **`post()` 는 `T2-10` 이 landing 한다.** §8.12 의 `post(cmd): Promise<PostingResult>` 는 검증 ①~⑳ 전체를 담는 완성형이며, 첫 실제 호출자(`docs/07` `T4-10`)의 선행조건도 `T2-10` 이다. `T2-5` 는 그 앞 구간인 **Phase-1 검증(①~⑦, 트랜잭션 밖)만** 담당하고 `src/modules/inventory/application/validate-posting-command.ts` 의 `validatePostingCommand()` 로 landing 했다 — DB write 0 · `$transaction` 0 · `PostingResult` 생성 0 이며 반환은 §8.12 Phase 1 의 지역변수 두 개(`{ businessDate, refs }`)다. ⛔ `T2-5` 는 `post()` 의 빈 skeleton·throw-not-implemented placeholder 를 만들지 않았다.
+
 | 원칙 | 내용 |
 |---|---|
 | **단일 관문** | 재고를 변경하는 모든 경로(기초재고, 조정, 실사, 예약·홀딩, 취소, 엑셀 반영, 향후 입고·출고·이동·조립)는 반드시 이 서비스를 통과한다 |

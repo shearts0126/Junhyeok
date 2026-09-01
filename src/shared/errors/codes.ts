@@ -128,6 +128,23 @@ export const ERROR_CODES = {
   UNBALANCED_TRANSACTION: 'UNBALANCED_TRANSACTION',
   MISSING_SOURCE_DOCUMENT: 'MISSING_SOURCE_DOCUMENT',
   CLOSED_PERIOD_TRANSACTION: 'CLOSED_PERIOD_TRANSACTION',
+
+  // ── Posting Phase-1 검증 (T2-5, 설계 05 v0.2 §8.2) ────────
+  // ⛔ `SKU_NOT_FOUND` 를 만들지 않는다 — `docs/04 §8.2` ② 칸에 이름이 있으나
+  //    `docs/05 §10.18` 카탈로그에 없고, §W-D34 가 `WAREHOUSE_NOT_FOUND` 전용
+  //    코드를 거부한 선례가 있다. SKU·창고·로케이션 미존재는 전부 generic
+  //    `NOT_FOUND`(404) 다.
+  // ⛔ `LOT_REQUIRED_MISSING` 등 ⑦ 계열 8종은 여기 없다 — **T2-8** 이 landing
+  //    한다. `INSUFFICIENT_SHELF_LIFE` 도 마찬가지다.
+  //
+  // `SKU_NOT_INVENTORY_MANAGED` 는 `docs/05 §10.18` 카탈로그가 이미 정의한
+  // 코드이며(422, Posting ⑥), 여기 없던 것은 구현 gap 이었다.
+  SKU_NOT_INVENTORY_MANAGED: 'SKU_NOT_INVENTORY_MANAGED',
+  // `WAREHOUSE_INACTIVE` 는 `docs/04 §8.2` ② 의 검증 계약에 이름이 명시되어
+  // 있다. "존재하지만 업무규칙상 쓸 수 없다" 이므로 404 도 400 도 아닌 422 다
+  // (`SKU_ACTIVE_UPDATE_RESTRICTED` 와 같은 결). `Warehouse.active` 컬럼은
+  // 실재하며, §W-D27 이 유예한 것은 mutation 이지 읽기가 아니다.
+  WAREHOUSE_INACTIVE: 'WAREHOUSE_INACTIVE',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -156,6 +173,8 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.UNBALANCED_TRANSACTION]: 422,
   [ERROR_CODES.MISSING_SOURCE_DOCUMENT]: 422,
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: 422,
+  [ERROR_CODES.SKU_NOT_INVENTORY_MANAGED]: 422,
+  [ERROR_CODES.WAREHOUSE_INACTIVE]: 422,
   [ERROR_CODES.SETTING_LOCKED]: 422,
   [ERROR_CODES.SKU_CODE_IMMUTABLE]: 422,
   [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: 422,
@@ -264,6 +283,9 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.UNBALANCED_TRANSACTION]: '거래의 수량 균형이 맞지 않습니다.',
   [ERROR_CODES.MISSING_SOURCE_DOCUMENT]: '원인문서가 필요합니다.',
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: '마감된 기간의 거래는 처리할 수 없습니다.',
+  [ERROR_CODES.SKU_NOT_INVENTORY_MANAGED]:
+    '재고관리 대상이 아닌 SKU 는 재고 거래에 사용할 수 없습니다.',
+  [ERROR_CODES.WAREHOUSE_INACTIVE]: '비활성 창고는 재고 거래에 사용할 수 없습니다.',
   [ERROR_CODES.SETTING_LOCKED]: '잠긴 설정은 변경할 수 없습니다.',
   [ERROR_CODES.SKU_CODE_IMMUTABLE]: '거래가 발생한 SKU 의 코드는 변경할 수 없습니다.',
   [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: '사용 이력이 있는 SKU 는 폐기할 수 없습니다.',
