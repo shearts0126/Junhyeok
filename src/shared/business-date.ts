@@ -45,3 +45,36 @@ export function dateOnlyOf(value: Date): string {
 export function parseBusinessDate(value: string): Date {
   return new Date(`${value}T00:00:00.000Z`);
 }
+
+/**
+ * 재고 업무일자 (T2-4) — `(occurred_at AT TIME ZONE 'Asia/Seoul')::date`.
+ *
+ * ⚠️ 근거: `docs/03_ERD와_Prisma스키마_v0.2.md` §공통 규약 · `docs/00` **G-08** ·
+ *    `docs/04` §8.12 의사코드(`const businessDate = toKstDate(cmd.occurredAt)`).
+ *
+ * `occurredAt` 이 **유일한 원천**이다 — `businessDate` 는 API 입력이 아니라
+ * 서비스가 파생한다(`docs/04` PostingCommand 주석). 이 값이 일별·월별 집계,
+ * 월마감, 수불부의 **유일 기준**이다(`docs/03` §452).
+ *
+ * ★ timezone 은 전사 **`Asia/Seoul` 고정**이다.
+ * ⛔ `Warehouse.timezone` 을 쓰지 않는다 — 그것은 display·외부연동·현지운영
+ *    metadata 이며 재고 업무일자의 기준이 아니다 (`docs/19 §W-D29`).
+ *    창고 timezone 이 `America/Los_Angeles` 여도 업무일자는 KST 로 계산한다.
+ *
+ * ★ 반환은 **`Date`** 다 — Prisma `@db.Date` 컬럼
+ *   (`InventoryTransaction.businessDate` · `InventoryLedgerEntry.businessDate`)
+ *   에 그대로 넣을 수 있는 UTC 자정 표현이다. `businessDateOf` 의 `string` 과
+ *   용도가 다르다.
+ *
+ * ⛔ 새 계산을 만들지 않는다 — 위 두 함수의 합성일 뿐이다. 같은 규칙이 두 벌이
+ *    되면 어느 쪽이 정본인지 알 수 없게 된다.
+ *
+ * @example
+ * // KST 09:00 — UTC 자정이지만 같은 날이다
+ * toKstDate(new Date('2026-09-01T00:00:00.000Z'))  // 2026-09-01T00:00:00.000Z
+ * // KST 익일 00:00
+ * toKstDate(new Date('2026-09-01T15:00:00.000Z'))  // 2026-09-02T00:00:00.000Z
+ */
+export function toKstDate(occurredAt: Date): Date {
+  return parseBusinessDate(businessDateOf(occurredAt, BUSINESS_TIME_ZONE));
+}
