@@ -822,20 +822,37 @@ describe('D12. ★★ REVERSAL 재취소 차단 (T2-3)', () => {
     expect(second).toBeTruthy();
   });
 
-  it('34. ⛔ self-reversal · cycle 전용 규칙을 만들지 않았다', async () => {
-    // 정본 문서에 규칙이 없다. 트리거가 **유형만** 보므로 정상 유형끼리의
-    // 자기참조·순환은 DB 가 막지 않는다 — 그 상태를 사실대로 고정한다.
+  it('34. ⛔ self-reversal · cycle · non-REVERSAL 전용 규칙을 만들지 않았다', async () => {
+    // ★ **구조적 부재만** 확인한다.
+    //
+    // ⛔ 실제 INSERT 를 성공시켜 "앞으로도 허용된다" 로 고정하지 않는다 —
+    //    정본 문서가 이 셋의 허용/금지를 정한 적이 없다. T2-3 가 차단 로직을
+    //    만들지 않은 것과 "그 행위가 영구히 허용된다" 는 서로 다른 명제이고,
+    //    후자를 regression test 로 굳히면 뒤 task 가 규칙을 넣을 때 근거 없는
+    //    테스트가 그것을 막는다.
     const client = getPrismaClient();
-    const a = await createTransaction();
-    const b = await createTransaction();
 
-    // 정상 거래 A 를 가리키는 정상 유형 거래 — 트리거 무관, 허용된다.
-    await client.inventoryTransaction.update({ where: { id: b }, data: { reversalOfId: a } });
-    const updated = await client.inventoryTransaction.findUniqueOrThrow({ where: { id: b } });
-    expect(updated.reversalOfId).toBe(a);
+    // inventory_transaction 의 user 트리거는 T2-3 것 하나뿐이다.
+    const triggers = await client.$queryRaw<{ tgname: string }[]>`
+      SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'inventory_transaction' AND NOT t.tgisinternal
+       ORDER BY t.tgname`;
+    expect(triggers.map((row) => row.tgname)).toEqual(['trg_no_reversal_of_reversal']);
 
-    // ⛔ non-REVERSAL 이 reversalOfId 를 갖는 것을 막는 CHECK 도 만들지 않았다.
-    expect(updated.transactionType).toBe('PURCHASE_RECEIPT');
+    // CHECK 는 T2-2 의 ck_source_doc 하나뿐 — self-reversal 이나
+    // `transaction_type <> 'REVERSAL' → reversal_of_id IS NULL` CHECK 가 없다.
+    const checks = await client.$queryRaw<{ conname: string }[]>`
+      SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE c.contype = 'c' AND t.relname = 'inventory_transaction'
+         AND c.conname NOT LIKE '%not_null'
+       ORDER BY c.conname`;
+    expect(checks.map((row) => row.conname)).toEqual(['ck_source_doc']);
+
+    // generic cycle 탐지용 함수도 만들지 않았다.
+    const functions = await client.$queryRaw<{ proname: string }[]>`
+      SELECT proname FROM pg_proc
+       WHERE proname LIKE '%cycle%' OR proname LIKE '%self_reversal%'`;
+    expect(functions).toEqual([]);
   });
 
   it('★ 카탈로그: 함수 계약 (T2-3)', async () => {
