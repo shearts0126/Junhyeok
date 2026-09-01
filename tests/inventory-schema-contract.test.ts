@@ -787,10 +787,93 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     }
   };
 
-  it('★★ production inventory 모듈이 없다 (T2-5 이후)', () => {
-    expect(missing('src/modules/inventory/application/index.ts')).toBe(true);
+  /**
+   * ✏️ **T2-5 가 landing 시켰다** — 이 guard 는 원래 제목이 *"(T2-5 이후)"* 로
+   * 전환 시점을 예고하고 있었다. 삭제·완화가 아니라 **방향을 뒤집는다**:
+   * T2-5 가 실제로 만든 것은 `application` 계층 하나뿐이며, 나머지 3계층과
+   * posting 관문은 여전히 없어야 한다. (T2-2 landing 때 T08 guard 를 같은
+   * 방식으로 전환한 선례와 동일하다.)
+   *
+   * ★ canonical module root 는 `src/modules/inventory` 다 —
+   *   `eslint-rules/inventory-boundary.ts` 의 allowlist 와 일치한다.
+   */
+  it('★★ T2-5 가 inventory application 계층을 landing 시켰다', () => {
+    expect(missing('src/modules/inventory/application/index.ts')).toBe(false);
+    expect(missing('src/modules/inventory/application/posting-command.ts')).toBe(false);
+    expect(missing('src/modules/inventory/application/validate-posting-command.ts')).toBe(false);
+  });
+
+  it('★★ T2-5 는 application 밖 계층을 만들지 않았다', () => {
+    // domain 은 T2-6·T2-7, infrastructure 는 T2-9·T2-10, presentation 은 T2-16 이후다.
+    expect(missing('src/modules/inventory/domain')).toBe(true);
+    expect(missing('src/modules/inventory/infrastructure')).toBe(true);
+    expect(missing('src/modules/inventory/presentation')).toBe(true);
     expect(missing('src/modules/inventory/index.ts')).toBe(true);
-    expect(missing('src/modules/inventory')).toBe(true);
+  });
+
+  /**
+   * ★ **주석을 걷어낸 뒤** 본다. 이 파일들의 doc-comment 는 `post()` ·
+   *   `normalizeStockKey` 같은 이름을 **금지 서술로** 여러 번 언급한다.
+   *   원문 그대로 grep 하면 "금지한다고 적어 둔 것" 이 "구현했다" 로 잘못 잡힌다.
+   *   (T2-2 의 `MIGRATION_CODE` 가 같은 이유로 주석을 제거했다.)
+   */
+  const codeOf = (path: string): string =>
+    readFileSync(fileURLToPath(new URL(path, ROOT)), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\/\/.*$/gm, '');
+
+  it('★★ posting 관문 post() 가 아직 없다 (T2-10)', () => {
+    // 공개 인터페이스에 실제 posting callable 이 없다 — T2-5 는 Phase-1 검증뿐이다.
+    const application = codeOf('src/modules/inventory/application/index.ts');
+    expect(application).not.toContain('postInventoryTransaction');
+    expect(application).not.toContain('export function post');
+
+    // ⛔ class 형태가 아니고, PostingResult 를 반환하지 않는다.
+    const service = codeOf('src/modules/inventory/application/validate-posting-command.ts');
+    expect(service).not.toContain('class InventoryPostingService');
+    expect(service).not.toContain('Promise<PostingResult>');
+
+    // ⛔ 어떤 T2-5 파일도 PostingResult 를 시그니처에 쓰지 않는다.
+    for (const file of [
+      'src/modules/inventory/application/posting-command.ts',
+      'src/modules/inventory/application/refs.ts',
+      'src/modules/inventory/application/ports.ts',
+      'src/modules/inventory/application/validate-posting-command.ts',
+    ]) {
+      expect(codeOf(file), file).not.toContain('Promise<PostingResult>');
+    }
+  });
+
+  it('★★ T2-6·T2-8 산출물을 선구현하지 않았다', () => {
+    const application = codeOf('src/modules/inventory/application/index.ts');
+    for (const future of [
+      'normalizeStockKey',
+      'hashStockKey',
+      'groupByStockKey',
+      'netQuantityDelta',
+      'NormalizedEntry',
+      'StockKeyGroup',
+      'assertLotExpirySerial',
+      'assertSerialNetQty',
+    ]) {
+      expect(application, future).not.toContain(future);
+    }
+  });
+
+  it('★★ PostingCommand 에 승인 관련 필드가 없다 (PENDING_v0.3 §2)', () => {
+    const dto = readFileSync(
+      fileURLToPath(new URL('src/modules/inventory/application/posting-command.ts', ROOT)),
+      'utf8',
+    );
+    // 주석의 금지 서술과 실제 필드 선언을 구분하기 위해 스키마 본문만 본다.
+    const schema = dto.slice(
+      dto.indexOf('export const postingCommandPayloadSchema'),
+      dto.indexOf('export type PostingCommandPayload'),
+    );
+    expect(schema).not.toContain('approvedBy');
+    expect(schema).not.toContain('allowNegativeStock');
+    expect(schema).not.toContain('allowClosedPeriod');
+    expect(schema).not.toContain('approvalRequestId');
   });
 
   it('★★ inventory API route 가 없다 (T2-16 이후)', () => {
