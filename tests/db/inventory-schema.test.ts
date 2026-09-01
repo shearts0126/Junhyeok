@@ -706,15 +706,236 @@ describe('D7. ★★ 원장 불변성 (INSERT only)', () => {
     ]);
   });
 
-  it('★★ T2-3 의 REVERSAL 재취소 트리거가 아직 없다', async () => {
-    const rows = await getPrismaClient().$queryRaw<{ proname: string }[]>`
-      SELECT proname FROM pg_proc WHERE proname = 'reject_reversal_of_reversal'`;
-    expect(rows).toEqual([]);
+  /**
+   * ✏️ **2026-08-26 (T2-3)**: 원래는 "재취소 트리거가 **아직** 없다" 를 고정했다.
+   *    `T2-3` 가 바로 그 트리거를 landing 시키므로 방향을 뒤집되, ⛔ **원장
+   *    트리거와 거래 트리거를 서로 오염시키지 않는다**를 이어서 지킨다.
+   */
+  it('✏️ 원장 트리거와 거래 트리거는 각자 하나씩이다 (T2-2 · T2-3)', async () => {
+    const rows = await getPrismaClient().$queryRaw<{ relname: string; tgname: string }[]>`
+      SELECT c.relname, t.tgname
+        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname IN ('inventory_ledger_entry', 'inventory_transaction', 'inventory_balance')
+         AND NOT t.tgisinternal
+       ORDER BY c.relname, t.tgname`;
 
-    const triggers = await getPrismaClient().$queryRaw<{ tgname: string }[]>`
+    expect(rows).toEqual([
+      { relname: 'inventory_ledger_entry', tgname: 'trg_ledger_immutable' },
+      { relname: 'inventory_transaction', tgname: 'trg_no_reversal_of_reversal' },
+    ]);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// D12 — REVERSAL 재취소 차단 (T2-3, C-14, TC-POST-203)
+// ═══════════════════════════════════════════════════════════════
+
+/**
+ * 5중 방어의 **마지막 층**이다. 앞의 넷(도메인 `reverse()`·Posting 검증 ⑫·
+ * API·화면)은 전부 코드 경로이고, 이 트리거만이 **직접 INSERT** 를 막는다 —
+ * `TC-POST-203` 이 요구하는 것이 정확히 그것이라 여기서는 서비스가 아니라
+ * `prisma.inventoryTransaction.create()` 로 DB 에 바로 넣어 확인한다.
+ *
+ * ⛔ 트리거를 끄지 않는다 · ⛔ `session_replication_role` 을 쓰지 않는다 —
+ *    정상 DB semantics 로만 검증한다.
+ */
+describe('D12. ★★ REVERSAL 재취소 차단 (T2-3)', () => {
+  it('29. reversalOfId 가 NULL 인 정상 거래는 허용된다', async () => {
+    const id = await createTransaction({ reversalOfId: null });
+    expect(id).toBeTruthy();
+  });
+
+  it('30. ★ 정상 거래를 대상으로 한 1차 REVERSAL 은 허용된다', async () => {
+    const original = await createTransaction();
+    const reversal = await createTransaction({
+      transactionType: 'REVERSAL',
+      reversalOfId: original,
+    });
+    expect(reversal).toBeTruthy();
+  });
+
+  it('31. ★★ REVERSAL(POSTED)을 대상으로 한 재취소는 DB 가 거부한다', async () => {
+    const original = await createTransaction();
+    const reversal = await createTransaction({
+      transactionType: 'REVERSAL',
+      reversalOfId: original,
+    });
+
+    await expect(
+      createTransaction({ transactionType: 'REVERSAL', reversalOfId: reversal }),
+    ).rejects.toThrow();
+  });
+
+  it('32. ★★ REVERSAL(REVERSED)을 대상으로 해도 거부한다 — 트리거는 status 를 보지 않는다', async () => {
+    const client = getPrismaClient();
+    const original = await createTransaction();
+    const reversal = await createTransaction({
+      transactionType: 'REVERSAL',
+      reversalOfId: original,
+    });
+    await client.inventoryTransaction.update({
+      where: { id: reversal },
+      data: { status: 'REVERSED' },
+    });
+
+    // ★ `ux_txn_reversal` 은 status='POSTED' 조건이라 이 자리를 비워 주지만,
+    //   트리거는 **유형**만 보므로 여전히 막는다. 두 제약의 역할 차이가
+    //   드러나는 지점이다.
+    await expect(
+      createTransaction({ transactionType: 'REVERSAL', reversalOfId: reversal }),
+    ).rejects.toThrow();
+  });
+
+  it('★ 예외 문구가 REVERSAL_OF_REVERSAL_NOT_ALLOWED 다', async () => {
+    const original = await createTransaction();
+    const reversal = await createTransaction({
+      transactionType: 'REVERSAL',
+      reversalOfId: original,
+    });
+
+    let message = '';
+    try {
+      await createTransaction({ transactionType: 'REVERSAL', reversalOfId: reversal });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    // ⚠️ 이것은 **DB 예외 문자열**이지 public API error contract 가 아니다.
+    //    application 오류로의 번역은 runtime task(T2-13) 소유다.
+    expect(message).toContain('REVERSAL_OF_REVERSAL_NOT_ALLOWED');
+  });
+
+  it('33. ★★ 앞선 반대거래가 REVERSED 여도 **같은 원거래**는 다시 취소할 수 있다', async () => {
+    // ⛔ 위 32번과 시나리오가 다르다 — 대상이 원거래(정상 유형)라서 트리거가
+    //    관여하지 않는다. T2-2 가 고정한 계약이 그대로 살아 있어야 한다.
+    const client = getPrismaClient();
+    const original = await createTransaction();
+    const first = await createTransaction({ transactionType: 'REVERSAL', reversalOfId: original });
+    await client.inventoryTransaction.update({
+      where: { id: first },
+      data: { status: 'REVERSED' },
+    });
+
+    const second = await createTransaction({
+      transactionType: 'REVERSAL',
+      reversalOfId: original,
+    });
+    expect(second).toBeTruthy();
+  });
+
+  it('34. ⛔ self-reversal · cycle · non-REVERSAL 전용 규칙을 만들지 않았다', async () => {
+    // ★ **구조적 부재만** 확인한다.
+    //
+    // ⛔ 실제 INSERT 를 성공시켜 "앞으로도 허용된다" 로 고정하지 않는다 —
+    //    정본 문서가 이 셋의 허용/금지를 정한 적이 없다. T2-3 가 차단 로직을
+    //    만들지 않은 것과 "그 행위가 영구히 허용된다" 는 서로 다른 명제이고,
+    //    후자를 regression test 로 굳히면 뒤 task 가 규칙을 넣을 때 근거 없는
+    //    테스트가 그것을 막는다.
+    const client = getPrismaClient();
+
+    // inventory_transaction 의 user 트리거는 T2-3 것 하나뿐이다.
+    const triggers = await client.$queryRaw<{ tgname: string }[]>`
       SELECT t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
+       WHERE c.relname = 'inventory_transaction' AND NOT t.tgisinternal
+       ORDER BY t.tgname`;
+    expect(triggers.map((row) => row.tgname)).toEqual(['trg_no_reversal_of_reversal']);
+
+    // CHECK 는 T2-2 의 ck_source_doc 하나뿐 — self-reversal 이나
+    // `transaction_type <> 'REVERSAL' → reversal_of_id IS NULL` CHECK 가 없다.
+    const checks = await client.$queryRaw<{ conname: string }[]>`
+      SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+       WHERE c.contype = 'c' AND t.relname = 'inventory_transaction'
+         AND c.conname NOT LIKE '%not_null'
+       ORDER BY c.conname`;
+    expect(checks.map((row) => row.conname)).toEqual(['ck_source_doc']);
+
+    // generic cycle 탐지용 함수도 만들지 않았다.
+    const functions = await client.$queryRaw<{ proname: string }[]>`
+      SELECT proname FROM pg_proc
+       WHERE proname LIKE '%cycle%' OR proname LIKE '%self_reversal%'`;
+    expect(functions).toEqual([]);
+  });
+
+  it('★ 카탈로그: 함수 계약 (T2-3)', async () => {
+    const rows = await getPrismaClient().$queryRaw<
+      { proname: string; rettype: string; lang: string; body: string }[]
+    >`
+      SELECT p.proname,
+             p.prorettype::regtype::text AS rettype,
+             l.lanname                   AS lang,
+             p.prosrc                    AS body
+        FROM pg_proc p JOIN pg_language l ON l.oid = p.prolang
+       WHERE p.proname = 'reject_reversal_of_reversal'`;
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.rettype).toBe('trigger');
+    expect(rows[0]?.lang).toBe('plpgsql');
+
+    const body = rows[0]?.body ?? '';
+    for (const token of [
+      'NEW.reversal_of_id',
+      'transaction_type',
+      'REVERSAL',
+      'REVERSAL_OF_REVERSAL_NOT_ALLOWED',
+      '취소를 되돌리려면 원인문서를 근거로 신규 정상거래를 생성하세요.',
+    ]) {
+      expect(body, token).toContain(token);
+    }
+
+    // ⛔ status 를 보지 않는다 · ⛔ 별도 SQLSTATE/DETAIL 을 만들지 않는다.
+    expect(body).not.toContain('status');
+    expect(body).not.toContain('SQLSTATE');
+    expect(body).not.toContain('DETAIL');
+  });
+
+  it('★ 카탈로그: 트리거 계약 (T2-3)', async () => {
+    const rows = await getPrismaClient().$queryRaw<
+      { tgname: string; def: string; tgtype: number }[]
+    >`
+      SELECT t.tgname, pg_get_triggerdef(t.oid) AS def, t.tgtype::int
+        FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid
        WHERE c.relname = 'inventory_transaction' AND NOT t.tgisinternal`;
-    expect(triggers).toEqual([]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.tgname).toBe('trg_no_reversal_of_reversal');
+
+    // ★ 문자열 순서에 기대지 않고 `tgtype` 비트로 semantic 하게 본다.
+    //   1=ROW · 2=BEFORE · 4=INSERT · 8=DELETE · 16=UPDATE · 32=TRUNCATE
+    const tgtype = rows[0]?.tgtype ?? 0;
+    expect(tgtype & 1, 'FOR EACH ROW').toBe(1);
+    expect(tgtype & 2, 'BEFORE').toBe(2);
+    expect(tgtype & 4, 'INSERT').toBe(4);
+    expect(tgtype & 8, 'DELETE 금지').toBe(0);
+    expect(tgtype & 16, 'UPDATE 금지').toBe(0);
+    expect(tgtype & 32, 'TRUNCATE 금지').toBe(0);
+
+    const def = rows[0]?.def ?? '';
+    expect(def).toContain('ON public.inventory_transaction');
+    expect(def).toContain('reject_reversal_of_reversal()');
+    expect(def).not.toContain('WHEN');
+    expect(def).not.toContain('FOR EACH STATEMENT');
+  });
+
+  it('⛔ T2-3 는 기존 제약을 하나도 건드리지 않았다', async () => {
+    const client = getPrismaClient();
+
+    // ux_txn_reversal predicate 불변
+    const idx = await client.$queryRaw<{ indexdef: string }[]>`
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'ux_txn_reversal'`;
+    expect(idx[0]?.indexdef).toContain("status = 'POSTED'");
+
+    // FK 12 · CHECK 2 불변
+    expect(
+      await client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+         WHERE c.contype = 'f'
+           AND t.relname IN ('inventory_transaction', 'inventory_ledger_entry', 'inventory_balance')`,
+    ).toEqual([{ count: 12n }]);
+    expect(
+      await client.$queryRaw<{ count: bigint }[]>`
+        SELECT count(*) FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid
+         WHERE c.contype = 'c' AND t.relname LIKE 'inventory%'
+           AND c.conname NOT LIKE '%not_null'`,
+    ).toEqual([{ count: 2n }]);
   });
 });
 
