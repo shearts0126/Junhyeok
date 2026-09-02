@@ -803,9 +803,19 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     expect(missing('src/modules/inventory/application/validate-posting-command.ts')).toBe(false);
   });
 
-  it('★★ T2-5 는 application 밖 계층을 만들지 않았다', () => {
-    // domain 은 T2-6·T2-7, infrastructure 는 T2-9·T2-10, presentation 은 T2-16 이후다.
-    expect(missing('src/modules/inventory/domain')).toBe(true);
+  /**
+   * ✏️ **T2-6 이 domain 계층을 landing 시켰다** (Deviation #75).
+   *
+   * T2-5 시점의 이 guard 는 `domain` 부재를 assert 했다. 삭제·완화가 아니라
+   * **방향 전환**이다 — `infrastructure`(T2-9·T2-10) 와 `presentation`(T2-16
+   * 이후)은 **여전히 없어야** 한다.
+   */
+  it('★★ T2-6 이 inventory domain 계층을 landing 시켰다', () => {
+    expect(missing('src/modules/inventory/domain/index.ts')).toBe(false);
+    expect(missing('src/modules/inventory/domain/stock-key.ts')).toBe(false);
+  });
+
+  it('★★ infrastructure·presentation 은 아직 없다 (T2-9·T2-10·T2-16)', () => {
     expect(missing('src/modules/inventory/infrastructure')).toBe(true);
     expect(missing('src/modules/inventory/presentation')).toBe(true);
     expect(missing('src/modules/inventory/index.ts')).toBe(true);
@@ -844,20 +854,84 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     }
   });
 
-  it('★★ T2-6·T2-8 산출물을 선구현하지 않았다', () => {
-    const application = codeOf('src/modules/inventory/application/index.ts');
-    for (const future of [
+  /**
+   * ✏️ **방향 전환 (T2-6, Deviation #75)** — T2-5 시점에는 8개 이름이 전부
+   * 부재였다. T2-6 이 앞의 6개를 landing 시켰고, T2-8 의 2개는 **여전히 없다.**
+   */
+  it('★★ T2-6 산출물이 domain 에 landing 했다', () => {
+    const domain = codeOf('src/modules/inventory/domain/index.ts');
+    for (const landed of [
       'normalizeStockKey',
       'hashStockKey',
       'groupByStockKey',
       'netQuantityDelta',
       'NormalizedEntry',
       'StockKeyGroup',
-      'assertLotExpirySerial',
-      'assertSerialNetQty',
     ]) {
-      expect(application, future).not.toContain(future);
+      expect(domain, landed).toContain(landed);
     }
+  });
+
+  it('★★ T2-8 검증자를 선구현하지 않았다', () => {
+    for (const file of [
+      'src/modules/inventory/domain/index.ts',
+      'src/modules/inventory/domain/stock-key.ts',
+      'src/modules/inventory/application/index.ts',
+    ]) {
+      const source = codeOf(file);
+      for (const future of ['assertLotExpirySerial', 'assertSerialNetQty']) {
+        expect(source, `${file} :: ${future}`).not.toContain(future);
+      }
+    }
+  });
+
+  /**
+   * ★ T2-6 은 **순수 domain** 이다 — `docs/07:377` 이 재고키 그룹화를
+   *   "도메인 순수 함수" 로 분류했다.
+   */
+  it('★★ T2-6 domain 은 DB·application 에 의존하지 않는다', () => {
+    const domain = codeOf('src/modules/inventory/domain/stock-key.ts');
+
+    // Prisma 클라이언트·트랜잭션 접근 0 (enum type-only import 는 런타임 의존이 아니다).
+    expect(domain).not.toContain('PrismaClient');
+    expect(domain).not.toContain('$transaction');
+    expect(domain).not.toContain('findMany');
+    // application 계층 역참조 0.
+    expect(domain).not.toContain('PostingReferences');
+    expect(domain).not.toContain('PostingPhase1');
+    expect(domain).not.toContain('PostingEntry');
+    expect(domain).not.toContain('/application');
+  });
+
+  it('★★ T2-7·T2-9·T2-10 산출물이 아직 없다', () => {
+    const domain = codeOf('src/modules/inventory/domain/stock-key.ts');
+    for (const future of [
+      // T2-7 — net 부호 해석부터가 T2-7 이다
+      'assertStatusTransitionByNet',
+      'assertBalancedIfStatusMove',
+      'isTransitionAllowed',
+      'isStatusMoveType',
+      // T2-9
+      'FOR UPDATE',
+      'lockVersion',
+      'INSUFFICIENT_STOCK',
+      // T2-10
+      'pickStockKeyAndAttrs',
+      'transactionId',
+    ]) {
+      expect(domain, future).not.toContain(future);
+    }
+  });
+
+  it('★★ T2-5 application 계약이 T2-6 에서 바뀌지 않았다', () => {
+    const service = codeOf('src/modules/inventory/application/validate-posting-command.ts');
+
+    // PostingPhase1 은 여전히 businessDate·refs 둘뿐이다.
+    expect(service).not.toContain('normalizedEntries');
+    expect(service).not.toContain('groups');
+    // T2-6 을 application 에 아직 연결하지 않았다 — 연결은 T2-10 이다.
+    expect(service).not.toContain('normalizeEntries');
+    expect(service).not.toContain('groupByStockKey');
   });
 
   it('★★ PostingCommand 에 승인 관련 필드가 없다 (PENDING_v0.3 §2)', () => {
