@@ -3,9 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { isZero, toDecimalString } from '@/shared/decimal';
 
 import {
-  DEFAULT_OWNER_CODE,
-  EMPTY_SENTINEL,
-  expiryKeySentinel,
   groupByStockKey,
   hashStockKey,
   netQuantityDelta,
@@ -15,6 +12,11 @@ import {
   type StockKey,
   type StockKeyDraft,
 } from './stock-key';
+
+/** 센티넬 기대값 — ⛔ production 상수를 import 하지 않는다(구현 세부사항). */
+const EXPECTED_EMPTY = '';
+const EXPECTED_OWNER = 'DEEPPOINT';
+const EXPECTED_EXPIRY_ISO = '9999-12-31T00:00:00.000Z';
 
 /**
  * 재고키 정규화 · 해시 · 그룹화 (T2-6).
@@ -77,10 +79,10 @@ function key(overrides: Partial<StockKey> = {}): StockKey {
     warehouseId: WAREHOUSE_A,
     locationId: LOCATION_A,
     inventoryStatus: 'AVAILABLE',
-    lotNo: EMPTY_SENTINEL,
-    expiryKey: expiryKeySentinel(),
-    serialNo: EMPTY_SENTINEL,
-    ownerCode: DEFAULT_OWNER_CODE,
+    lotNo: EXPECTED_EMPTY,
+    expiryKey: new Date(EXPECTED_EXPIRY_ISO),
+    serialNo: EXPECTED_EMPTY,
+    ownerCode: EXPECTED_OWNER,
     ...overrides,
   };
 }
@@ -115,7 +117,7 @@ describe('T2-6 정규화 — lotNo', () => {
   it('4. ★★ null · undefined · "" · "-" 4종이 전부 "" 가 된다', () => {
     for (const input of [null, undefined, '', '-'] as const) {
       expect(normalizeStockKey(draft({ lotNo: input }), CONTEXT).lotNo, String(input)).toBe(
-        EMPTY_SENTINEL,
+        EXPECTED_EMPTY,
       );
     }
   });
@@ -132,7 +134,7 @@ describe('T2-6 정규화 — serialNo', () => {
   it('6. ★★ null · undefined · "" · "-" 4종이 전부 "" 가 된다', () => {
     for (const input of [null, undefined, '', '-'] as const) {
       expect(normalizeStockKey(draft({ serialNo: input }), CONTEXT).serialNo, String(input)).toBe(
-        EMPTY_SENTINEL,
+        EXPECTED_EMPTY,
       );
     }
   });
@@ -148,7 +150,7 @@ describe('T2-6 정규화 — ownerCode', () => {
   it('8. ★★ null · undefined 2종만 DEEPPOINT 가 된다', () => {
     for (const input of [null, undefined] as const) {
       expect(normalizeStockKey(draft({ ownerCode: input }), CONTEXT).ownerCode, String(input)).toBe(
-        DEFAULT_OWNER_CODE,
+        EXPECTED_OWNER,
       );
     }
   });
@@ -182,13 +184,18 @@ describe('T2-6 정규화 — expiryKey', () => {
   });
 
   it('13. ★ 센티넬은 호출마다 새 인스턴스다 — 공유 가변 Date 를 돌려주지 않는다', () => {
-    const first = expiryKeySentinel();
-    const second = expiryKeySentinel();
+    // ⛔ 센티넬 헬퍼를 직접 import 하지 않는다(구현 세부사항) — 동작으로 본다.
+    const first = normalizeStockKey(draft({ expiryDate: null }), CONTEXT).expiryKey;
+    const second = normalizeStockKey(draft({ expiryDate: null }), CONTEXT).expiryKey;
+
     expect(first).not.toBe(second);
     expect(first.toISOString()).toBe(second.toISOString());
 
+    // 하나를 오염시켜도 다음 정규화 결과가 멀쩡해야 한다.
     first.setUTCFullYear(2000);
-    expect(expiryKeySentinel().toISOString()).toBe('9999-12-31T00:00:00.000Z');
+    expect(normalizeStockKey(draft({ expiryDate: null }), CONTEXT).expiryKey.toISOString()).toBe(
+      EXPECTED_EXPIRY_ISO,
+    );
   });
 });
 
@@ -288,10 +295,10 @@ describe('T2-6 hashStockKey', () => {
     expect(hashStockKey(key())).toBe(hashStockKey(key()));
     // 속성 삽입 순서가 달라도 같다 — 필드 배열이 코드로 고정되어 있다.
     const reordered: StockKey = {
-      ownerCode: DEFAULT_OWNER_CODE,
-      serialNo: EMPTY_SENTINEL,
-      expiryKey: expiryKeySentinel(),
-      lotNo: EMPTY_SENTINEL,
+      ownerCode: EXPECTED_OWNER,
+      serialNo: EXPECTED_EMPTY,
+      expiryKey: new Date(EXPECTED_EXPIRY_ISO),
+      lotNo: EXPECTED_EMPTY,
       inventoryStatus: 'AVAILABLE',
       locationId: LOCATION_A,
       warehouseId: WAREHOUSE_A,

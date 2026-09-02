@@ -18,11 +18,22 @@
  *    거래/원장/감사 INSERT (**T2-10**).
  */
 
+/**
+ * ## 공개 함수는 정확히 5개다
+ *
+ * `docs/07:154` 가 명명한 4개 + `normalizeEntries`(**Deviation #76** — T2-6 이
+ * `lineNo = index + 1` 을 소유하는데 `normalizeStockKey` 는 재고키 정규화
+ * 함수라 그 pass 를 담을 자리가 필요하다).
+ *
+ * ⛔ 센티넬 상수·헬퍼(`EMPTY_SENTINEL` · `DEFAULT_OWNER_CODE` ·
+ *    `EXPIRY_KEY_SENTINEL_TEXT` · `expiryKeySentinel`)를 export 하지 않는다 —
+ *    T2-2 가 DB 에 고정한 값의 **구현 세부사항**이며, 외부가 직접 써야 한다는
+ *    정본 근거가 없다. 정규화 결과는 `normalizeStockKey()` 로만 얻는다.
+ *
+ * 타입 6종은 위 공개 함수의 signature 를 표현하기 위한 것이며 새 business
+ * concept 가 아니다.
+ */
 export {
-  DEFAULT_OWNER_CODE,
-  EMPTY_SENTINEL,
-  EXPIRY_KEY_SENTINEL_TEXT,
-  expiryKeySentinel,
   groupByStockKey,
   hashStockKey,
   netQuantityDelta,

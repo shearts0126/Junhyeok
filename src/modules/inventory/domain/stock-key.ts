@@ -45,14 +45,23 @@ import { ZERO, add, toDecimal, type Decimal, type DecimalInput } from '@/shared/
 // 센티넬 — T2-2 가 DB 에 고정한 값과 같아야 한다
 // ═══════════════════════════════════════════════════════════════
 
+/**
+ * ★ 아래 센티넬 상수·헬퍼는 **module-private** 다.
+ *
+ * T2-2 가 DB 에 고정한 값의 런타임 표현이며 **구현 세부사항**이다. 외부
+ * consumer 가 이 값을 직접 써야 한다는 authoritative contract 가 없고, export
+ * 하면 "센티넬을 밖에서 조립해도 된다" 는 신호가 된다. 정규화 결과는
+ * `normalizeStockKey()` 를 통해서만 얻는다.
+ */
+
 /** `lotNo` · `serialNo` 미지정 센티넬 (`docs/00` **C-09**). */
-export const EMPTY_SENTINEL = '';
+const EMPTY_SENTINEL = '';
 
 /** `ownerCode` 미지정 센티넬. */
-export const DEFAULT_OWNER_CODE = 'DEEPPOINT';
+const DEFAULT_OWNER_CODE = 'DEEPPOINT';
 
 /** `expiryKey` 미지정 센티넬 — `9999-12-31`. */
-export const EXPIRY_KEY_SENTINEL_TEXT = '9999-12-31';
+const EXPIRY_KEY_SENTINEL_TEXT = '9999-12-31';
 
 /**
  * `lotNo` · `serialNo` 에서 "미지정" 으로 취급하는 입력.
@@ -73,7 +82,7 @@ const BLANK_LOT_SERIAL_INPUTS: readonly string[] = ['', '-'];
  * ⛔ `toKstDate()` 를 쓰지 않는다 — `expiryKey` 는 `businessDate` 와 **다른
  *    개념**이다. 유통기한은 timezone 파생값이 아니라 그 자체가 날짜다.
  */
-export function expiryKeySentinel(): Date {
+function expiryKeySentinel(): Date {
   return new Date(`${EXPIRY_KEY_SENTINEL_TEXT}T00:00:00.000Z`);
 }
 
