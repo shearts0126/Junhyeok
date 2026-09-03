@@ -275,6 +275,8 @@ v0.2(그룹 net): AVAILABLE net = −70 (from) / HOLD net = +70 (to)
 
 > 동일 상태 버킷이 from과 to에 동시에 나타나는 것은 **net 계산 후에는 원천적으로 불가능**하다. net이 음수이거나 양수이거나 0, 셋 중 하나뿐이다.
 
+> ✏️ **2026-09-03 (T2-7 REVIEW FIX #1)** — 규칙 4 의 from/to pairing 은 **거래유형별 동일 transition identity 버킷 안에서만** 수행한다(`STATUS_CHANGE`·`RESERVATION`·`RESERVATION_RELEASE` = 7열, `WAREHOUSE_TRANSFER_OUT`·`WAREHOUSE_TRANSFER_IN` = 5열 — 아래 규칙 5′ 와 같은 key). 거래 전체 범위로 짝지으면 서로 무관한 두 이동이 교차해 정상 거래를 오탐 차단한다 — `SKU-A AVAILABLE −10 / HOLD +10` 과 `SKU-B RESERVED −5 / OUTBOUND_PENDING +5` 는 각각 허용 전이인데, 전역 pairing 은 `AVAILABLE → OUTBOUND_PENDING` 과 `RESERVED → HOLD`(둘 다 명시 금지)까지 만들어 낸다. 규칙 1~4 자체와 전이표는 그대로다.
+
 > ✏️ **2026-09-03 설계복구 (상태전이·거래균형, T2-7)**: 위 **규칙 5 만** `SUPERSEDED BY PENDING_v0.3 §5` 다. 규칙 1~4·허용 전이표·명시 금지 표·`외부반출` 열은 **전부 정본으로 유지**된다.
 >
 > **왜 폐기하는가** — 전역 `Σ` 는 서로 무관한 두 재고를 상쇄시킨다. `STATUS_CHANGE` 에 `SKU-A AVAILABLE −100` / `SKU-B HOLD +100` 이 들어오면 전역 합계가 `0` 이라 통과하지만, 어느 재고도 자기 자리에서 옮겨간 적이 없다. §5 가 *"단순 전체 합계 0 검증 폐기"* 를 지시한 이유다.
@@ -780,51 +782,66 @@ class InventoryPostingService {
   }
 
   // ── ✏️ 상태전이 검증 (그룹 net 기준) ──────────────────────────────
+  // ✏️ 2026-09-03 (T2-7 REVIEW FIX #1) — froms × tos 를 거래 전체 범위에서 하면
+  //    서로 무관한 두 이동이 교차해 정상 거래를 오탐 차단한다. ⑩ 과 똑같이
+  //    identity key 로 먼저 버킷을 나누고 그 안에서만 짝짓는다.
+  //      SKU-A AVAILABLE −10 / HOLD             +10   ✅
+  //      SKU-B RESERVED  − 5 / OUTBOUND_PENDING + 5   ✅
+  //      전역 pairing 은 여기에 AVAILABLE→OUTBOUND_PENDING 과 RESERVED→HOLD
+  //      (둘 다 명시 금지) 까지 만들어 낸다.
   private assertStatusTransitionByNet(type: TransactionType, groups: StockKeyGroup[]) {
-    if (!isStatusMoveType(type)) return;
+    const level = identityLevelOf(type);  // STATUS_LEVEL(7열) | WAREHOUSE_LEVEL(5열) | undefined
+    if (!level) return;
 
-    const froms = groups.filter(g => g.netQuantityDelta.lessThan(0));
-    const tos   = groups.filter(g => g.netQuantityDelta.greaterThan(0));
-    // net = 0 인 그룹은 전이에 관여하지 않으므로 제외한다.
+    // ★ 거래유형 family 의 identity key 로 버킷 분할 — ⑩ 과 같은 버킷 정의다.
+    for (const bucket of partitionByIdentity(level, groups).values()) {
+      const froms = bucket.filter(g => g.netQuantityDelta.lessThan(0));
+      const tos   = bucket.filter(g => g.netQuantityDelta.greaterThan(0));
+      // net = 0 인 그룹은 전이에 관여하지 않으므로 제외한다 (그룹 자체는 유지).
 
-    for (const f of froms) {
-      for (const t of tos) {
-        if (!isTransitionAllowed(f.key.inventoryStatus, t.key.inventoryStatus)) {
-          throw new DomainError('INVALID_STATUS_TRANSITION', {
-            from: f.key.inventoryStatus, to: t.key.inventoryStatus,
-          });
+      for (const f of froms) {
+        for (const t of tos) {
+          if (!isTransitionAllowed(f.key.inventoryStatus, t.key.inventoryStatus)) {
+            throw new DomainError('INVALID_STATUS_TRANSITION', {
+              from: f.key.inventoryStatus, to: t.key.inventoryStatus,
+            });
+          }
         }
       }
     }
   }
 
-  // ✏️ 2026-09-03 (T2-7 / PENDING_v0.3 §5) — 전역 Σ 를 거래유형별 balance-key
+  // ✏️ 2026-09-03 (T2-7 / PENDING_v0.3 §5) — 전역 Σ 를 거래유형별 identity key
   //    단위 Σ 로 바꿨다. 전역 Σ 는 SKU-A −100 / SKU-B +100 을 통과시킨다.
   private assertBalancedIfStatusMove(type: TransactionType, groups: StockKeyGroup[]) {
-    const level = balanceLevelOf(type);   // STATUS_LEVEL(7열) | WAREHOUSE_LEVEL(5열) | undefined
+    const level = identityLevelOf(type);  // STATUS_LEVEL(7열) | WAREHOUSE_LEVEL(5열) | undefined
     if (!level) return;                   // 조립·분해와 일반 입출고·조정은 면제
 
-    const pick = level === 'STATUS_LEVEL' ? statusLevelBalanceKey : warehouseLevelBalanceKey;
-    const sums = new Map<string, Decimal>();
-
-    for (const g of groups) {
-      const k = pick(g.key);
-      sums.set(k, (sums.get(k) ?? ZERO).plus(g.netQuantityDelta));
-    }
-
-    for (const sum of sums.values()) {
+    for (const bucket of partitionByIdentity(level, groups).values()) {
+      const sum = bucket.reduce((a, g) => a.plus(g.netQuantityDelta), ZERO);
       if (!sum.isZero()) throw new DomainError('UNBALANCED_TRANSACTION', { sum });
     }
   }
 
+  // ⑨ 와 ⑩ 이 공유하는 버킷 분할. 그룹을 변형·제거하지 않고 참조만 나눠 담는다.
+  private partitionByIdentity(level: IdentityLevel, groups: StockKeyGroup[]) {
+    const pick = level === 'STATUS_LEVEL' ? statusLevelIdentityKey : warehouseLevelIdentityKey;
+    const buckets = new Map<string, StockKeyGroup[]>();
+    for (const g of groups) {
+      const k = pick(g.key);
+      buckets.set(k, [...(buckets.get(k) ?? []), g]);
+    }
+    return buckets;
+  }
+
   // 7열 = 재고키 8열 − inventoryStatus.  같은 자리에서 상태만 옮긴다.
-  private statusLevelBalanceKey(k: StockKey): string {
+  private statusLevelIdentityKey(k: StockKey): string {
     return [k.skuId, k.warehouseId, k.locationId,
             k.lotNo, k.expiryKey.toISOString().slice(0,10), k.serialNo, k.ownerCode].join(SEP);
   }
 
   // 5열 = 7열 − warehouseId − locationId.  출발창고와 이동중창고는 warehouseId 가 다르다.
-  private warehouseLevelBalanceKey(k: StockKey): string {
+  private warehouseLevelIdentityKey(k: StockKey): string {
     return [k.skuId, k.lotNo, k.expiryKey.toISOString().slice(0,10),
             k.serialNo, k.ownerCode].join(SEP);   // SEP = hashStockKey 와 같은 제어문자
   }

@@ -204,6 +204,136 @@ describe('assertStatusTransitionByNet — 내부 전이 전체 매트릭스', ()
 });
 
 // ═══════════════════════════════════════════════════════════════
+// ⑨ pairing 범위 — identity 버킷 (REVIEW FIX #1)
+// ═══════════════════════════════════════════════════════════════
+
+describe('assertStatusTransitionByNet — pairing 은 identity 버킷 안에서만 한다', () => {
+  /**
+   * ★★★ **핵심 regression.** 서로 무관한 두 이동이 한 거래에 들어 있을 때,
+   * 거래 전체 범위로 `froms × tos` 를 하면 교차 조합이 생겨 정상 거래를
+   * 오탐 차단한다 —
+   *
+   * ```
+   * SKU-A  AVAILABLE −10 / HOLD             +10   → AVAILABLE→HOLD             ✅
+   * SKU-B  RESERVED  − 5 / OUTBOUND_PENDING + 5   → RESERVED→OUTBOUND_PENDING  ✅
+   *
+   * 전역 pairing 이 추가로 만들어 내는 것
+   *   AVAILABLE → OUTBOUND_PENDING   ❌ 명시 금지
+   *   RESERVED  → HOLD               ❌ 명시 금지
+   * ```
+   *
+   * 이 테스트 하나가 **pairing 이 7열 identity 버킷 단위로 좁혀졌음**을 증명한다.
+   */
+  const independentStatusBuckets = (): StockKeyGroup<unknown>[] =>
+    groupsOf([
+      { skuId: SKU_A, inventoryStatus: 'AVAILABLE', quantityDelta: '-10' },
+      { skuId: SKU_A, inventoryStatus: 'HOLD', quantityDelta: '10' },
+      { skuId: SKU_B, inventoryStatus: 'RESERVED', quantityDelta: '-5' },
+      { skuId: SKU_B, inventoryStatus: 'OUTBOUND_PENDING', quantityDelta: '5' },
+    ]);
+
+  it('★★★ 독립된 7열 버킷 2개는 서로 cross-pair 되지 않는다', () => {
+    expect(() =>
+      assertStatusTransitionByNet('STATUS_CHANGE', independentStatusBuckets()),
+    ).not.toThrow();
+  });
+
+  it('★★★ 같은 거래의 균형 검증도 통과한다 (두 버킷 각각 Σ = 0)', () => {
+    expect(() =>
+      assertBalancedIfStatusMove('STATUS_CHANGE', independentStatusBuckets()),
+    ).not.toThrow();
+  });
+
+  /**
+   * ★ 반대 방향 증명 — 버킷을 좁힌 것이 "검사를 껐다" 는 뜻이 아니다.
+   *   **같은** 버킷 안의 금지 전이는 그대로 차단된다.
+   */
+  it('★★ 같은 버킷 안의 금지 전이는 여전히 차단한다', () => {
+    const groups = groupsOf([
+      { skuId: SKU_A, inventoryStatus: 'AVAILABLE', quantityDelta: '-10' },
+      { skuId: SKU_A, inventoryStatus: 'OUTBOUND_PENDING', quantityDelta: '10' },
+      { skuId: SKU_B, inventoryStatus: 'RESERVED', quantityDelta: '-5' },
+      { skuId: SKU_B, inventoryStatus: 'AVAILABLE', quantityDelta: '5' },
+    ]);
+
+    expect(codeOfThrown(() => assertStatusTransitionByNet('STATUS_CHANGE', groups))).toBe(
+      'INVALID_STATUS_TRANSITION',
+    );
+  });
+
+  it('★★ 창고가 다르면 7열 버킷이 달라 cross-pair 되지 않는다', () => {
+    // 같은 SKU 라도 창고가 다르면 서로 다른 재고다.
+    const groups = groupsOf([
+      { warehouseId: WAREHOUSE_SOURCE, inventoryStatus: 'AVAILABLE', quantityDelta: '-10' },
+      { warehouseId: WAREHOUSE_SOURCE, inventoryStatus: 'HOLD', quantityDelta: '10' },
+      { warehouseId: WAREHOUSE_DESTINATION, inventoryStatus: 'RESERVED', quantityDelta: '-5' },
+      {
+        warehouseId: WAREHOUSE_DESTINATION,
+        inventoryStatus: 'OUTBOUND_PENDING',
+        quantityDelta: '5',
+      },
+    ]);
+
+    expect(() => assertStatusTransitionByNet('STATUS_CHANGE', groups)).not.toThrow();
+  });
+
+  it('★★ LOT 이 다르면 7열 버킷이 달라 cross-pair 되지 않는다', () => {
+    const groups = groupsOf([
+      { lotNo: 'LOT-A', inventoryStatus: 'AVAILABLE', quantityDelta: '-10' },
+      { lotNo: 'LOT-A', inventoryStatus: 'HOLD', quantityDelta: '10' },
+      { lotNo: 'LOT-B', inventoryStatus: 'RESERVED', quantityDelta: '-5' },
+      { lotNo: 'LOT-B', inventoryStatus: 'OUTBOUND_PENDING', quantityDelta: '5' },
+    ]);
+
+    expect(() => assertStatusTransitionByNet('STATUS_CHANGE', groups)).not.toThrow();
+  });
+
+  it('★★ RESERVATION 도 같은 버킷 규칙을 따른다', () => {
+    const groups = groupsOf([
+      { skuId: SKU_A, inventoryStatus: 'AVAILABLE', quantityDelta: '-10' },
+      { skuId: SKU_A, inventoryStatus: 'RESERVED', quantityDelta: '10' },
+      { skuId: SKU_B, inventoryStatus: 'RESERVED', quantityDelta: '-5' },
+      { skuId: SKU_B, inventoryStatus: 'OUTBOUND_PENDING', quantityDelta: '5' },
+    ]);
+
+    expect(() => assertStatusTransitionByNet('RESERVATION', groups)).not.toThrow();
+  });
+
+  /** ★★ 창고이동은 5열 버킷이다 — 독립 SKU 2개가 cross-pair 되지 않는다. */
+  it('★★★ 창고이동 — 독립된 5열 버킷 2개는 서로 cross-pair 되지 않는다', () => {
+    const groups = groupsOf([
+      {
+        skuId: SKU_A,
+        warehouseId: WAREHOUSE_SOURCE,
+        inventoryStatus: 'AVAILABLE',
+        quantityDelta: '-10',
+      },
+      {
+        skuId: SKU_A,
+        warehouseId: WAREHOUSE_TRANSIT,
+        inventoryStatus: 'IN_TRANSIT',
+        quantityDelta: '10',
+      },
+      {
+        skuId: SKU_B,
+        warehouseId: WAREHOUSE_SOURCE,
+        inventoryStatus: 'AVAILABLE',
+        quantityDelta: '-5',
+      },
+      {
+        skuId: SKU_B,
+        warehouseId: WAREHOUSE_TRANSIT,
+        inventoryStatus: 'IN_TRANSIT',
+        quantityDelta: '5',
+      },
+    ]);
+
+    expect(() => assertStatusTransitionByNet('WAREHOUSE_TRANSFER_OUT', groups)).not.toThrow();
+    expect(() => assertBalancedIfStatusMove('WAREHOUSE_TRANSFER_OUT', groups)).not.toThrow();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
 // ⑨ net 부호 해석
 // ═══════════════════════════════════════════════════════════════
 

@@ -60,16 +60,17 @@ import type { StockKey, StockKeyGroup } from './stock-key';
  *    일반 입고·출고·조정이 그렇다 — §5 가 명시적으로 "전체 합계 0 을 요구하지
  *    않는다" / "균형 검증 대상 아님" 으로 확정했다.
  */
-type BalanceLevel =
+type IdentityLevel =
   /** 재고키 8열에서 `inventoryStatus` 만 뺀 **7열**. 같은 자리에서 상태만 옮긴다. */
   | 'STATUS_LEVEL'
   /** 7열에서 `warehouseId`·`locationId` 를 더 뺀 **5열**. 창고를 건너 옮긴다. */
   | 'WAREHOUSE_LEVEL';
 
 /**
- * 상태이동 거래유형 → 균형 단위. **이 표가 ⑨ 와 ⑩ 를 동시에 지배한다** —
- * 여기 키로 있는 거래유형만 상태이동(`isStatusMoveType`)이고, 그 값이 곧
- * ⑩ 의 balance-key 선택이다.
+ * 상태이동 거래유형 → identity 단위. **이 표가 ⑨ 와 ⑩ 를 동시에 지배한다** —
+ * 여기 키로 있는 거래유형만 상태이동이고(없으면 두 검증 모두 no-op), 그 값이
+ * 곧 ⑨ 의 pairing 버킷이자 ⑩ 의 균형 버킷이다. 둘이 같은 표를 읽으므로
+ * **"같은 재고" 의 정의가 두 검증에서 어긋날 수 없다.**
  *
  * ⚠️ 근거: `docs/04 §8.0:28` 이 상태이동 거래를 **`STATUS_CHANGE` ·
  *    `RESERVATION*` · `WAREHOUSE_TRANSFER_*` 정확히 3계열**로 열거한다.
@@ -82,22 +83,18 @@ type BalanceLevel =
  * ⛔ `REVERSAL` 전용 분기를 넣지 않는다 — 원거래 semantics 와 함께 **T2-13**
  *    이 다룬다.
  */
-const BALANCE_LEVEL_BY_TRANSACTION_TYPE: Readonly<Partial<Record<TransactionType, BalanceLevel>>> =
-  {
-    STATUS_CHANGE: 'STATUS_LEVEL',
-    RESERVATION: 'STATUS_LEVEL',
-    RESERVATION_RELEASE: 'STATUS_LEVEL',
-    // 한 leg = 한 거래 = 두 원장행이며 그 안에서 상쇄된다 (`docs/00` **C-02**) —
-    // 출발창고 `AVAILABLE −Q` + 이동중창고 `IN_TRANSIT +Q`. 창고가 다르므로
-    // 7열로는 절대 상쇄되지 않고, 그래서 5열이다.
-    WAREHOUSE_TRANSFER_OUT: 'WAREHOUSE_LEVEL',
-    WAREHOUSE_TRANSFER_IN: 'WAREHOUSE_LEVEL',
-  };
-
-/** 상태이동 거래유형인가. ⑨ 와 ⑩ 가 같은 판정을 쓴다. */
-function isStatusMoveType(transactionType: TransactionType): boolean {
-  return BALANCE_LEVEL_BY_TRANSACTION_TYPE[transactionType] !== undefined;
-}
+const IDENTITY_LEVEL_BY_TRANSACTION_TYPE: Readonly<
+  Partial<Record<TransactionType, IdentityLevel>>
+> = {
+  STATUS_CHANGE: 'STATUS_LEVEL',
+  RESERVATION: 'STATUS_LEVEL',
+  RESERVATION_RELEASE: 'STATUS_LEVEL',
+  // 한 leg = 한 거래 = 두 원장행이며 그 안에서 상쇄된다 (`docs/00` **C-02**) —
+  // 출발창고 `AVAILABLE −Q` + 이동중창고 `IN_TRANSIT +Q`. 창고가 다르므로
+  // 7열로는 절대 상쇄되지 않고, 그래서 5열이다.
+  WAREHOUSE_TRANSFER_OUT: 'WAREHOUSE_LEVEL',
+  WAREHOUSE_TRANSFER_IN: 'WAREHOUSE_LEVEL',
+};
 
 // ═══════════════════════════════════════════════════════════════
 // 허용 전이표 (`docs/04 §8.4`)
@@ -155,6 +152,28 @@ function isTransitionAllowed(from: InventoryStatus, to: InventoryStatus): boolea
  * entry 로 쪼개지면 방향을 오판했다. net 을 먼저 내면 한 버킷은 음수·양수·0
  * 셋 중 하나뿐이라 from 과 to 에 동시에 나타날 수 없다.
  *
+ * ## ★ pairing 은 **동일 identity 버킷 안에서만** 한다
+ *
+ * from/to 짝짓기를 거래 전체 범위에서 하면 **서로 무관한 두 이동이 교차**해
+ * 정상 거래를 오탐 차단한다 —
+ *
+ * ```
+ * STATUS_CHANGE
+ *   SKU-A  AVAILABLE −10 / HOLD             +10   → AVAILABLE→HOLD             ✅
+ *   SKU-B  RESERVED  − 5 / OUTBOUND_PENDING + 5   → RESERVED→OUTBOUND_PENDING  ✅
+ *
+ * 전역 froms × tos 는 위 둘에 더해 아래 두 쌍까지 만들어 낸다
+ *   AVAILABLE → OUTBOUND_PENDING   ❌ 명시 금지
+ *   RESERVED  → HOLD               ❌ 명시 금지
+ * ```
+ *
+ * 두 이동은 애초에 **다른 재고**이고 서로 짝이 될 수 없다. 따라서 ⑩ 과 똑같이
+ * 거래유형 family 의 identity key(7열 / 5열)로 먼저 버킷을 나누고, **그 버킷
+ * 안에서만** `froms × tos` 를 수행한다. `PENDING_v0.3 §5` 가 상태이동의 단위를
+ * *"동일 SKU·창고·로케이션·LOT·유통기한·시리얼·소유자"* 로 정의한 것을 pairing
+ * 에도 그대로 적용하는 것이며, `docs/07:155` 완료조건의 **중복 버킷 케이스**가
+ * 요구하는 바이기도 하다.
+ *
  * ⛔ zero-net 그룹을 **삭제하지 않는다** — T2-6 계약(원장행 보존)이며 여기서는
  *    pairing 대상에서만 빠진다.
  *
@@ -166,21 +185,24 @@ export function assertStatusTransitionByNet<TEntry>(
   transactionType: TransactionType,
   groups: readonly StockKeyGroup<TEntry>[],
 ): void {
-  if (!isStatusMoveType(transactionType)) return;
+  const level = IDENTITY_LEVEL_BY_TRANSACTION_TYPE[transactionType];
+  if (level === undefined) return;
 
-  const froms = groups.filter((group) => isNegative(group.netQuantityDelta));
-  const tos = groups.filter((group) => isGreaterThan(group.netQuantityDelta, ZERO));
+  for (const bucket of partitionByIdentity(level, groups).values()) {
+    const froms = bucket.filter((group) => isNegative(group.netQuantityDelta));
+    const tos = bucket.filter((group) => isGreaterThan(group.netQuantityDelta, ZERO));
 
-  for (const from of froms) {
-    for (const to of tos) {
-      const fromStatus = from.key.inventoryStatus;
-      const toStatus = to.key.inventoryStatus;
-      if (isTransitionAllowed(fromStatus, toStatus)) continue;
+    for (const from of froms) {
+      for (const to of tos) {
+        const fromStatus = from.key.inventoryStatus;
+        const toStatus = to.key.inventoryStatus;
+        if (isTransitionAllowed(fromStatus, toStatus)) continue;
 
-      throw new DomainError(ERROR_CODES.INVALID_STATUS_TRANSITION, {
-        message: `재고상태를 '${fromStatus}' 에서 '${toStatus}' 로 바꿀 수 없습니다.`,
-        publicDetails: { from: fromStatus, to: toStatus },
-      });
+        throw new DomainError(ERROR_CODES.INVALID_STATUS_TRANSITION, {
+          message: `재고상태를 '${fromStatus}' 에서 '${toStatus}' 로 바꿀 수 없습니다.`,
+          publicDetails: { from: fromStatus, to: toStatus },
+        });
+      }
     }
   }
 }
@@ -196,7 +218,7 @@ export function assertStatusTransitionByNet<TEntry>(
  *    구분자가 필요할 뿐이고, 그 **문자 자체는 계약이 아니다**(T2-6 `hashStockKey`
  *    와 같은 판단). 밖에서 이 형식에 의존하면 안 된다.
  */
-const BALANCE_KEY_SEPARATOR = '\u0001';
+const IDENTITY_KEY_SEPARATOR = '\u0001';
 
 /** `expiryKey` 는 재고키와 동일하게 **달력일** 정체성(`YYYY-MM-DD`)으로 본다. */
 function expiryKeyText(expiryKey: Date): string {
@@ -207,7 +229,7 @@ function expiryKeyText(expiryKey: Date): string {
  * **7열** — `STATUS_CHANGE` · `RESERVATION` · `RESERVATION_RELEASE`.
  * 재고키 8열에서 `inventoryStatus` 만 뺀다.
  */
-function statusLevelBalanceKey(key: StockKey): string {
+function statusLevelIdentityKey(key: StockKey): string {
   return [
     key.skuId,
     key.warehouseId,
@@ -216,7 +238,7 @@ function statusLevelBalanceKey(key: StockKey): string {
     expiryKeyText(key.expiryKey),
     key.serialNo,
     key.ownerCode,
-  ].join(BALANCE_KEY_SEPARATOR);
+  ].join(IDENTITY_KEY_SEPARATOR);
 }
 
 /**
@@ -224,16 +246,42 @@ function statusLevelBalanceKey(key: StockKey): string {
  * 7열에서 `warehouseId`·`locationId` 를 더 뺀다 — 출발창고와 이동중창고는
  * `warehouseId` 가 다르기 때문이다.
  */
-function warehouseLevelBalanceKey(key: StockKey): string {
+function warehouseLevelIdentityKey(key: StockKey): string {
   return [key.skuId, key.lotNo, expiryKeyText(key.expiryKey), key.serialNo, key.ownerCode].join(
-    BALANCE_KEY_SEPARATOR,
+    IDENTITY_KEY_SEPARATOR,
   );
 }
 
-const BALANCE_KEY_PICKERS: Readonly<Record<BalanceLevel, (key: StockKey) => string>> = {
-  STATUS_LEVEL: statusLevelBalanceKey,
-  WAREHOUSE_LEVEL: warehouseLevelBalanceKey,
+const IDENTITY_KEY_PICKERS: Readonly<Record<IdentityLevel, (key: StockKey) => string>> = {
+  STATUS_LEVEL: statusLevelIdentityKey,
+  WAREHOUSE_LEVEL: warehouseLevelIdentityKey,
 };
+
+/**
+ * 거래유형 family 의 identity key 로 그룹을 **버킷 단위로 나눈다.**
+ *
+ * ⑨ 와 ⑩ 이 **같은 버킷 정의**를 쓴다 — 하나는 버킷 안에서 from/to 를 짝짓고,
+ * 다른 하나는 버킷 안에서 합계를 낸다. 서로 다른 재고를 한데 섞으면 두 검증이
+ * 모두 틀린다(⑨ 는 오탐, ⑩ 은 미탐).
+ *
+ * ⛔ 그룹을 변형하거나 제거하지 않는다 — 참조만 나눠 담는다.
+ */
+function partitionByIdentity<TEntry>(
+  level: IdentityLevel,
+  groups: readonly StockKeyGroup<TEntry>[],
+): Map<string, StockKeyGroup<TEntry>[]> {
+  const pickIdentityKey = IDENTITY_KEY_PICKERS[level];
+  const buckets = new Map<string, StockKeyGroup<TEntry>[]>();
+
+  for (const group of groups) {
+    const identityKey = pickIdentityKey(group.key);
+    const bucket = buckets.get(identityKey);
+    if (bucket === undefined) buckets.set(identityKey, [group]);
+    else bucket.push(group);
+  }
+
+  return buckets;
+}
 
 /**
  * 검증 ⑩ — **거래유형 family 의 balance-key 단위로 `Σ netQuantityDelta = 0`**
@@ -275,18 +323,14 @@ export function assertBalancedIfStatusMove<TEntry>(
   transactionType: TransactionType,
   groups: readonly StockKeyGroup<TEntry>[],
 ): void {
-  const level = BALANCE_LEVEL_BY_TRANSACTION_TYPE[transactionType];
+  const level = IDENTITY_LEVEL_BY_TRANSACTION_TYPE[transactionType];
   if (level === undefined) return;
 
-  const pickBalanceKey = BALANCE_KEY_PICKERS[level];
-  const sums = new Map<string, Decimal>();
+  // ★ ⑨ 와 **같은 버킷 정의**를 쓴다 — 균형도 pairing 도 "같은 재고" 단위다.
+  for (const bucket of partitionByIdentity(level, groups).values()) {
+    let sum: Decimal = ZERO;
+    for (const group of bucket) sum = add(sum, group.netQuantityDelta);
 
-  for (const group of groups) {
-    const balanceKey = pickBalanceKey(group.key);
-    sums.set(balanceKey, add(sums.get(balanceKey) ?? ZERO, group.netQuantityDelta));
-  }
-
-  for (const sum of sums.values()) {
     if (isZero(sum)) continue;
 
     throw new DomainError(ERROR_CODES.UNBALANCED_TRANSACTION, {
