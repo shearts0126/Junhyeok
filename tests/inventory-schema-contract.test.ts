@@ -815,6 +815,11 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     expect(missing('src/modules/inventory/domain/stock-key.ts')).toBe(false);
   });
 
+  /** ✏️ **T2-7 이 상태전이·균형 검증을 landing 시켰다** (Deviation #77). */
+  it('★★ T2-7 이 상태전이·균형 검증을 landing 시켰다', () => {
+    expect(missing('src/modules/inventory/domain/status-transition.ts')).toBe(false);
+  });
+
   it('★★ infrastructure·presentation 은 아직 없다 (T2-9·T2-10·T2-16)', () => {
     expect(missing('src/modules/inventory/infrastructure')).toBe(true);
     expect(missing('src/modules/inventory/presentation')).toBe(true);
@@ -886,40 +891,67 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
   });
 
   /**
-   * ★ T2-6 은 **순수 domain** 이다 — `docs/07:377` 이 재고키 그룹화를
-   *   "도메인 순수 함수" 로 분류했다.
+   * ★ T2-6·T2-7 은 **순수 domain** 이다 — `docs/07:377` 이 상태전이와 재고키
+   *   그룹화를 나란히 "도메인 순수 함수" 로 분류했다.
    */
-  it('★★ T2-6 domain 은 DB·application 에 의존하지 않는다', () => {
-    const domain = codeOf('src/modules/inventory/domain/stock-key.ts');
+  it('★★ T2-6·T2-7 domain 은 DB·application 에 의존하지 않는다', () => {
+    for (const file of [
+      'src/modules/inventory/domain/stock-key.ts',
+      'src/modules/inventory/domain/status-transition.ts',
+    ]) {
+      const domain = codeOf(file);
 
-    // Prisma 클라이언트·트랜잭션 접근 0 (enum type-only import 는 런타임 의존이 아니다).
-    expect(domain).not.toContain('PrismaClient');
-    expect(domain).not.toContain('$transaction');
-    expect(domain).not.toContain('findMany');
-    // application 계층 역참조 0.
-    expect(domain).not.toContain('PostingReferences');
-    expect(domain).not.toContain('PostingPhase1');
-    expect(domain).not.toContain('PostingEntry');
-    expect(domain).not.toContain('/application');
+      // Prisma 클라이언트·트랜잭션 접근 0 (enum type-only import 는 런타임 의존이 아니다).
+      expect(domain, file).not.toContain('PrismaClient');
+      expect(domain, file).not.toContain('$transaction');
+      expect(domain, file).not.toContain('findMany');
+      // application 계층 역참조 0.
+      expect(domain, file).not.toContain('PostingReferences');
+      expect(domain, file).not.toContain('PostingPhase1');
+      expect(domain, file).not.toContain('PostingEntry');
+      expect(domain, file).not.toContain('/application');
+    }
   });
 
-  it('★★ T2-7·T2-9·T2-10 산출물이 아직 없다', () => {
-    const domain = codeOf('src/modules/inventory/domain/stock-key.ts');
-    for (const future of [
-      // T2-7 — net 부호 해석부터가 T2-7 이다
-      'assertStatusTransitionByNet',
-      'assertBalancedIfStatusMove',
-      'isTransitionAllowed',
-      'isStatusMoveType',
-      // T2-9
-      'FOR UPDATE',
-      'lockVersion',
-      'INSUFFICIENT_STOCK',
-      // T2-10
-      'pickStockKeyAndAttrs',
-      'transactionId',
+  /**
+   * ✏️ **방향 전환 (T2-7, Deviation #77)** — T2-6 시점의 이 guard 는 4개의 T2-7
+   * 이름도 금지했다. 그 4개는 이제 landing 했으므로 목록에서 빠진다. 다만
+   * **공개 계약으로 고정되는 것은 `assertStatusTransitionByNet` ·
+   * `assertBalancedIfStatusMove` 두 개뿐**이고, `isTransitionAllowed` ·
+   * `isStatusMoveType` 은 internal 구현 세부사항이라 존재 계약으로 얼리지 않는다.
+   * T2-9·T2-10 은 **여전히 없어야** 한다.
+   */
+  it('★★ T2-9·T2-10 산출물이 아직 없다', () => {
+    for (const file of [
+      'src/modules/inventory/domain/stock-key.ts',
+      'src/modules/inventory/domain/status-transition.ts',
     ]) {
-      expect(domain, future).not.toContain(future);
+      const domain = codeOf(file);
+      for (const future of [
+        // T2-9
+        'FOR UPDATE',
+        'lockVersion',
+        'InventoryBalance',
+        'INSUFFICIENT_STOCK',
+        // T2-10
+        'pickStockKeyAndAttrs',
+        'transactionId',
+      ]) {
+        expect(domain, `${file} :: ${future}`).not.toContain(future);
+      }
+    }
+  });
+
+  /** ✏️ **T2-7 공개 계약은 정확히 2개다** (Deviation #77). */
+  it('★★ T2-7 산출물이 domain 에 landing 했다', () => {
+    const domain = codeOf('src/modules/inventory/domain/index.ts');
+    for (const landed of ['assertStatusTransitionByNet', 'assertBalancedIfStatusMove']) {
+      expect(domain, landed).toContain(landed);
+    }
+
+    // internal 헬퍼는 barrel 로 나가지 않는다.
+    for (const internal of ['isTransitionAllowed', 'isStatusMoveType', 'BALANCE_KEY']) {
+      expect(domain, internal).not.toContain(internal);
     }
   });
 

@@ -275,6 +275,23 @@ v0.2(그룹 net): AVAILABLE net = −70 (from) / HOLD net = +70 (to)
 
 > 동일 상태 버킷이 from과 to에 동시에 나타나는 것은 **net 계산 후에는 원천적으로 불가능**하다. net이 음수이거나 양수이거나 0, 셋 중 하나뿐이다.
 
+> ✏️ **2026-09-03 설계복구 (상태전이·거래균형, T2-7)**: 위 **규칙 5 만** `SUPERSEDED BY PENDING_v0.3 §5` 다. 규칙 1~4·허용 전이표·명시 금지 표·`외부반출` 열은 **전부 정본으로 유지**된다.
+>
+> **왜 폐기하는가** — 전역 `Σ` 는 서로 무관한 두 재고를 상쇄시킨다. `STATUS_CHANGE` 에 `SKU-A AVAILABLE −100` / `SKU-B HOLD +100` 이 들어오면 전역 합계가 `0` 이라 통과하지만, 어느 재고도 자기 자리에서 옮겨간 적이 없다. §5 가 *"단순 전체 합계 0 검증 폐기"* 를 지시한 이유다.
+>
+> **대체 규칙 5′ — 거래유형별 balance-key 단위 균형 (Validation Strategy 분리)**
+>
+> | 거래유형 | 균형 key | 규칙 |
+> |---|---|---|
+> | `STATUS_CHANGE` · `RESERVATION` · `RESERVATION_RELEASE` | **7열** — `skuId`·`warehouseId`·`locationId`·`lotNo`·`expiryKey`·`serialNo`·`ownerCode` (재고키 8열 − `inventoryStatus`) | 각 key 별 `Σ netQuantityDelta = 0` |
+> | `WAREHOUSE_TRANSFER_OUT` · `WAREHOUSE_TRANSFER_IN` | **5열** — `skuId`·`lotNo`·`expiryKey`·`serialNo`·`ownerCode` (7열 − `warehouseId`·`locationId`) | 각 key 별 `Σ netQuantityDelta = 0` |
+> | `ASSEMBLY_*` · `DISASSEMBLY_*` | — | **면제.** 전체 합계 0 을 요구하지 않는다 |
+> | 일반 입고·출고·조정 | — | **면제.** 균형 검증 대상이 아니다 |
+>
+> **창고이동이 5열인 이유** — `00 §C-02`(✅ 승인)가 거래 단위를 확정한다: 출발 leg 1 헤더 = `출발창고 −Q` + `이동중 +Q`, 도착 leg 1 헤더 = `이동중 −Q` + `도착창고 +Q`. 즉 **한 leg 이 한 거래이고 그 안에서 이미 상쇄**되며(§8.0 의 `WAREHOUSE_TRANSFER_*` Σ = 0 과 일치), 출발창고와 `IN_TRANSIT` 창고는 `warehouseId` 가 다르므로 7열로는 절대 상쇄되지 않는다. ⛔ 두 거래(`_OUT` ↔ `_IN`) **사이**의 `도착 ≤ 출발` 불변식은 여기서 보지 않는다 — 초과 도착은 `IN_TRANSIT` 버킷의 음수로 나타나며 **§8.6 ⑭ 음수재고 검증(`T2-9`)** 이 소유한다.
+>
+> **조립·분해가 면제인 이유** — §5 는 *"전체 합계 0 요구하지 않음. **조립지시서 + BOM 기준 검증**"* 으로 확정했다. 그 실제 검증은 `00 v0.2 §1.4`(*"세트조립·해체 **실행** → R3"*)가 소유하며 R1a-2 에는 호출자가 없다. ⛔ `T2-7` 은 그 검증도, 그것을 부를 port 도 만들지 않는다.
+
 ## 8.5 LOT · 사용기한 · 시리얼 검증
 
 | SKU 설정 | 검증 규칙 | 오류코드 |
@@ -781,10 +798,35 @@ class InventoryPostingService {
     }
   }
 
+  // ✏️ 2026-09-03 (T2-7 / PENDING_v0.3 §5) — 전역 Σ 를 거래유형별 balance-key
+  //    단위 Σ 로 바꿨다. 전역 Σ 는 SKU-A −100 / SKU-B +100 을 통과시킨다.
   private assertBalancedIfStatusMove(type: TransactionType, groups: StockKeyGroup[]) {
-    if (!isStatusMoveType(type)) return;
-    const sum = groups.reduce((a, g) => a.plus(g.netQuantityDelta), ZERO);
-    if (!sum.isZero()) throw new DomainError('UNBALANCED_TRANSACTION', { sum });
+    const level = balanceLevelOf(type);   // STATUS_LEVEL(7열) | WAREHOUSE_LEVEL(5열) | undefined
+    if (!level) return;                   // 조립·분해와 일반 입출고·조정은 면제
+
+    const pick = level === 'STATUS_LEVEL' ? statusLevelBalanceKey : warehouseLevelBalanceKey;
+    const sums = new Map<string, Decimal>();
+
+    for (const g of groups) {
+      const k = pick(g.key);
+      sums.set(k, (sums.get(k) ?? ZERO).plus(g.netQuantityDelta));
+    }
+
+    for (const sum of sums.values()) {
+      if (!sum.isZero()) throw new DomainError('UNBALANCED_TRANSACTION', { sum });
+    }
+  }
+
+  // 7열 = 재고키 8열 − inventoryStatus.  같은 자리에서 상태만 옮긴다.
+  private statusLevelBalanceKey(k: StockKey): string {
+    return [k.skuId, k.warehouseId, k.locationId,
+            k.lotNo, k.expiryKey.toISOString().slice(0,10), k.serialNo, k.ownerCode].join(SEP);
+  }
+
+  // 5열 = 7열 − warehouseId − locationId.  출발창고와 이동중창고는 warehouseId 가 다르다.
+  private warehouseLevelBalanceKey(k: StockKey): string {
+    return [k.skuId, k.lotNo, k.expiryKey.toISOString().slice(0,10),
+            k.serialNo, k.ownerCode].join(SEP);   // SEP = hashStockKey 와 같은 제어문자
   }
 
   // ── ✏️ 반대거래 ─────────────────────────────────────────────────
