@@ -11,8 +11,7 @@
  *
  * ## 아직 없는 것
  *
- * ⛔ LOT·유통기한·시리얼 검증 (**T2-8**) · 잠금·음수재고·balance (**T2-9**) ·
- *    거래/원장/감사 INSERT (**T2-10**).
+ * ⛔ 잠금·음수재고·balance (**T2-9**) · 거래/원장/감사 INSERT (**T2-10**).
  */
 
 /**
@@ -57,3 +56,24 @@ export {
  *    `StockKeyGroup` 과 Prisma enum 만으로 표현된다.
  */
 export { assertBalancedIfStatusMove, assertStatusTransitionByNet } from './status-transition';
+
+/**
+ * ## T2-8 공개 함수는 정확히 2개다
+ *
+ * `docs/04 §8.12:575·580` 이 이름까지 명명한 검증 ⑦·⑦' 두 개다.
+ *
+ * ⛔ 내부 헬퍼(입고 거래유형 집합 · LOT/유통기한/시리얼 개별 판정)를 export
+ *    하지 않는다. 특히 **입고 여부 판정 함수**를 공개하지 않는다 — 정본은
+ *    `docs/04 §8.5` 에서 "입고" 라고만 쓰고 방향 판정을 공개 계약으로 정하지
+ *    않았으며, 방향에 의존하는 규칙은 `EXPIRED_INBOUND` 하나뿐이다.
+ *
+ * 타입 3종은 위 두 함수의 signature 를 표현하기 위한 것이며, ⛔ `ShelfLifePolicy`
+ * 같은 새 business concept 가 아니다.
+ */
+export {
+  assertLotExpirySerial,
+  assertSerialNetQty,
+  type LotExpirySerialContext,
+  type LotExpirySerialEntry,
+  type SkuTrackingFlags,
+} from './lot-expiry-serial';

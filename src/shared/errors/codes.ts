@@ -134,8 +134,16 @@ export const ERROR_CODES = {
   //    `docs/05 §10.18` 카탈로그에 없고, §W-D34 가 `WAREHOUSE_NOT_FOUND` 전용
   //    코드를 거부한 선례가 있다. SKU·창고·로케이션 미존재는 전부 generic
   //    `NOT_FOUND`(404) 다.
-  // ⛔ `LOT_REQUIRED_MISSING` 등 ⑦ 계열 8종은 여기 없다 — **T2-8** 이 landing
-  //    한다. `INSUFFICIENT_SHELF_LIFE` 도 마찬가지다.
+  // ✏️ **T2-8 정정** — ⑦ 계열을 "8종" 으로 적었으나 T2-8 이 실제로 landing 하는
+  //    것은 아래 **7종**이다. 나머지는 T2-8 소유가 아니다:
+  //    ⛔ `INSUFFICIENT_SHELF_LIFE` — `docs/05 §10.18` 카탈로그에 **없고**,
+  //       `04 v0.1 §8.5` 가 "(경고 또는 차단, **설정**)" 으로 적어 차단 여부·설정
+  //       키가 확정되지 않았다. `minimumRemainingDays` 도 함께 유예한다.
+  //    ⛔ `SERIAL_DUPLICATE` — "동일 `serialNo` 가 **이미 양수 잔량**" 은 현재고
+  //       조회를 요구한다. T2-8 은 DB 접근 0 인 순수 도메인이라 판정할 수 없다.
+  //       한 거래 **안의** 시리얼 중복은 `SERIAL_NET_QTY_INVALID` 가 잡는다.
+  //    ⛔ `DIRECT_LOT_EDIT_FORBIDDEN` — 카탈로그가 소유를 **`조정`** 으로 명시한다
+  //       (`TB-2`, R1b).
   //
   // `SKU_NOT_INVENTORY_MANAGED` 는 `docs/05 §10.18` 카탈로그가 이미 정의한
   // 코드이며(422, Posting ⑥), 여기 없던 것은 구현 gap 이었다.
@@ -145,6 +153,16 @@ export const ERROR_CODES = {
   // (`SKU_ACTIVE_UPDATE_RESTRICTED` 와 같은 결). `Warehouse.active` 컬럼은
   // 실재하며, §W-D27 이 유예한 것은 mutation 이지 읽기가 아니다.
   WAREHOUSE_INACTIVE: 'WAREHOUSE_INACTIVE',
+
+  // ── Posting ⑦ LOT·유통기한·시리얼 (T2-8, 설계 04 v0.2 §8.5 · 05 v0.2 §10.18) ──
+  // 정확히 7종이다. 위 ✏️ 정정 주석이 제외 3종과 그 사유를 적었다.
+  LOT_REQUIRED_MISSING: 'LOT_REQUIRED_MISSING',
+  LOT_NOT_ALLOWED: 'LOT_NOT_ALLOWED',
+  EXPIRY_REQUIRED_MISSING: 'EXPIRY_REQUIRED_MISSING',
+  EXPIRED_INBOUND: 'EXPIRED_INBOUND',
+  SERIAL_REQUIRED_MISSING: 'SERIAL_REQUIRED_MISSING',
+  SERIAL_QTY_INVALID: 'SERIAL_QTY_INVALID',
+  SERIAL_NET_QTY_INVALID: 'SERIAL_NET_QTY_INVALID',
 } as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
@@ -175,6 +193,14 @@ const HTTP_STATUS_BY_CODE: Readonly<Record<ErrorCode, number>> = {
   [ERROR_CODES.CLOSED_PERIOD_TRANSACTION]: 422,
   [ERROR_CODES.SKU_NOT_INVENTORY_MANAGED]: 422,
   [ERROR_CODES.WAREHOUSE_INACTIVE]: 422,
+  // Posting ⑦ (T2-8) — `docs/05 v0.2:351-354` 가 7종 전부 422 로 정한다.
+  [ERROR_CODES.LOT_REQUIRED_MISSING]: 422,
+  [ERROR_CODES.LOT_NOT_ALLOWED]: 422,
+  [ERROR_CODES.EXPIRY_REQUIRED_MISSING]: 422,
+  [ERROR_CODES.EXPIRED_INBOUND]: 422,
+  [ERROR_CODES.SERIAL_REQUIRED_MISSING]: 422,
+  [ERROR_CODES.SERIAL_QTY_INVALID]: 422,
+  [ERROR_CODES.SERIAL_NET_QTY_INVALID]: 422,
   [ERROR_CODES.SETTING_LOCKED]: 422,
   [ERROR_CODES.SKU_CODE_IMMUTABLE]: 422,
   [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: 422,
@@ -286,6 +312,13 @@ const PUBLIC_MESSAGE_BY_CODE: Readonly<Record<ErrorCode, string>> = {
   [ERROR_CODES.SKU_NOT_INVENTORY_MANAGED]:
     '재고관리 대상이 아닌 SKU 는 재고 거래에 사용할 수 없습니다.',
   [ERROR_CODES.WAREHOUSE_INACTIVE]: '비활성 창고는 재고 거래에 사용할 수 없습니다.',
+  [ERROR_CODES.LOT_REQUIRED_MISSING]: 'LOT 관리 대상 SKU는 LOT 번호가 필요합니다.',
+  [ERROR_CODES.LOT_NOT_ALLOWED]: 'LOT 비관리 SKU에는 LOT 번호를 입력할 수 없습니다.',
+  [ERROR_CODES.EXPIRY_REQUIRED_MISSING]: '유통기한 관리 대상 SKU는 유통기한이 필요합니다.',
+  [ERROR_CODES.EXPIRED_INBOUND]: '만료된 재고는 입고할 수 없습니다.',
+  [ERROR_CODES.SERIAL_REQUIRED_MISSING]: '시리얼 관리 대상 SKU는 시리얼 번호가 필요합니다.',
+  [ERROR_CODES.SERIAL_QTY_INVALID]: '시리얼 관리 재고의 개별 수량은 ±1이어야 합니다.',
+  [ERROR_CODES.SERIAL_NET_QTY_INVALID]: '동일 시리얼의 순수량은 -1부터 1 사이여야 합니다.',
   [ERROR_CODES.SETTING_LOCKED]: '잠긴 설정은 변경할 수 없습니다.',
   [ERROR_CODES.SKU_CODE_IMMUTABLE]: '거래가 발생한 SKU 의 코드는 변경할 수 없습니다.',
   [ERROR_CODES.SKU_ARCHIVE_BLOCKED]: '사용 이력이 있는 SKU 는 폐기할 수 없습니다.',
