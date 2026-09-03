@@ -877,15 +877,50 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     }
   });
 
-  it('★★ T2-8 검증자를 선구현하지 않았다', () => {
-    for (const file of [
+  /**
+   * ✏️ **방향 전환 (T2-8, Deviation #78)** — T2-6·T2-7 시점의 이 guard 는 두 이름의
+   * **부재**를 assert 했다. T2-8 이 landing 했으므로 존재로 뒤집는다.
+   *
+   * ⛔ 공개 계약은 이 **2개뿐**이다. 내부 헬퍼(입고 집합·개별 판정 함수)는
+   *    존재 계약으로 얼리지 않는다 — T2-7 이 `isTransitionAllowed` 에 내린
+   *    판단과 같다.
+   */
+  it('★★ T2-8 산출물이 domain 에 landing 했다', () => {
+    expect(missing('src/modules/inventory/domain/lot-expiry-serial.ts')).toBe(false);
+
+    const domain = codeOf('src/modules/inventory/domain/index.ts');
+    for (const landed of ['assertLotExpirySerial', 'assertSerialNetQty']) {
+      expect(domain, landed).toContain(landed);
+    }
+
+    // 내부 구현 세부사항은 barrel 로 나가지 않는다.
+    for (const internal of ['INBOUND_TRANSACTION_TYPES', 'isInbound', 'assertSerialEntry']) {
+      expect(domain, internal).not.toContain(internal);
+    }
+  });
+
+  /**
+   * ⛔ T2-8 이 유예한 3종은 **어느 계층에도 없다.**
+   *
+   * `INSUFFICIENT_SHELF_LIFE`(설정 미확정) · `SERIAL_DUPLICATE`(현재고 조회 필요) ·
+   * `DIRECT_LOT_EDIT_FORBIDDEN`(`TB-2` 소유). 오류코드 카탈로그에도 넣지 않았다.
+   */
+  it('★★ T2-8 이 유예한 3종을 선구현하지 않았다', () => {
+    const files = [
       'src/modules/inventory/domain/index.ts',
-      'src/modules/inventory/domain/stock-key.ts',
-      'src/modules/inventory/application/index.ts',
-    ]) {
+      'src/modules/inventory/domain/lot-expiry-serial.ts',
+      'src/shared/errors/codes.ts',
+    ];
+    for (const file of files) {
       const source = codeOf(file);
-      for (const future of ['assertLotExpirySerial', 'assertSerialNetQty']) {
-        expect(source, `${file} :: ${future}`).not.toContain(future);
+      for (const deferred of [
+        'INSUFFICIENT_SHELF_LIFE',
+        'SERIAL_DUPLICATE',
+        'DIRECT_LOT_EDIT_FORBIDDEN',
+        'minimumRemainingDays',
+        'defaultShelfLifeDays',
+      ]) {
+        expect(source, `${file} :: ${deferred}`).not.toContain(deferred);
       }
     }
   });
@@ -894,10 +929,11 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
    * ★ T2-6·T2-7 은 **순수 domain** 이다 — `docs/07:377` 이 상태전이와 재고키
    *   그룹화를 나란히 "도메인 순수 함수" 로 분류했다.
    */
-  it('★★ T2-6·T2-7 domain 은 DB·application 에 의존하지 않는다', () => {
+  it('★★ T2-6·T2-7·T2-8 domain 은 DB·application 에 의존하지 않는다', () => {
     for (const file of [
       'src/modules/inventory/domain/stock-key.ts',
       'src/modules/inventory/domain/status-transition.ts',
+      'src/modules/inventory/domain/lot-expiry-serial.ts',
     ]) {
       const domain = codeOf(file);
 
@@ -925,6 +961,7 @@ describe('I9. 범위 밖 — T2-2 는 schema foundation 까지다', () => {
     for (const file of [
       'src/modules/inventory/domain/stock-key.ts',
       'src/modules/inventory/domain/status-transition.ts',
+      'src/modules/inventory/domain/lot-expiry-serial.ts',
     ]) {
       const domain = codeOf(file);
       for (const future of [
