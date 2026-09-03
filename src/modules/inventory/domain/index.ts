@@ -11,15 +11,12 @@
  *
  * ## 아직 없는 것
  *
- * ⛔ 상태전이·거래균형 (**T2-7**) — `netQuantityDelta` 의 **부호를 해석**하는
- *    순간부터 T2-7 이다. `PENDING_v0.3 §5`(거래유형별 균형 검증 전략 분리)가
- *    T2-7 착수 전 별도 Recovery 대상이다.
  * ⛔ LOT·유통기한·시리얼 검증 (**T2-8**) · 잠금·음수재고·balance (**T2-9**) ·
  *    거래/원장/감사 INSERT (**T2-10**).
  */
 
 /**
- * ## 공개 함수는 정확히 5개다
+ * ## T2-6 공개 함수는 정확히 5개다
  *
  * `docs/07:154` 가 명명한 4개 + `normalizeEntries`(**Deviation #76** — T2-6 이
  * `lineNo = index + 1` 을 소유하는데 `normalizeStockKey` 는 재고키 정규화
@@ -46,3 +43,17 @@ export {
   type StockKeyGroup,
   type StockKeyNormalizationContext,
 } from './stock-key';
+
+/**
+ * ## T2-7 공개 함수는 정확히 2개다
+ *
+ * `docs/04 §8.12` 가 이름까지 명명한 검증 ⑨·⑩ 두 개다.
+ *
+ * ⛔ 내부 헬퍼(`isTransitionAllowed` · `isStatusMoveType` · 전이표 ·
+ *    거래유형 family 표 · 7열/5열 balance-key picker · 직렬화 구분자)를
+ *    export 하지 않는다 — 전부 위 두 함수의 **구현 세부사항**이고, 외부가
+ *    직접 써야 한다는 정본 근거가 없다. T2-6 이 센티넬에 내린 판단과 같다.
+ * ⛔ 새 타입도 내보내지 않는다 — 두 함수의 signature 는 T2-6 의
+ *    `StockKeyGroup` 과 Prisma enum 만으로 표현된다.
+ */
+export { assertBalancedIfStatusMove, assertStatusTransitionByNet } from './status-transition';
