@@ -5,22 +5,24 @@
 
  RUN  v3.2.7 /home/user/Junhyeok/fin/fin02a
 
- ✓ test/queue.test.ts (10 tests) 2575ms
-   ✓ FIN-02C 검증 기준 > 3. 같은 계정의 두 작업은 동시에 관측을 갱신하지 않는다(계정 잠금으로 직렬화)  757ms
-   ✓ FIN-02C 검증 기준 > 4. 다른 계정의 작업은 독립 실행된다(동시 실행)  422ms
-   ✓ FIN-02C 검증 기준 > 7. 임시 장애만 정해진 횟수(최초 포함 3회)로 재시도되고 시도마다 새 실행 ID 가 연결된다  475ms
- ✓ test/app.test.ts (7 tests) 789ms
-   ✓ readiness 와 마이그레이션 집합 > 이전 단계 스키마(0004 까지)만 적용된 DB 는 개수가 같아도 ready 503 SCHEMA_OUTDATED  365ms
- ✓ test/remediation.test.ts (12 tests) 736ms
- ✓ test/recovery-contention.test.ts (5 tests) 707ms
- ✓ test/queue-boundary.test.ts (7 tests) 654ms
- ✓ test/completion-cases.test.ts (8 tests) 518ms
- ✓ test/final-fixes.test.ts (7 tests) 376ms
- ✓ test/koreaexim-fx.test.ts (5 tests) 336ms
- ✓ test/recovery-lease.test.ts (1 test) 107ms
+ ✓ test/queue.test.ts (10 tests) 2822ms
+   ✓ FIN-02C 검증 기준 > 2. 새 요청 ID 를 사용한 의도적 재수집은 허용된다  337ms
+   ✓ FIN-02C 검증 기준 > 3. 같은 계정의 두 작업은 동시에 관측을 갱신하지 않는다(계정 잠금으로 직렬화)  661ms
+   ✓ FIN-02C 검증 기준 > 4. 다른 계정의 작업은 독립 실행된다(동시 실행)  434ms
+   ✓ FIN-02C 검증 기준 > 7. 임시 장애만 정해진 횟수(최초 포함 3회)로 재시도되고 시도마다 새 실행 ID 가 연결된다  564ms
+ ✓ test/app.test.ts (7 tests) 1048ms
+   ✓ readiness 와 마이그레이션 집합 > 이전 단계 스키마(0004 까지)만 적용된 DB 는 개수가 같아도 ready 503 SCHEMA_OUTDATED  466ms
+ ✓ test/remediation.test.ts (12 tests) 960ms
+ ✓ test/recovery-contention.test.ts (5 tests) 853ms
+ ✓ test/queue-boundary.test.ts (7 tests) 782ms
+ ✓ test/completion-cases.test.ts (8 tests) 719ms
+ ✓ test/final-fixes.test.ts (7 tests) 486ms
+ ✓ test/koreaexim-fx.test.ts (5 tests) 430ms
+ ✓ test/queue-stale-race.test.ts (2 tests) 260ms
+ ✓ test/recovery-lease.test.ts (1 test) 145ms
 
- Test Files  9 passed (9)
-      Tests  62 passed (62)
-   Start at  21:10:53
-   Duration  8.30s (transform 546ms, setup 0ms, collect 915ms, tests 6.80s, environment 0ms, prepare 74ms)
+ Test Files  10 passed (10)
+      Tests  64 passed (64)
+   Start at  21:24:19
+   Duration  10.29s (transform 566ms, setup 0ms, collect 1.11s, tests 8.50s, environment 0ms, prepare 73ms)
 

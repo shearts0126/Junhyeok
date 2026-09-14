@@ -59,3 +59,12 @@
 ## 5. 로컬 검사(`evidence/`)
 
 `pnpm typecheck` / `pnpm lint` / `pnpm format:check` / `pnpm test`(62건) 통과. GitHub Actions 결과는 푸시 후 `FIN-02AB_CI결과.md` 에 실행 URL·SHA·잡 결과로 추가한다. Actions 는 제가 API 로 조회한 값이며 설계 담당자의 독립 확인과 구분한다.
+
+## 6. 5차 확인: 오래된 작업 상태 조회와 큐 상태 전환 경합
+
+- 판정: **결함 미확인.** 시작 전환(`beginAttempt`)은 `WHERE status IN ('QUEUED','RETRY_SCHEDULED')` 조건부 UPDATE 이고, 잠금 대기(`requeueJob`)도 원래 같은 조건이라 RUNNING·완료·NEEDS_REVIEW 행을 되돌리지 않았다. 결과 전환(`setJobStatusFenced`)은 `current_run_id` 펜스다.
+- 최소 강화 2건(동작 의미 유지): `requeueJob` 은 `status = 'QUEUED'` 행만 갱신(RETRY_SCHEDULED 의 재시도 대기 시각을 잠금 대기가 앞당기지 않도록), `markQueued` 는 시작 가능 상태 행만 갱신(오래된 defer 가 완료 행의 `queued_at` 을 쓰지 않도록). 둘 다 상태 값을 바꾸지 않는다.
+- 시험 `test/queue-stale-race.test.ts` 2건(순서는 잠금 획득 SQL 앞 게이트·요청 단계 게이트로 제어, sleep 없음):
+  - A. 같은 작업 동시 전달: B 가 QUEUED 로 읽고 대기 → A 가 RUNNING 전환·요청 중 → B 재개 → DEFERRED, 작업 RUNNING·attempt_count 1 유지, 요청 1회, 실행 1건.
+  - B. 오래된 defer 와 정상 완료: B 가 QUEUED 로 읽고 대기 → A 완료(SUCCEEDED) → 다른 작업이 잠금 보유 상태에서 B 재개 → DEFERRED, 상태·queued_at 불변. B2: 잠금이 비어 있으면 B 는 잠금(세대 3)을 얻지만 조건부 시작 실패 → 자기 잠금만 `not-startable` 로 해제, 외부 요청 없음.
+- 관찰 사항(수정하지 않음, 범위 밖): 큐가 이미 처리된 항목을 다시 전달(stalled 복귀)하면 RETRY_SCHEDULED 작업은 `next_attempt_at` 이전에도 시작 가능 상태로 취급된다. 시도 횟수 상한은 유지되지만 대기 시간 정책이 앞당겨질 수 있다.

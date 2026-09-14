@@ -186,20 +186,30 @@ export async function setJobStatusFenced(
   return (r.rowCount ?? 0) === 1;
 }
 
-/** 잠금을 얻지 못해 시도를 시작하지 못한 경우(시도 수 미포함). queued_at 을 비우고 재투입 등록 후 markQueued 로 채운다. */
-export async function requeueJob(db: Queryable, jobId: string, nextAttemptAt: Date): Promise<void> {
-  await db.query(
-    `UPDATE fin_collection_jobs SET status = 'QUEUED', next_attempt_at = $2, queued_at = NULL, updated_at = now() WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED')`,
+/**
+ * 잠금을 얻지 못해 시도를 시작하지 못한 경우(시도 수 미포함). 상태는 바꾸지 않는다: QUEUED 인 행의 next_attempt_at 만 갱신하고
+ * queued_at 을 비운 뒤 재투입 등록 후 markQueued 로 채운다. 오래된 조회로 들어온 worker 가 RUNNING·완료·NEEDS_REVIEW·
+ * RETRY_SCHEDULED(재시도 대기 시각 보존) 행을 건드리지 않도록 WHERE 로 제한한다. 반환값은 갱신 여부.
+ */
+export async function requeueJob(
+  db: Queryable,
+  jobId: string,
+  nextAttemptAt: Date,
+): Promise<boolean> {
+  const r = await db.query(
+    `UPDATE fin_collection_jobs SET next_attempt_at = $2, queued_at = NULL, updated_at = now() WHERE id = $1 AND status = 'QUEUED'`,
     [jobId, nextAttemptAt],
   );
+  return (r.rowCount ?? 0) === 1;
 }
 
-/** 큐 등록 성공 기록. 등록 성공 응답을 받은 뒤에만 호출한다. */
-export async function markQueued(db: Queryable, jobId: string): Promise<void> {
-  await db.query(
-    'UPDATE fin_collection_jobs SET queued_at = now(), updated_at = now() WHERE id = $1',
+/** 큐 등록 성공 기록. 등록 성공 응답을 받은 뒤에만 호출하며, 시작 가능 상태(QUEUED/RETRY_SCHEDULED)인 행만 갱신한다. */
+export async function markQueued(db: Queryable, jobId: string): Promise<boolean> {
+  const r = await db.query(
+    `UPDATE fin_collection_jobs SET queued_at = now(), updated_at = now() WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED')`,
     [jobId],
   );
+  return (r.rowCount ?? 0) === 1;
 }
 
 /** DB 에는 있으나 큐 등록 기록이 없는 작업(등록 실패·응답 유실·지연 재투입 실패). 상태를 바꾸지 않는다. */
