@@ -1,0 +1,41 @@
+commit db2e9cc7ad59a1cca30c46717988160ce338a84e
+author-date Mon Sep 14 10:53:38 2026 +0000
+subject FIN-01: 자동 수집 연동 검증 결과·검증 코드 제출
+
+fin/FIN-01/FIN-01_검토요청.md
+fin/FIN-01/FIN-01_실행결과.md
+fin/FIN-01/FIN-01_연동검증표.md
+fin/FIN-01/FIN-01_필드매핑표.md
+fin/FIN-01/README.md
+fin/FIN-01/fin01.env.example
+fin/FIN-01/results/fixture-run.json
+fin/FIN-01/results/live-run-network-probe.json
+fin/FIN-01/results/live-run.json
+fin/FIN-01/samples/accounting-wehago-placeholder.json
+fin/FIN-01/samples/ads-placeholder.json
+fin/FIN-01/samples/bank-aggregator-placeholder.json
+fin/FIN-01/samples/bank-kftc-openbanking.json
+fin/FIN-01/samples/cross-source-placeholder.json
+fin/FIN-01/samples/delivery-excel-placeholder.json
+fin/FIN-01/samples/fx-placeholder.json
+fin/FIN-01/samples/sales-cafe24-placeholder.json
+fin/FIN-01/samples/sales-sabangnet-placeholder.json
+fin/FIN-01/verify/decimal.ts
+fin/FIN-01/verify/dedupe.ts
+fin/FIN-01/verify/live/http.ts
+fin/FIN-01/verify/live/index.ts
+fin/FIN-01/verify/mapping.ts
+fin/FIN-01/verify/reconcile.ts
+fin/FIN-01/verify/run.ts
+fin/FIN-01/verify/samples.ts
+fin/FIN-01/verify/sources/accounting-wehago.ts
+fin/FIN-01/verify/sources/ads.ts
+fin/FIN-01/verify/sources/bank-aggregator.ts
+fin/FIN-01/verify/sources/bank-kftc.ts
+fin/FIN-01/verify/sources/cross-source.ts
+fin/FIN-01/verify/sources/delivery-excel.ts
+fin/FIN-01/verify/sources/fx.ts
+fin/FIN-01/verify/sources/sales-cafe24.ts
+fin/FIN-01/verify/sources/sales-sabangnet.ts
+fin/FIN-01/verify/time.ts
+fin/FIN-01/verify/types.ts

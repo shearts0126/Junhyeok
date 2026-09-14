@@ -30,8 +30,8 @@ export const spec: SourceSpec = {
     {
       target: '공식 읽기 API 존재·자격',
       transform: 'derived',
-      status: 'MISSING',
-      note: '개발자 포털·API 문서 미확인. 계약 상품별 제공 범위는 더존 확인 필요',
+      status: 'UNVERIFIED',
+      note: '개발자 포털·API 문서 존재 여부를 확인하지 못함("미지원" 아님). 계약 상품별 제공 범위는 더존 확인 필요',
     },
     {
       target: 'legalEntity / fiscalPeriod',
@@ -150,7 +150,7 @@ export function runFixtureChecks(): CheckResult[] {
     check(
       'ACC-WHG-04',
       '공식 읽기 경로·자격 미확인 → 접근 대기(실제 수집 미검증)',
-      spec.mappings.some((m) => m.status === 'MISSING'),
+      spec.mappings.some((m) => m.status === 'UNVERIFIED'),
       '더존 담당자 확인 필요',
     ),
   ];

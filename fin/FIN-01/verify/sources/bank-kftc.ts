@@ -43,8 +43,8 @@ export const spec: SourceSpec = {
     {
       target: 'sourceKey',
       transform: 'derived',
-      status: 'MISSING',
-      note: '거래별 고유 ID 없음. (핀테크이용번호, tran_date, tran_time, inout_type, tran_amt, after_balance_amt, 페이지 내 순번) 대체키. 같은 날짜·금액의 정상 거래 2건은 after_balance_amt 와 순번으로 구분',
+      status: 'UNVERIFIED',
+      note: '검색 발췌의 응답 필드 목록(res_list)에 거래별 ID 로 볼 수 있는 필드가 없었으나 원문 미열람 → "없음" 으로 단정하지 않음. 원문 확인 전까지 (핀테크이용번호, tran_date, tran_time, inout_type, tran_amt, after_balance_amt, 페이지 내 순번) 대체키를 가정',
     },
     {
       target: 'occurredAtLocal',
@@ -86,7 +86,7 @@ export const spec: SourceSpec = {
       source: 'balance_amt',
       transform: 'decimal',
       status: 'SNIPPET',
-      note: '조회 시점 잔액(AT_INQUIRY). 전일 마감 잔액이 아니므로 06:00 수집 시점 잔액을 기준일 잔액으로 대체할지 설계 결정 필요',
+      note: '거래내역조회 응답의 balance_amt 는 조회 시점 잔액으로 발췌됨(AT_INQUIRY). 일자 지정 기준일 잔액 파라미터의 존재 여부는 원문 미확인 → 확인 전까지 전일 마지막 after_balance_amt 로 유도하는 안을 가정',
     },
     {
       target: '페이지네이션',
@@ -98,8 +98,8 @@ export const spec: SourceSpec = {
     {
       target: 'USD 계좌',
       transform: 'derived',
-      status: 'MISSING',
-      note: '외화계좌 조회 지원 여부를 공식 문서에서 확인하지 못함. 미확인',
+      status: 'UNVERIFIED',
+      note: '외화계좌 조회 지원 여부를 검색 발췌에서 확인하지 못함. "미지원" 이 아니라 "확인하지 못함"',
     },
   ],
 };
@@ -291,7 +291,7 @@ export function runFixtureChecks(): CheckResult[] {
       'BANK-KFTC-08',
       '필드매핑 근거 현황(CONFIRMED 0 이면 실제 수집 미검증)',
       cov.confirmed === 0,
-      `confirmed ${cov.confirmed} / snippet ${cov.snippet} / assumed ${cov.assumed} / missing ${cov.missing}`,
+      `confirmed ${cov.confirmed} / snippet ${cov.snippet} / assumed ${cov.assumed} / unverified ${cov.unverified} / missing ${cov.missing}`,
     ),
   );
   return results;

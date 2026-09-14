@@ -1,0 +1,4 @@
+# 기존 저장소 영향 확인(main..HEAD, 2026-09-14T11:15:10Z)
+## fin/ 이외 변경 파일(비어 있으면 없음)
+## 루트 설정·src·prisma·CI 대상 diff --stat(비어 있으면 없음)
+## 참고: 1차 커밋 시점 기준. 보완 커밋 후 재확인 값은 ZIP 의 evidence-post-commit/repo-impact.txt

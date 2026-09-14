@@ -1,7 +1,8 @@
 # FIN-01 필드매핑표
 
 - 목적: 계획서 §4 "최소 필수 필드" 와 §5 표준 테이블을 원천 필드로 충족할 수 있는지 확인한다. 새 데이터 모델을 설계하지 않는다.
-- 근거 수준: `CONFIRMED`(공식 원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `MISSING`(원천 미제공 → 대체 규칙 필요). 확인일 2026-09-14.
+- 근거 수준: `CONFIRMED`(공식 원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `UNVERIFIED`(제공 여부 자체를 확인하지 못함. "미지원" 아님) · `MISSING`(미제공을 공식 근거로 확인 → 대체 규칙 필요). 확인일 2026-09-14. 이번 검증에서 `MISSING` 으로 확정한 항목은 없다.
+- 이 표의 원천 필드명은 운영용 확정 스키마가 아니다. `ASSUMED`·`UNVERIFIED` 항목은 실제 응답 확보 전까지 추정값이다.
 - 코드 대응: `verify/sources/*.ts` 의 `spec.mappings` 가 이 표와 1:1 이며 `results/fixture-run.json` 의 `mappingSummary` 에 집계된다.
 - 전 출처에서 `CONFIRMED` 는 상수·사용자 확인 사항뿐이다. **실제 응답으로 확인된 필드는 없다.**
 
@@ -12,13 +13,13 @@
 | 표준 필드(§5) | 원천 필드 | 의미 | 변환 | 누락 여부 | 근거 |
 |---|---|---|---|---|---|
 | 법인/계좌/통화 | `fintech_use_num` | 핀테크이용번호(계좌 등록 시 발급) | external_mappings(핀테크이용번호→법인·은행·계좌별칭·통화). 통화는 응답에 없어 등록 정보로 고정 | 통화 필드 없음 | SNIPPET |
-| 거래 ID 또는 대체 식별 | 없음 | `bank_tran_id`/`api_tran_id` 는 API 호출 단위 | 대체키 = (핀테크이용번호, `tran_date`, `tran_time`, `inout_type`, `tran_amt`, `after_balance_amt`, 페이지 내 순번) | **누락(대체키)** | MISSING |
+| 거래 ID 또는 대체 식별 | 발췌 필드 목록에서 미발견 | `bank_tran_id`/`api_tran_id` 는 호출 단위로 발췌. 거래별 ID 부재는 원문 미확인 | 부재 시 대체키 안 = (핀테크이용번호, `tran_date`, `tran_time`, `inout_type`, `tran_amt`, `after_balance_amt`, 페이지 내 순번) | 확인하지 못함(추정 대체키) | UNVERIFIED |
 | 거래일시 | `res_list[].tran_date` + `tran_time` | YYYYMMDD, HHmmss(KST) | `yyyymmddHhmmssToLocal` → Asia/Seoul → UTC 병행 저장 | 없음 | SNIPPET |
 | 입출금액 | `res_list[].inout_type`, `tran_amt` | 입금/출금 구분, 금액(원, 정수 문자열) | `입금`→IN, `출금`→OUT. 값 목록 원문 확인 필요 | 없음 | SNIPPET |
-| 기준일 잔액 | `res_list[].after_balance_amt` / `balance_amt` | 거래 후 잔액 / 조회 시점 잔액 | 전일 마감 잔액 = 전일 마지막 거래의 `after_balance_amt`. `balance_amt` 는 `AT_INQUIRY` 로 구분 저장 | 일자 기준 잔액 직접 제공 없음 | SNIPPET |
+| 기준일 잔액 | `res_list[].after_balance_amt` / `balance_amt` | 거래 후 잔액 / 조회 시점 잔액(발췌) | 일자 지정 잔액 조회의 존재 여부 원문 미확인. 확인 전 안: 전일 마지막 `after_balance_amt` 로 유도, `balance_amt` 는 `AT_INQUIRY` 로 구분 저장 | 일자 기준 잔액 제공 여부 확인하지 못함 | SNIPPET(필드) / UNVERIFIED(일자 지정 조회) |
 | 적요 | `res_list[].print_content` | 통장인자내용 | 그대로. 발췌에 `printed_content` 표기도 있어 정확한 키 원문 확인 필요 | 없음 | SNIPPET |
 | 페이지네이션 | `page_record_cnt`, `next_page_yn`, `befor_inquiry_trace_info` | 페이지당 최대 25건 | `next_page_yn=Y` 면 trace 를 넘겨 재호출. 마지막 페이지 N 확인 전 완료 처리 금지 | — | SNIPPET |
-| USD 계좌 | — | 외화계좌 지원 여부 | — | **미확인** | MISSING |
+| USD 계좌 | — | 외화계좌 지원 여부 | — | 확인하지 못함(미지원 단정 아님) | UNVERIFIED |
 
 ### 1.2 웹케시 브랜치 / CODEF / 하이픈(설정 기반)
 
@@ -68,26 +69,26 @@
 | 금액·세금 | `공급가액`, `세액` | `amountBasis=SUPPLY`. 세액 0 행(면세·수출)은 1.1 나누기 금지 | ASSUMED |
 | 반품 | `반품여부`, `반품일` | 반품일에 원출고 행에 연결된 음수 이벤트. 기록 방식(별도 행/음수/원행 수정) 미확인 | ASSUMED |
 | 수정 감지 | 행 해시 | 최신 파일에 없는 키 = 삭제 후보 | ASSUMED |
-| 갱신 주기 | — | 10시 전 전일분 확보 가능성 미확인 | MISSING |
+| 갱신 주기 | — | 10시 전 전일분 확보 가능성 확인하지 못함 | UNVERIFIED |
 
 ## 4. 광고 → ad_daily_spend / ad_balances
 
 | 표준 필드 | 메타 | 구글 | 네이버 | 쿠팡 | 틱톡 |
 |---|---|---|---|---|---|
-| 광고 계정 | `account_id` (SNIPPET) | `customer.id` (SNIPPET) | `X-Customer` customerId (SNIPPET) | 미확인 (MISSING) | `advertiser_id` (SNIPPET) |
+| 광고 계정 | `account_id` (SNIPPET) | `customer.id` (SNIPPET) | `X-Customer` customerId (SNIPPET) | 확인하지 못함 (UNVERIFIED) | `advertiser_id` (SNIPPET) |
 | 날짜 | `date_start`(=`date_stop`, `time_increment=1`) (SNIPPET) | `segments.date` (SNIPPET) | `timeRange`+`timeIncrement=1` / StatReport `statDt` (SNIPPET) | — | `stat_time_day` (SNIPPET) |
 | 시간대 | 계정 시간대(보존, KST 이동 금지) | `customer.time_zone` (SNIPPET) | KST | KST | `advertiser/info` timezone (ASSUMED) |
 | 통화 | `account_currency` (SNIPPET) | `customer.currency_code` (SNIPPET) | KRW (CONFIRMED) | KRW | `advertiser/info` currency (ASSUMED) |
 | 소진액 | `spend` 문자열 소수 (SNIPPET) | `metrics.cost_micros` ÷ 1e6, BigInt 변환 (SNIPPET) | `salesAmt` (SNIPPET) | — | `spend` (SNIPPET) |
 | 세금 기준 | UNKNOWN (ASSUMED) | UNKNOWN (ASSUMED) | UNKNOWN (ASSUMED) | — | UNKNOWN (ASSUMED) |
-| 잔액 | 미확인 (MISSING) | 미확인 (MISSING) | `GET /billing/bizmoney` 응답 필드 원문 확인 (SNIPPET) | 미확인 (MISSING) | `advertiser/balance/get` 필드 원문 확인 (SNIPPET) |
+| 잔액 | 확인하지 못함 (UNVERIFIED) | 확인하지 못함 (UNVERIFIED) | `GET /billing/bizmoney` 응답 필드 원문 확인 (SNIPPET) | 확인하지 못함 (UNVERIFIED) | `advertiser/balance/get` 필드 원문 확인 (SNIPPET) |
 | 원천 버전(대체 규칙) | 수집 실행 ID. (계정, 일자) 재수집은 대체 | 동일 | 동일 | — | 동일 |
 
 ## 5. 회계(위하고) → accounting_imports / accounting_lines
 
 | 표준 필드 | 원천 | 규칙 | 근거 |
 |---|---|---|---|
-| 공식 읽기 경로·자격 | 미확인 | 더존 확인 | MISSING |
+| 공식 읽기 경로·자격 | 존재 여부 확인하지 못함 | 더존 확인 | UNVERIFIED |
 | 법인/회계기간 | 회사코드/기간 컬럼(가정) | — | ASSUMED |
 | 계정/금액 | 계정코드/차·대 금액(가정) | — | ASSUMED |
 | 전표/행 ID | 전표번호/행번호 | 제공 시 함께 수집. 요약만 제공되면 없음 | ASSUMED |
@@ -109,10 +110,10 @@
 
 | 계획서 요구 | 원천 상황 | 처리(설계 담당자 확정 대상) |
 |---|---|---|
-| 은행 거래 ID | 오픈뱅킹은 거래별 ID 없음 | 대체키 + 거래후잔액 순서로 구분(§5 "ID 가 없으면 파일/원천 행 식별" 규칙 적용) |
-| 기준일(전일) 잔액 | 오픈뱅킹 잔액조회는 조회 시점 잔액 | 전일 마지막 거래후잔액으로 유도하고 조회 시점 잔액과 함께 대조 |
+| 은행 거래 ID | 오픈뱅킹 발췌 필드에 거래별 ID 미발견(원문 미확인) | 부재가 확인되면 대체키 + 거래후잔액 순서로 구분(§5 "ID 가 없으면 파일/원천 행 식별" 규칙 적용) |
+| 기준일(전일) 잔액 | 오픈뱅킹 발췌상 `balance_amt` 는 조회 시점 잔액. 일자 지정 조회 여부 미확인 | 확인 전 안: 전일 마지막 거래후잔액으로 유도하고 조회 시점 잔액과 함께 대조 |
 | 결제 완료 일시 | 사방넷·카페24 모두 필드 미확인 | 실제 응답 확보 후 확정. 주문일만 있으면 차이 명시 |
 | 부분취소·분할환불 이벤트 | 사방넷·카페24 취소 확정일 필드 미확인 | 확인 전 임의 날짜 대체 금지(UNKNOWN) |
 | 광고 세금 기준 | 5개 플랫폼 모두 미확인 | UNKNOWN 으로 저장, 확정 표시 금지 |
-| 광고 잔액 | 네이버·틱톡만 조회 경로 존재 확인, 메타·구글·쿠팡 미확인 | 미확인 잔액은 누락 표시(§6) |
-| 위하고 전표·행 ID | 읽기 경로 자체 미확인 | 제공 시 수집 |
+| 광고 잔액 | 네이버·틱톡은 조회 경로 존재를 발췌로 확인, 메타·구글·쿠팡은 확인하지 못함 | 미확인 잔액은 누락 표시(§6) |
+| 위하고 전표·행 ID | 읽기 경로 존재 여부를 확인하지 못함 | 제공 시 수집 |

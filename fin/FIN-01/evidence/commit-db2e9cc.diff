@@ -1,0 +1,5301 @@
+commit db2e9cc7ad59a1cca30c46717988160ce338a84e
+Author: Claude <noreply@anthropic.com>
+Date:   Mon Sep 14 10:53:38 2026 +0000
+
+    FIN-01: 자동 수집 연동 검증 결과·검증 코드 제출
+    
+    - fin/FIN-01 에 연동검증표·필드매핑표·실행결과·검토요청 4개 문서
+    - 출처별 매핑 명세와 가상 샘플 검증 코드(verify/), 비식별 샘플(samples/), 결과 JSON(results/)
+    - 실제 호출은 자격·네트워크 부재로 전부 BLOCKED 기록. 실제 수집 검증 완료 출처 없음
+    - 기존 SCM/WMS 코드 미변경. typecheck/eslint/prettier/unit 통과
+    
+    Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+    Claude-Session: https://claude.ai/code/session_01EzMuYnj1Yci7XJKba2v4qW
+
+diff --git a/fin/FIN-01/FIN-01_검토요청.md b/fin/FIN-01/FIN-01_검토요청.md
+new file mode 100644
+index 0000000..48fe245
+--- /dev/null
++++ b/fin/FIN-01/FIN-01_검토요청.md
+@@ -0,0 +1,60 @@
++# FIN-01 검토요청
++
++제출 상태: **READY_FOR_REVIEW** (계획서 §13). 승인 판정과 설계 결정은 설계 담당자 몫이며 이 문서는 FIN-02 착수를 선언하지 않는다.
++
++## 1. 확인 완료한 사실
++
++- 실행 환경 제약: 외부 호스트 egress 전면 차단(프록시 403, `host_not_allowed`), 자격정보 전무. 따라서 **실제 수집 검증 완료 출처는 0개**다. 공식 문서는 공식 도메인 검색 발췌로만 확인했다(연동검증표에 근거 수준 표기).
++- 은행: 오픈뱅킹은 2025-01-02부터 법인 이용 확대(금융위·금결원). 이용기관 등록 + 보안점검(약 4주) + 은행별 조회대상 계좌등록 필요. 거래내역 페이지당 최대 25건, 거래별 고유 ID 없음. 웹케시 브랜치는 17개 은행 외화계좌 지원 표기, CODEF 는 기업 외화 거래내역 API 존재.
++- 카페24: OAuth2 액세스 2시간/리프레시 2주, Leaky Bucket, 버전 헤더, ISO 8601.
++- 광고: 메타 Insights 일별 `spend`·`account_currency`, 28일 소급 갱신(제3자 요약). 구글은 2026-09-09 개발자 토큰 폐지·Cloud 프로젝트 기반 접근·패스키 요구(공식 블로그 발췌). 네이버 `salesAmt`·`/billing/bizmoney`·StatReport 92일. 틱톡 일별 분해 30일/회, `advertiser/balance/get` 존재.
++- 환율: 수출입은행 API 무료·일 1,000회·11시경 갱신·신규 도메인. ECOS 731Y001/0000001 무료 키. 서울외국환중개 08:30 공표.
++- 검증 코드: 가상 샘플 49개 항목 통과(무중복 재수집, 관측 버전, 대체키, 페이징, 부분취소 연결, 일별 대체, 누적→월간, 휴일 환율, 정산입금·충전/소진·담당 원천 중복 방지). 저장소 typecheck/eslint/prettier 통과, 기존 코드 미변경.
++
++## 2. 아직 미검증인 사항
++
++| 출처 | 미검증 |
++|---|---|
++| 은행 3후보 | 실제 응답 구조, 5개 은행 개별 지원, USD(오픈뱅킹은 미확인), 과거 조회 기간, 요금, 인증서/토큰 갱신 |
++| 사방넷 | 회사 계정의 API 서비스 가입 여부, 주문 필드·상태코드, 결제 완료 일시 제공, 부분취소 표현, 변경 조회, 연동 채널 목록 |
++| 카페24 | 실제 사용 여부, 주문 리소스 필드, 취소·환불 확정일, 버킷 크기 |
++| 납품 엑셀 | 파일 헤더, 공유 위치, 갱신 시각(10시 전 전일분 가능 여부), 반품·수정·삭제 방식 |
++| 광고 5개 | 실제 호출, 세금 기준(전부), 메타·구글·쿠팡 잔액, 쿠팡 광고 API 존재 자체, 틱톡 토큰 만료 |
++| 위하고 | 공식 읽기 경로 존재·자격·비용 |
++| 환율 | 실제 응답, 이용약관 원문, 서울외국환중개 API 여부 |
++
++## 3. 계획서 요구사항을 충족하지 못하는 부분(현 시점)
++
++1. §4 "접근 가능한 소스는 실제 샘플 수집과 대조 완료" — 접근 가능한 소스가 없어 미충족. 조건부(접근 대기)로 남김.
++2. §4 은행 필수 필드 "거래 ID" — 오픈뱅킹은 거래별 ID 를 제공하지 않아 대체키 사용 필요(§5 규칙으로 처리 가능하나 설계 확인 요망).
++3. §4 은행 "기준일 잔액" — 오픈뱅킹 잔액조회는 조회 시점 잔액. 전일 마감 잔액은 거래후잔액에서 유도해야 함.
++4. §1 "한국시간 10시까지 전일 자료" — 쿠팡 광고(익일 12:30 이후 안내, 판매자 광고 동일 여부 미확인)와 납품 엑셀(갱신 시각 미확인)은 10시 전 확정을 보장할 수 없음. 위하고는 월 단위 원천이라 전일 기준 자체가 성립하지 않음(계획서가 이미 구분).
++5. §4 "사방넷에서 포함되지 않는 채널 명단" — 회사 전체 채널 목록 미확보로 명단 작성 불가. 주요 6개 중 쿠팡·무신사·스마트스토어·올리브영(온라인)은 사방넷 연동 근거 있음, 자사몰(카페24)·다이소는 미확인.
++6. §4 광고 "세금 기준" — 5개 플랫폼 모두 미확인.
++
++## 4. 설계 담당자가 선택해야 할 수집 경로와 비교 근거
++
++- 은행 경로(§4 "최소 2개 후보 비교 후 선택"): 연동검증표 §2.1 표 참조. 요약 — A 오픈뱅킹: 공식 표준, 법인 확대 확인, 요금 저렴(보도 기준)이나 USD 미확인·거래 ID 없음·등록 약 4주. B 웹케시 브랜치: 외화 지원 표기, 필드·요금·갱신 미확인. C CODEF: 외화 API 존재, 스크래핑·인증서 운영, 요금 미확인. **세 후보 모두 실제 응답 미확보이므로 지금 기본 계약을 지정하지 않는 것이 계획서 §4에 부합한다.** 선택 전 필요한 정보: 각 후보의 5개 은행·USD·요금 회신.
++- 환율 종류(§6): 수출입은행 `deal_bas_r` vs ECOS 매매기준율 vs 서울외국환중개 시장평균환율. 세 값의 정의가 다르므로 하나를 고정해야 한다. 수출입은행·ECOS 는 무료 키로 즉시 검증 가능.
++- 자사몰: 사방넷이 자사몰 주문을 포괄하면 카페24 직접 연동 제외(§4). 포괄 여부 확인 전에는 미결.
++- 채널별 담당 원천(§4): 사방넷/직접 API/납품 엑셀 중복 시 집계 원천을 채널·거래 유형별로 하나로 고정(가상 검증 X-03).
++- 재조회 정책(§10): 연동검증표 §3 제안값 확정.
++
++## 5. 사용자에게 필요한 계정·계약·자료 조치(없는 항목만, 한 번에)
++
++비밀번호·토큰은 대화에 붙이지 말고 `fin/FIN-01/fin01.env.example` 의 변수명으로 서버 비밀 저장소 또는 로컬 `.env.fin01`(커밋 제외)에 설정한다.
++
++1. 사방넷: API 서비스 가입 여부·요금, 연동키(마이페이지 > 서비스 관리 > 연동키/API 인증키 관리) 발급 상태, API 명세서 사본, 사방넷 연동 채널 목록.
++2. 위하고: 현재 계약 상품에서 외부 읽기 연동(API/데이터 내보내기) 가능 범위·자격·비용 — 더존 담당자 확인.
++3. 은행: 법인별 계좌 목록(법인·은행·통화·용도·사용 제한 자금 여부). 오픈뱅킹 검토 시 이용기관 등록 의사와 은행별 조회대상 계좌등록. 웹케시/CODEF 검토 시 영업 문의 회신(5개 은행·USD·요금·명세).
++4. 판매·광고 계정: 법인별 판매자 계정(쿠팡 WING, 스마트스토어, 무신사 파트너, 올리브영, 다이소, 자사몰 플랫폼)과 광고 계정(메타 광고 계정 ID·System User, Google Ads 고객 ID·Cloud 프로젝트, 네이버 CUSTOMER_ID·API 라이선스, 쿠팡 광고 계정, 틱톡 광고주 ID) 목록과 법인 매핑.
++5. 전체 채널 목록(약 40개): 채널명, 판매 방식(소비자/납품/혼합), 담당 원천 후보.
++6. 납품 엑셀: 비식별 샘플 1개월분, 공유 위치와 접근 방식, 갱신 시각, 반품·수정·삭제 기록 방식.
++7. 환율: 수출입은행·ECOS 인증키 발급(무료, 즉시) — 회사 명의 계정으로 발급 후 변수 설정.
++8. 실행 환경: 검증 실행용 환경의 egress 허용 목록에 공식 API 호스트 추가(또는 자격이 있는 사내 환경에서 `--live` 실행).
++
++## 6. FIN-02 공통 기반 착수 가능 여부와 근거
++
++- 판단 근거(계획서 §4 마지막 문단: "FIN-02 공통 기반 착수와 미검증 소스의 운영 가능 판정을 구분"): FIN-02 범위(저장소, API/worker, DB, 로그인, 원본 저장, 코드 매핑, 중복/수정 기반)는 특정 외부 API 의 필드명에 의존하지 않는다. 이번 검증에서 원천키·payload 해시·관측 버전·(계정,일자) 대체·담당 원천 지정·UTC+원천 시간대 보존 규칙이 가상 데이터로 동작함을 확인했고, 은행 거래 ID 부재·조회 시점 잔액·취소 확정일 미확인 같은 제약은 §5 규칙(대체키, 관측 버전, 미확인 표시) 안에서 수용 가능하다.
++- 따라서 **FIN-02 공통 기반은 착수 가능하다고 판단할 근거가 있다.** 단, 이는 설계 담당자의 결정 사항이며, 어떤 출처도 운영 가능 판정을 받지 않았다. FIN-03A(은행)·FIN-03B(판매·광고)는 §5 항목 회신과 실제 응답 확보 전에는 착수 근거가 없다.
++- 계획서 변경 요청(해당 절·사유만): §4 은행 필수 필드 "거래 ID 또는 대체 식별" 에 오픈뱅킹 대체키 구성(핀테크이용번호+일시+입출+금액+거래후잔액+순번)을 명시할지 검토 요망. §10 재조회 정책에 연동검증표 §3 값을 채워 넣을지 검토 요망. 그 외 기술 스택·구조 변경 제안 없음.
+diff --git a/fin/FIN-01/FIN-01_실행결과.md b/fin/FIN-01/FIN-01_실행결과.md
+new file mode 100644
+index 0000000..9e08f67
+--- /dev/null
++++ b/fin/FIN-01/FIN-01_실행결과.md
+@@ -0,0 +1,81 @@
++# FIN-01 실행결과
++
++- 실행 환경: 원격 컨테이너(Node v22.22.2, pnpm 10.33.0), 저장소 `shearts0126/Junhyeok` 브랜치 `claude/festive-dijkstra-i5llac`
++- 실행일: 2026-09-14 (UTC 기준 시각 아래 표기, KST = UTC+9)
++- **요약: 실제 원천 호출은 한 건도 성공하지 못했다.** 자격정보가 제공되지 않았고(전 출처), 실행 환경의 egress 정책이 외부 호스트를 모두 차단했다. 아래 건수·금액 대조는 전부 **가상 데이터(synthetic)** 기반이며 실제 연동 성공을 뜻하지 않는다.
++
++## 1. 실행 목록
++
++| # | 모드 | 시작(UTC) | 종료(UTC) | 대상 기간(가상) | 결과 파일 | 결과 |
++|---|---|---|---|---|---|---|
++| R1 | 가상 샘플 검증 | 2026-09-14T10:49:59.126Z | 2026-09-14T10:49:59.159Z | 2026-09-12 ~ 2026-09-13 | `results/fixture-run.json` | 49건 통과 / 실패 0 (synthetic=true) |
++| R2 | 실제 호출(네트워크 탐침) `--live fx-exim --date 2026-09-12` | 2026-09-14T10:45:53.090Z | 2026-09-14T10:45:53.774Z | 2026-09-12 | `results/live-run-network-probe.json` | `BLOCKED_NETWORK`: HTTP 403, `x-deny-reason: host_not_allowed`(프록시 응답, 원천 응답 아님). 인증키는 자리표시자 문자열이며 프록시에서 차단되어 원천에 도달하지 않음 |
++| R3 | 실제 호출 `--live all --date 2026-09-12` | 2026-09-14T10:45:54.616Z | 2026-09-14T10:45:54.616Z | 2026-09-12 | `results/live-run.json` | 7개 소스 전부 `BLOCKED_NO_CREDENTIALS` |
++| R0 | 환경 탐침(curl) | 2026-09-14 10:3x UTC | — | — | 본 문서 §5 | 20개 공식·공개 호스트 전부 `CONNECT tunnel failed, response 403` |
++
++## 2. 계정 별칭(가상)
++
++| 별칭 | 의미 |
++|---|---|
++| `DP-KB-001` | 딥포인트 KRW 계좌(오픈뱅킹 가상 핀테크이용번호 매핑) |
++| `DV-SH-001`, `DV-SH-USD-001` | 디스트로바 KRW/USD 계좌(중계 경로 자리표시자) |
++| `DP-SABANGNET-MAIN` | 딥포인트 사방넷 계정 |
++| `DP-CAFE24-OWNMALL` | 딥포인트 자사몰(카페24) |
++| `act_SYN000001`, `SYN-123-456-7890`, `SYN-NAVER-1`, `SYN-TT-1` | 메타/구글/네이버/틱톡 광고 계정 |
++
++실제 계정·계좌·주문·구매자 정보는 어디에도 포함하지 않았다.
++
++## 3. 건수·금액 대조(R1, 가상 데이터)
++
++| 검증 ID | 출처 | 원본 | 정규화 | 일치 |
++|---|---|---|---|---|
++| BANK-KFTC-02 | 오픈뱅킹 거래내역(2페이지, 25건 이하) | 5건, 순 +430,000 | 5건, 순 +430,000 | 예 |
++| BANK-KFTC-05 | 기초 1,000,000 + 누적 입출금 | 1,430,000 | 원천 `after_balance_amt` 1,430,000 | 예 |
++| BANK-AGG-01 | 중계 경로(자리표시자 컬럼) KRW+USD | 4건, 순 221,050.5 | 4건, 순 221,050.5 | 예(통화 혼합 합계는 대조용 표시일 뿐 환산·합산 금지) |
++| SALES-SBN-01 | 사방넷 결제완료 행 | 4건, 179,000 | 4건, 179,000 | 예(구매확정 1행 제외) |
++| SALES-SBN-02 | 부분취소 1건 연결 후 순매출 | — | 160,000 | 예 |
++| SALES-C24-01 | 카페24 결제완료 품목 | 3건, 122,000 | 3건, 122,000 | 예(입금전 1주문 제외) |
++| DLV-03 | 납품 출고 행 공급가액 | 3건, 8,300,000 | 3건, 8,300,000 | 예 |
++| DLV-04 | 반품 1건 연결 후 순매출 | — | 8,100,000 | 예 |
++| ADS-META-01 | 메타 3일 소진 재수집(1일 정정) | 1차 349.65 USD | 재수집 349.35 USD(최신 응답 합계와 동일, 누적 합산 안 됨) | 예 |
++| ADS-GOOG-01 | 구글 `cost_micros` 2일 | 252,750 KRW | 252,750 KRW | 예 |
++| ADS-NAVER-01 | 네이버 소진 2일 / 비즈머니 잔액 | 395,000 / 1,250,000 | 별도 레코드 | 예 |
++| ACC-WHG-01 | 위하고 누적→월간(8월 401) | 누적 10,500,000 − 7,500,000 | 3,000,000 | 예 |
++| FX-02 | 토요일(2026-09-12) 환율 | 빈 응답 | 2026-09-11 값 1335.10 적용, 적용일 표시 | 예 |
++
++## 4. 재조회(재수집) 결과
++
++| 검증 ID | 시나리오 | 결과 |
++|---|---|---|
++| BANK-KFTC-04 | 같은 응답 2회 수집 → 정정 응답 1회 | 1차 insert 5, 2차 unchanged 5, 3차 versioned 1, 저장 5(무중복) |
++| BANK-KFTC-03 | 같은 날짜·시각·금액·적요의 정상 거래 2건 | 고유키 5/5, 합쳐지지 않음 |
++| SALES-SBN-03, SALES-C24-03 | 같은 기간 재수집 | 2차 insert 0 |
++| ADS-META-01 | 소급 정정 | (계정,일자) 대체, 합계가 최신 응답과 일치 |
++| DLV-05 | 행 금액 수정 | 행 해시 변경으로 수정 감지 |
++| X-01 | 정산 입금 + 매출 | 정산 입금은 은행 거래로만 보존, 매출 합산 금지 확인 |
++| X-02 | 선불 광고 충전 100 / 소진 60 | 은행 −100, 잔액 +40, 비용 60 |
++| X-03 | 사방넷·직접 API·납품 엑셀 중복 채널 | 담당 원천만 집계, 비담당·미지정 채널은 제외 목록 |
++
++## 5. 오류·차단 기록
++
++| 시각(UTC) | 내용 | 조치 |
++|---|---|---|
++| 10:3x | curl 탐침: developers.facebook.com, developers.google.com, naver.github.io, developers.coupang.com, business-api.tiktok.com, developers.cafe24.com, sabangnet.co.kr, developers.wehago.com, wehago.com, developers.kftc.or.kr, developer.codef.io, webcash.co.kr, hyphen.im, koreaexim.go.kr, ecos.bok.or.kr, smbs.biz, oapi.koreaexim.go.kr, open.er-api.com, api.frankfurter.app, data.go.kr → 전부 프록시 403 | 공식 문서는 검색 결과 발췌로만 확인. 연동검증표에 근거 수준 표기 |
++| 10:3x | WebFetch 도구도 동일 도메인에서 `EGRESS_BLOCKED` | 동일 |
++| 10:4x | 1차 실행에서 `accounting-wehago` 예외(7월 누적 행의 전월 누적 없음 → 전체 중단) | 전월 누적 없는 행을 예외가 아닌 "전환 불가 목록" 으로 반환하도록 수정(임의 산출 금지 규칙 유지). 재실행 통과 |
++| 10:45 | `--live fx-exim` HTTP 403 을 최초에 `FAILED` 로 분류 | `x-deny-reason` 헤더가 있으면 `BLOCKED_NETWORK` 로 분류하도록 수정(원천 응답과 프록시 차단 구분) |
++
++## 6. 재현 방법
++
++```bash
++git checkout claude/festive-dijkstra-i5llac
++pnpm install --frozen-lockfile
++pnpm tsx fin/FIN-01/verify/run.ts                      # R1
++pnpm tsx fin/FIN-01/verify/run.ts --live all --date 2026-09-12   # R3 (환경변수 없으면 전부 BLOCKED_NO_CREDENTIALS)
++```
++
++실제 자격이 준비된 환경에서는 `fin01.env.example` 의 변수명으로 값을 설정한 뒤 `--live <source>` 를 실행한다. 결과 JSON 은 상태·HTTP 코드·바이트 수·본문 해시·항목 수만 기록하며 본문·헤더·키를 저장하지 않는다. 실제 호출이 `OK` 가 되더라도 `verified` 는 대조 절차를 별도로 통과하기 전까지 `false` 다.
++
++## 7. 저장소 품질 게이트
++
++`pnpm typecheck`, `pnpm exec eslint fin`, `pnpm format:check` 통과(2026-09-14). 기존 `src/`·`prisma/`·테스트 미변경.
+diff --git a/fin/FIN-01/FIN-01_연동검증표.md b/fin/FIN-01/FIN-01_연동검증표.md
+new file mode 100644
+index 0000000..77730d8
+--- /dev/null
++++ b/fin/FIN-01/FIN-01_연동검증표.md
+@@ -0,0 +1,151 @@
++# FIN-01 연동검증표
++
++- 기준: `FIN_개발계획_v1.0.md` §4 수집 경로와 FIN-01 검증 명세
++- 확인일: 2026-09-14 (모든 URL 동일)
++- 검증 환경 제약(전 출처 공통): 본 실행 환경의 네트워크 egress 정책이 외부 호스트 전부를 차단했다(프록시 403, `x-deny-reason: host_not_allowed`). 공식 문서 원문을 직접 열람하지 못했고, 실제 API 호출도 불가능했다. 아래 "공식 근거" 는 **공식 도메인 문서의 검색 결과 발췌**로 확인한 것이며, 원문 열람으로 재확인이 필요하다. 어떤 출처도 자격정보(토큰·키·계정)가 제공되지 않았다. 따라서 **실제 수집 검증 완료 상태인 출처는 없다.**
++- 상태 정의: `실제 수집 검증 완료` / `공식 문서 확인` / `접근 대기` / `미확인` / `지원 불가 확인`. 문서·권한이 없다는 이유로 지원 불가로 판정하지 않았다. 근거 수준 표기: (발췌) = 공식 문서 검색 발췌, 원문 미열람.
++
++## 1. 요약
++
++| 출처 | 검증 상태 | 한 줄 결론 |
++|---|---|---|
++| 은행 A: 금융결제원 오픈뱅킹 | 공식 문서 확인(발췌) → 접근 대기 | 법인 이용 2025-01-02 확대(금융위 보도). 이용기관 등록·보안점검(약 4주)·은행별 조회대상 계좌등록 필요. 거래별 고유 ID 없음. USD 계좌 지원 미확인 |
++| 은행 B: 웹케시 브랜치(ERP연계 API) | 공식 안내 확인(발췌) → 미확인 | 전 은행 원화 + 17개 은행 외화계좌 잔액·거래내역·고시환율 지원 표기. 필드·요금·인증 갱신 미확인(영업 문의 필요) |
++| 은행 C: CODEF(기업 계좌 API) | 공식 개발가이드 존재 확인(발췌) → 미확인 | 기업 수시입출·외화 거래내역 API 존재. 인증서 등록(스크래핑) 방식. 요금·필드 미확인 |
++| 소비자 매출: 사방넷 API | 접근 대기 | API 서비스는 유료 부가서비스, 연동키는 마이페이지에서 확인. 주문 필드·상태코드·결제완료 일시 제공 여부 미확인. 회사 계정의 API 서비스 가입 여부 미확인 |
++| 자사몰: 카페24 Admin API | 공식 문서 확인(발췌) → 접근 대기 | OAuth2(액세스 2시간/리프레시 2주), Leaky Bucket 제한, 버전 헤더 확인. 주문 필드 원문 미확인. 실제 카페24 사용 여부 미확인 |
++| 납품 매출: 공유 위치 엑셀 | 접근 대기 | 샘플·공유 위치·갱신 주기·반품/수정 기록 방식 미제공 |
++| 광고: 메타 | 공식 문서 확인(발췌) → 접근 대기 | Insights `spend`/`date_start`/`account_currency`, 일별 `time_increment=1`. 28일 소급 갱신, 37개월 조회(제3자 요약). System User 토큰·접근 등급 필요. 선불 잔액 조회 미확인 |
++| 광고: 구글 | 공식 문서 확인(발췌) → 접근 대기 | GAQL `metrics.cost_micros`/`segments.date`/`customer.currency_code`/`customer.time_zone`. 2026-09-09 개발자 토큰 폐지→Google Cloud 프로젝트 기반 접근, 2026-08-05부터 신규 리프레시 토큰에 패스키 필요(공식 블로그 발췌). 잔액 조회 미확인 |
++| 광고: 네이버 검색광고 | 공식 문서 확인(발췌) → 접근 대기 | `/stats` `salesAmt`, StatReport(최대 92일), `/billing/bizmoney` 잔액 조회 존재. HMAC 서명 인증. VAT 관계 미확인 |
++| 광고: 쿠팡 | 미확인 | 판매자용 광고 소진액 공식 API 존재를 확인하지 못함. 광고센터 리포트(엑셀) 확인. 전일 데이터 익일 12:30 이후 안내(CPS 리포트 기준) |
++| 광고: 틱톡 | 공식 문서 확인(발췌) → 접근 대기 | `report/integrated/get`(일별 분해 1회 30일), `advertiser/balance/get` 존재. 토큰 만료 정책 미확인 |
++| 회계: 위하고 | 미확인 | 공식 개발자 포털·읽기 API 문서 존재를 확인하지 못함. 현재 계약 상품의 제공 범위는 더존 확인 필요. 전표는 월 단위 정리(사용자 확인) |
++| 환율: 한국수출입은행 Open API | 공식 문서 확인(발췌) → 접근 대기 | `deal_bas_r`(매매기준율)·`ttb`·`tts`, 영업일 11시경 갱신, 일 1,000회, 인증키 즉시 발급(무료), 신규 도메인 `oapi.koreaexim.go.kr` |
++| 환율: 한국은행 ECOS | 공식 문서 확인(발췌) → 접근 대기 | 통계표 731Y001 항목 0000001(원/미국달러 매매기준율), 무료 인증키, 약 1,000회/일 |
++| 환율: 서울외국환중개 | 공식 사이트 확인(발췌) → 미확인 | 매매기준율(시장평균환율) 영업일 08:30경 공표. API 제공·이용 조건 미확인 |
++
++## 2. 출처별 상세
++
++### 2.1 은행 — 후보 비교(계획서 §4: 최소 2개 공식 후보를 같은 기준으로)
++
++| 기준 | A. 금융결제원 오픈뱅킹 | B. 웹케시 브랜치 ERP연계 API | C. CODEF 기업 계좌 API |
++|---|---|---|---|
++| 검증 상태 | 공식 문서 확인(발췌) → 접근 대기 | 공식 안내 확인(발췌) → 미확인 | 공식 개발가이드 확인(발췌) → 미확인 |
++| 공식 근거 URL(확인일 2026-09-14) | https://developers.kftc.or.kr/dev/openapi/open-banking/transaction · https://developers.kftc.or.kr/dev/openapi/open-banking/balance · https://openapi.kftc.or.kr/ · 금융위 보도자료(법인 확대) https://fsc.go.kr/no010101/83750 | https://www.xbranch.co.kr/branch/html/branch4_2000.html (ERP연계) · https://xbranch.co.kr/webcash_new/1202.html (자금관리) | https://developer.codef.io/products/bank/common/b/transaction (기업 수시입출) · https://developer.codef.io/products/bank/common/b/fastAccount · https://developer.codef.io/ |
++| 국민·기업·신한·우리·하나 지원 | 5개 은행 모두 오픈뱅킹 참가은행으로 널리 알려져 있으나 참가기관 목록 페이지(https://openapi.kftc.or.kr/service/openBanking) 원문 미열람 → 재확인 필요 | "전 은행 원화 계좌" 표기(발췌). 은행별 개별 확인 미실시 | "20개 은행" 지원 표기(발췌). 5개 은행 개별 확인 미실시 |
++| 법인 계좌 | 2025-01-02부터 법인 이용자 확대(금융위·금결원 발표 발췌). 각 은행에서 "조회 대상 계좌등록" 사전 신청 필요 | 법인 CMS 상품(중견·대기업용) | 기업(법인·개인사업자) API 별도 제공 |
++| USD(외화) 계좌 | **미확인**(공식 문서에서 외화계좌 조회 지원 여부를 찾지 못함) | 17개 은행 외화계좌 잔액·거래내역·고시환율 지원 표기(발췌) | 기업 외화 거래내역 API 별도 존재(발췌) |
++| 거래내역 | 거래내역조회 API, 페이지당 최대 25건(발췌), `next_page_yn`/`befor_inquiry_trace_info` 페이징 | 지원 표기. 필드 미확인 | 지원. 필드 미확인 |
++| 전일 잔액 | 잔액조회 API 는 조회 시점 잔액. 일자 기준 잔액은 거래내역의 `after_balance_amt` 로 유도 필요 | 미확인 | 미확인 |
++| 거래 고유 ID | **없음**(`bank_tran_id` 는 API 호출 단위). 대체키 필요 | 미확인 | 미확인 |
++| 과거 조회 기간 | 미확인 | 미확인 | 미확인 |
++| 인증·갱신 | OAuth 2.0 Access Token + 핀테크이용번호. 이용기관 등록(사업자, 사업계획서, HTTPS 도메인, 개인정보처리방침) + 보안점검 약 4주(발췌) | 서비스 계약 + 은행별 서비스 신청. 인증서 갱신 요건 미확인 | 인증서(공동인증서) 등록 → connectedId 방식(스크래핑). 인증서 갱신 시 재등록 필요할 가능성(미확인) |
++| 확인된 비용 | 언론 보도 기준 잔액조회 10원·거래내역조회 30원/건, 소형사 감면(공식 요율표 미열람) | 미확인 | "쓴 만큼 과금", 샌드박스 무료(발췌). 단가 미확인 |
++| 미확인 비용 | 이용기관 등록·보안점검 비용, 법인 요율 | 월 이용료, 초기 구축비 | 정식 계약 단가·최소 약정 |
++| 실제 검증 범위 | 가상 샘플로 페이징·대체키·재수집·잔액 대조 검증(`BANK-KFTC-01~08`). 실제 호출 없음 | 자리표시자 컬럼 설정 기반 매핑만 검증(`BANK-AGG-01~03`) | 동일(B와 같은 설정 기반 매핑) |
++| 다음 조치 | ① 이용기관 등록 여부·비용·기간을 금결원에 문의 ② 외화계좌 지원 여부 확인 ③ 테스트베드(https://developers.openbanking.or.kr/) 자격으로 실제 응답 1일치 확보 | ① 웹케시 영업 문의: 5개 은행·USD·API 명세·요금·인증 갱신 ② 샘플 응답 확보 | ① CODEF 샌드박스 계정으로 응답 구조 확보 ② 정식 요금·인증서 운영 정책 확인 |
++
++비교 근거 요약(설계 담당자 선택용): A 는 공식 표준·법인 확대가 확인됐지만 USD·거래 ID·등록 절차(약 4주)가 부담이다. B·C 는 외화 지원이 표기되어 있으나 필드·요금·인증 갱신을 확인하지 못했다. 세 후보 모두 실제 응답을 확보하지 못했으므로 기본 계약을 지정하지 않는다.
++
++### 2.2 소비자 매출 — 사방넷 API
++
++| 항목 | 내용 |
++|---|---|
++| 검증 상태 | 접근 대기 |
++| 수집 경로·공식 근거 | 사방넷 API 서비스(유료 부가서비스). https://www.sabangnet.co.kr/service-intro/api-service (발췌) · 연동 몰 목록 https://www.sabangnet.co.kr/html/function_intro_mall_list.html (차단, 미열람) · 올리브영 외부셀러 연동 https://oliveyoung.tech/2023-12-15/seller-service-1/ (발췌) |
++| 현재 상품·권한 이용 가능 여부 | **미확인**. 회사가 사방넷 API 서비스에 가입했는지, 연동키 발급 상태인지 확인 필요(마이페이지 > 서비스 관리 > 연동키/API 인증키 관리) |
++| 확보 필드 | 없음(명세 미확인) |
++| 부족 필드(계획서 §4 필수) | 판매자/채널/주문/항목 ID, 결제 완료 일시·금액, 할인·세금·취소/환불, 상품 코드 — 전부 실제 필드명 미확인. 특히 **결제 완료 일시** 제공 여부와 **구매확정과의 구분**이 핵심 |
++| 조회 기간·갱신 지연·호출 제한 | 미확인 |
++| 인증·갱신 | 연동키(API 인증키). 만료·갱신 정책 미확인 |
++| 확인된 비용 | API 서비스가 유료라는 사실만 확인. 금액 미확인 |
++| 채널 포괄 범위 | 발췌 기준 연동 몰: 스마트스토어, 쿠팡, 무신사, 카카오, 11번가, 롯데온 등. 올리브영 온라인은 올리브영 외부셀러 서비스가 사방넷과 연동됨(올리브영 기술블로그). **다이소, 자사몰(카페24) 연동 여부 미확인.** 회사 전체 채널(약 40개) 목록 미확보 → 포괄 범위 판정 보류 |
++| 실제 검증 범위 | 자리표시자 필드로 결제완료/구매확정 구분, 부분취소 연결, 재수집 무중복, 직접 API 중복 탐지 검증(`SALES-SBN-01~06`). 실제 호출 없음 |
++| 다음 조치 | ① API 서비스 가입 여부·요금 확인 ② API 명세서(주문 조회 필드·상태코드·조회 파라미터) 확보 ③ 회사 전체 채널 목록과 사방넷 연동 채널 대조 ④ 최소 1일치 실제 응답 확보 |
++
++### 2.3 자사몰 — 카페24 Admin API
++
++| 항목 | 내용 |
++|---|---|
++| 검증 상태 | 공식 문서 확인(발췌) → 접근 대기 |
++| 수집 경로·공식 근거 | Admin API `GET /api/v2/admin/orders`. https://developers.cafe24.com/docs/api/admin/ (차단, 미열람) · 토큰 재발급 https://developers.cafe24.com/en/app/front/app/develop/oauth/retoken (발췌) · Admin API 사용 https://developers.cafe24.com/en/app/front/app/develop/api/adminapi (발췌) |
++| 현재 상품·권한 이용 가능 여부 | **미확인**. 자사몰이 카페24인지, 앱(개발자센터) 설치·권한(주문 읽기 scope) 상태 미확인 |
++| 확보 필드(발췌) | 인증·버전·날짜 형식: OAuth2, 액세스 토큰 2시간, 리프레시 토큰 2주(갱신 시 둘 다 재발급), `X-Cafe24-Api-Version`, 날짜 ISO 8601, HTTPS 전용, `x-ratelimit-remaining` |
++| 부족 필드 | 주문·품목 식별자, 결제일, 취소·반품 상태·확정일, 공급가/할인/배송비 구분 — 원문 미열람(자리표시자) |
++| 조회 기간·갱신 지연·호출 제한 | Leaky Bucket(버킷 크기 원문 확인 필요). 과거 조회 기간 미확인 |
++| 인증·갱신 | 리프레시 토큰 2주 → 무인 수집 시 2주 내 자동 갱신 스케줄 필수. 실패 시 재인가 |
++| 비용 | 미확인(앱 이용 조건) |
++| 중복 방지 | 사방넷이 자사몰 주문을 포괄하면 카페24 직접 연동 제외(계획서 §4). 가상 검증에서 동일 주문 중복 탐지 확인(`SALES-C24-04`) |
++| 실제 검증 범위 | `SALES-C24-01~05`(가상) |
++| 다음 조치 | ① 자사몰 플랫폼 확인 ② 사방넷 포괄 여부 확정 후 필요 시 개발자센터 앱 생성·주문 읽기 권한·토큰 ③ 주문 리소스 원문 확인 |
++
++### 2.4 납품 매출 — 공유 위치 엑셀
++
++| 항목 | 내용 |
++|---|---|
++| 검증 상태 | 접근 대기 |
++| 수집 경로 | 승인된 공유 폴더의 엑셀 자동 읽기(계획서 §4). 공식 문서 없음 |
++| 이용 가능 여부 | 샘플 파일·공유 위치 미제공 |
++| 확보/부족 필드 | 실제 헤더 미확인. 계획서 필수 필드(법인/거래처/출고번호·행, 출고일, 상품·수량·금액·세금, 반품)를 컬럼으로 가정한 검증만 수행 |
++| 갱신 주기 | 미확인. **10시 전 전일 출고분 확보 가능 여부**는 사용자 확인 필요 |
++| 인증 | 공유 위치 종류(구글 드라이브/원드라이브/SMB 등)에 따라 다름. 미확인 |
++| 비용 | 없음(내부 파일) |
++| 실제 검증 범위 | `DLV-01~08`(가상): 필수 컬럼, 고유키, 금액 대조, 반품 연결, 행 해시 수정 감지, 주문 시스템 중복 탐지, 면세 행 |
++| 다음 조치 | ① 비식별 샘플 1개월분과 공유 위치 ② 출고번호 유무, 반품·수정·삭제 기록 방식 ③ 파일 갱신 시각 |
++
++### 2.5 광고
++
++| 항목 | 메타 | 구글 | 네이버 검색광고 | 쿠팡 | 틱톡 |
++|---|---|---|---|---|---|
++| 검증 상태 | 공식 문서 확인(발췌) → 접근 대기 | 공식 문서 확인(발췌) → 접근 대기 | 공식 문서 확인(발췌) → 접근 대기 | 미확인 | 공식 문서 확인(발췌) → 접근 대기 |
++| 공식 근거 | https://developers.facebook.com/docs/marketing-api/insights/ · https://developers.facebook.com/docs/marketing-api/insights/best-practices/ · https://developers.meta.com/blog/updates-to-ads-management-standard-access-feature/ | https://developers.google.com/google-ads/api/docs/get-started/onboarding · https://ads-developers.googleblog.com/2026/02/an-update-on-google-ads-api-developer.html · https://ads-developers.googleblog.com/2026/07/passkey-authentication-requirement-for.html · https://developers.google.com/google-ads/api/docs/api-policy/developer-token | https://naver.github.io/searchad-apidoc/ (차단) · https://github.com/naver/searchad-apidoc (발췌) · StatReport 공지 http://naver.github.io/searchad-apidoc/notice/2021/03/09/notice1/ | https://ads.coupang.com/AaaAna.html (광고분석가이드, 발췌) · https://developers.coupang.com/ko/api (판매자 Open API, 발췌) | https://business-api.tiktok.com/portal/docs (차단) · https://github.com/tiktok/tiktok-business-api-sdk (발췌) |
++| 계정별 일별 소진액 | `act_{id}/insights` `fields=spend,account_currency,date_start,date_stop` `time_increment=1` `level=account` | GAQL `SELECT customer.id, customer.currency_code, customer.time_zone, segments.date, metrics.cost_micros FROM customer WHERE segments.date BETWEEN …` | `/stats` `fields=["salesAmt",…]` `timeRange` + `timeIncrement=1` 또는 StatReport(대용량, 최대 92일) | **공식 API 미확인.** 광고센터 캠페인/일별 리포트·광고비 정산 리포트 엑셀 다운로드 확인 | `report/integrated/get` `data_level=AUCTION_ADVERTISER` `dimensions=[advertiser_id,stat_time_day]` `metrics=[spend]` |
++| 통화·시간대 | `account_currency`, 계정 시간대 일자(KST 이동 금지) | `customer.currency_code`, `customer.time_zone` | KRW, KST | KRW, KST | `advertiser/info` 통화·시간대(필드명 미확인) |
++| 세금 기준 | 미확인(UNKNOWN 표시) | 미확인 | 미확인(salesAmt 와 비즈머니 차감액의 VAT 관계) | 미확인 | 미확인 |
++| 지연·과거 수정 | 기여 창 마감으로 최대 28일 소급 갱신(제3자 요약) → 7일 재조회 + 주간 28일 재점검 | 소급 정정 있음(무효 클릭 등, 미확인) → 7일 재조회 | 미확인 | 전일 데이터 익일 12:30 이후(CPS 리포트 안내, 판매자 광고 동일 여부 미확인) → **10시 전 확정 불가 가능성** | 미확인 |
++| 잔액 조회 | 미확인(선불 잔액 API 확인 못 함) | 미확인 | `/billing/bizmoney`(get, get(period), histories) 존재(GitHub 이슈로 확인) | 미확인 | `advertiser/balance/get` 존재(SDK 문서) |
++| 조회 기간·호출 제한 | 집계 37개월, 일부 breakdown 13개월(제3자 요약). 계정 단위 rate limit, `x-fb-ads-insights-throttle` | 미확인 | StatReport 92일/회 | 미확인 | 일별 분해 1회 30일(제3자 요약) |
++| 인증·갱신 | System User 토큰(장기). Marketing API 접근 등급 + 비즈니스 인증 필요 | OAuth 리프레시 토큰. **2026-09-09 개발자 토큰 폐지, Google Cloud 프로젝트에 접근 등급 귀속**. 2026-08-05부터 신규 리프레시 토큰 발급에 패스키 필수 | 액세스라이선스·비밀키·CUSTOMER_ID, `X-Timestamp`/`X-API-KEY`/`X-Customer`/`X-Signature`(HMAC-SHA256). 광고플랫폼 > 도구 > API 사용관리 | — | Access Token(장기). 만료 정책 미확인 |
++| 비용 | API 무료, 광고비 별도 | API 무료 | API 무료 | — | API 무료 |
++| 실제 검증 범위 | `ADS-META-01~02`(가상): 일별 대체, 시간대 보존 | `ADS-GOOG-01`(가상): micros 변환 | `ADS-NAVER-01`(가상): 소진·잔액 분리 | `ADS-CPNG-01`: 미확인 표시 | `ADS-TT-01~02`(가상): 30일 분할, 필드 보존 |
++| 다음 조치 | 광고 계정 목록·법인 매핑, 앱·System User 토큰 준비 | Google Cloud 프로젝트·API 접근 신청, 패스키로 리프레시 토큰 발급, 계정 목록 | API 라이선스 발급, CUSTOMER_ID 목록 | 쿠팡 광고 담당자에게 판매자/대행사 API 제공 여부 문의. 없으면 엑셀 보조 경로로 확정 | 앱 생성·광고주 인가, 계정 목록 |
++
++### 2.6 회계 — 위하고
++
++| 항목 | 내용 |
++|---|---|
++| 검증 상태 | 미확인 |
++| 공식 근거 | https://www.wehago.com/ (차단) · https://www.douzoneon.com/s1/down/wehago_leaflet.pdf (발췌: "Report 파일 또는 API 형태" 언급) · 검색에서 developers.wehago.com 개발자 포털·Open API 문서 존재를 확인하지 못함 |
++| 현재 계약·권한 조회 범위 | 미확인. 계정·거래처·전표·원장·손익 자료 중 무엇을 어떤 형태(API/파일 내보내기)로 읽을 수 있는지 더존 확인 필요 |
++| 원천 최신성 | 사용자 확인: 전표는 월 단위 정리 → 자동 조회가 가능해도 자료 기준일은 전월 이하. 자동 조회 가능성과 원천 최신성을 분리해 표시(계획서 §1) |
++| 실제 검증 범위 | `ACC-WHG-01~04`(가상): 누적→월간 전환, 전월 누적 없으면 전환 불가 목록 |
++| 다음 조치 | ① 더존 담당자에게 현재 상품의 외부 읽기 연동(API/데이터 내보내기) 제공 범위·자격·비용 문의 ② 없으면 월 1회 엑셀 내보내기(사용자 부담)를 보조 경로로 명시 |
++
++### 2.7 환율
++
++| 항목 | 한국수출입은행 Open API | 한국은행 ECOS | 서울외국환중개 |
++|---|---|---|---|
++| 검증 상태 | 공식 문서 확인(발췌) → 접근 대기 | 공식 문서 확인(발췌) → 접근 대기 | 공식 사이트 확인(발췌) → 미확인 |
++| 공식 근거 | https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C · 공공데이터포털 https://www.data.go.kr/data/3068846/openapi.do | https://ecos.bok.or.kr/api/ | http://www.smbs.biz/ExRate/StdExRate.jsp |
++| 환율 종류 | 은행 고시 기준 매매기준율 `deal_bas_r`, 전신환 `ttb`/`tts` | 원/미국달러 매매기준율(731Y001/0000001) | 시장평균환율(매매기준율), USD·CNY 직접 산출 |
++| 일별 USD | `data=AP01&searchdate=YYYYMMDD` | 주기 D | 영업일 08:30경 공표 |
++| 휴일 처리 | 비영업일 조회 시 빈 결과(제3자 사례) → 이전 영업일 대체·적용일 표시(`FX-02`) | 비영업일 자료 없음(추정) | 비영업일 공표 없음 |
++| 갱신 시각 | 영업일 11시경 | 미확인 | 08:30경 |
++| 호출 제한·인증 | 일 1,000회, 인증키 즉시 발급, 2년 미사용 파기, 신규 도메인 `oapi.koreaexim.go.kr`(구 도메인 병행 종료 2026-04-30) | 무료 인증키, 약 1,000회/일 | 미확인(웹 페이지) |
++| 이용 조건·비용 | 무료. 이용약관 원문 미열람 | 무료 | 미확인 |
++| 실제 검증 범위 | `FX-01~04`(가상). 실제 호출은 프록시 차단(`live-run-network-probe.json`) | 없음 | 없음 |
++| 다음 조치 | 인증키 발급(무료) 후 1주일치 실제 응답 확보 | 인증키 발급 후 응답 확보 | API 제공 여부 문의 |
++
++환율 종류 차이(설계 결정 입력): 수출입은행 값은 은행 고시 성격, 서울외국환중개는 시장평균환율이며 ECOS 도 매매기준율 계열이다. 어느 종류를 보고일 환산에 쓸지 설계 담당자가 고정한다(계획서 §6).
++
++## 3. 계획서 §10 재조회 정책 입력(원천별)
++
++| 출처 | 변경 조회 기능 | 제안 실행 방식(설계 담당자 확정 대상) |
++|---|---|---|
++| 오픈뱅킹 | 없음(기간 조회만) | 최근 7일 일별 재조회, 잔액 대조로 누락 탐지 |
++| 사방넷/카페24 | 수정일 기준 파라미터 유무 미확인 | 확인 전까지 최근 7일 전체 재조회 + 주간 90일 미종결 주문 재조회 |
++| 메타/구글 | 소급 갱신 있음 | 최근 7일 일별 재조회 + 주간 28일 재점검(일자 대체) |
++| 네이버/틱톡 | 미확인 | 최근 7일 재조회 |
++| 납품 엑셀 | 파일 전체 재읽기 | 행 해시 비교로 수정·삭제 감지 |
++| 환율 | 없음 | 당일 11시 이후 1회 + 08:30 실패 시 재시도 |
+diff --git a/fin/FIN-01/FIN-01_필드매핑표.md b/fin/FIN-01/FIN-01_필드매핑표.md
+new file mode 100644
+index 0000000..7b8b35f
+--- /dev/null
++++ b/fin/FIN-01/FIN-01_필드매핑표.md
+@@ -0,0 +1,118 @@
++# FIN-01 필드매핑표
++
++- 목적: 계획서 §4 "최소 필수 필드" 와 §5 표준 테이블을 원천 필드로 충족할 수 있는지 확인한다. 새 데이터 모델을 설계하지 않는다.
++- 근거 수준: `CONFIRMED`(공식 원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `MISSING`(원천 미제공 → 대체 규칙 필요). 확인일 2026-09-14.
++- 코드 대응: `verify/sources/*.ts` 의 `spec.mappings` 가 이 표와 1:1 이며 `results/fixture-run.json` 의 `mappingSummary` 에 집계된다.
++- 전 출처에서 `CONFIRMED` 는 상수·사용자 확인 사항뿐이다. **실제 응답으로 확인된 필드는 없다.**
++
++## 1. 은행 → bank_transactions / bank_balances
++
++### 1.1 금융결제원 오픈뱅킹(거래내역조회·잔액조회)
++
++| 표준 필드(§5) | 원천 필드 | 의미 | 변환 | 누락 여부 | 근거 |
++|---|---|---|---|---|---|
++| 법인/계좌/통화 | `fintech_use_num` | 핀테크이용번호(계좌 등록 시 발급) | external_mappings(핀테크이용번호→법인·은행·계좌별칭·통화). 통화는 응답에 없어 등록 정보로 고정 | 통화 필드 없음 | SNIPPET |
++| 거래 ID 또는 대체 식별 | 없음 | `bank_tran_id`/`api_tran_id` 는 API 호출 단위 | 대체키 = (핀테크이용번호, `tran_date`, `tran_time`, `inout_type`, `tran_amt`, `after_balance_amt`, 페이지 내 순번) | **누락(대체키)** | MISSING |
++| 거래일시 | `res_list[].tran_date` + `tran_time` | YYYYMMDD, HHmmss(KST) | `yyyymmddHhmmssToLocal` → Asia/Seoul → UTC 병행 저장 | 없음 | SNIPPET |
++| 입출금액 | `res_list[].inout_type`, `tran_amt` | 입금/출금 구분, 금액(원, 정수 문자열) | `입금`→IN, `출금`→OUT. 값 목록 원문 확인 필요 | 없음 | SNIPPET |
++| 기준일 잔액 | `res_list[].after_balance_amt` / `balance_amt` | 거래 후 잔액 / 조회 시점 잔액 | 전일 마감 잔액 = 전일 마지막 거래의 `after_balance_amt`. `balance_amt` 는 `AT_INQUIRY` 로 구분 저장 | 일자 기준 잔액 직접 제공 없음 | SNIPPET |
++| 적요 | `res_list[].print_content` | 통장인자내용 | 그대로. 발췌에 `printed_content` 표기도 있어 정확한 키 원문 확인 필요 | 없음 | SNIPPET |
++| 페이지네이션 | `page_record_cnt`, `next_page_yn`, `befor_inquiry_trace_info` | 페이지당 최대 25건 | `next_page_yn=Y` 면 trace 를 넘겨 재호출. 마지막 페이지 N 확인 전 완료 처리 금지 | — | SNIPPET |
++| USD 계좌 | — | 외화계좌 지원 여부 | — | **미확인** | MISSING |
++
++### 1.2 웹케시 브랜치 / CODEF / 하이픈(설정 기반)
++
++| 표준 필드 | 원천 필드 | 비고 | 근거 |
++|---|---|---|---|
++| 법인/계좌/통화, 거래 ID, 거래일시, 입출금액, 거래후잔액, 적요, 기준일 잔액 | 전부 미확인 | `verify/sources/bank-aggregator.ts` 의 `AggregatorColumnConfig` 에 실제 컬럼명을 넣으면 매핑이 동작한다. 자리표시자 컬럼(`acct_no`, `ccy`, `tr_date`, `tr_time`, `in_amt`, `out_amt`, `bal_after`, `memo`)은 원천 명세가 아니다 | ASSUMED |
++| 과거 조회 기간, 갱신 지연, 호출 제한, 요금 | — | 영업 문의 필요 | ASSUMED |
++
++## 2. 소비자 매출 → sales_events
++
++### 2.1 사방넷(자리표시자, 전부 ASSUMED)
++
++| 표준 필드(§4·§5) | 원천 필드(자리표시자) | 변환·규칙 | 누락 여부 |
++|---|---|---|---|
++| 법인 | 사방넷 계정(연동키) | 계정→법인 매핑. 한 계정에 두 법인 몰이 섞이면 몰 ID 별 매핑 | 미확인 |
++| 채널 | `mall_id` | 몰 코드→channels | 미확인 |
++| 주문/항목 ID | `mall_order_id` / `order_line_id` | 행 단위 고유키가 사방넷 주문번호인지 몰 주문번호인지 확인 필요 | 미확인 |
++| 결제 완료 일시 | `pay_date` | **결제 완료 일시 제공 여부가 핵심.** 주문일만 제공되면 계획서 기준(결제 완료)과 불일치 → 차이 명시 필요 | 미확인 |
++| 이벤트 유형 | `order_status` | 결제완료→PAID, 취소/부분취소→CANCELLED, 환불→REFUNDED, 구매확정→이벤트 생성 안 함(IGNORE) | 상태코드표 미확인 |
++| 금액·할인·세금 | `pay_amount` | 공급가/세포함, 할인·배송비 포함 여부 미확인 → `amountBasis=UNKNOWN` | 미확인 |
++| 상품 코드 | `product_code` | 사방넷 코드 vs 몰 코드 확인. 미매핑은 원본 보존 | 미확인 |
++| 부분취소/분할환불 | — | 별도 행인지 원행 상태 변경인지 확인. 후자면 관측 버전 비교로 이벤트 생성 | 미확인 |
++| 변경 조회 | — | 수정일 파라미터 없으면 최근 7일 전체 재조회 | 미확인 |
++
++### 2.2 카페24 Admin API(orders)
++
++| 표준 필드 | 원천 필드 | 변환·규칙 | 근거 |
++|---|---|---|---|
++| 채널 | 상수 `OWNMALL_CAFE24` | — | CONFIRMED |
++| 주문/항목 ID | `order_id` / `items[].order_item_code` | 원문 확인 필요 | ASSUMED |
++| 결제 완료 일시 | `payment_date`(`paid=T`) | ISO 8601. 입금전(`paid=F`) 제외 | ASSUMED(날짜 형식만 SNIPPET) |
++| 취소/환불 | `canceled`, `items[].order_status` | 상태 코드 체계·환불 확정일 필드 원문 확인 필요. 확인 전 취소일을 임의 대체하지 않음(`UNKNOWN`) | ASSUMED |
++| 금액 | `items[].product_price × quantity` − 할인 | 공급가/세포함·할인·배송비 필드 원문 확인 필요 | ASSUMED |
++| 상품 코드 | `items[].product_code` | — | ASSUMED |
++| 인증·갱신 | OAuth2 액세스 2h / 리프레시 2주 | 갱신 스케줄 필수 | SNIPPET |
++| 호출 제한 | Leaky Bucket, `x-ratelimit-remaining` | 버킷 크기 원문 확인 | SNIPPET |
++
++## 3. 납품 매출(엑셀) → sales_events(saleType=DELIVERY)
++
++| 표준 필드 | 가정 컬럼 | 규칙 | 근거 |
++|---|---|---|---|
++| 법인 | `법인` | 명시적 매핑, 미매핑은 UNMAPPED | ASSUMED |
++| 거래처(채널) | `거래처` | 거래처 외부 코드→counterparties | ASSUMED |
++| 출고번호·행 | `출고번호`, `행번호` | 고유키 (법인, 출고번호, 행번호, 반품여부). 출고번호 없으면 파일/시트/행 식별 + 중복 후보 검토 | ASSUMED |
++| 출고일 | `출고일` | 이벤트 일자 | ASSUMED |
++| 상품·수량 | `상품코드`, `수량` | — | ASSUMED |
++| 금액·세금 | `공급가액`, `세액` | `amountBasis=SUPPLY`. 세액 0 행(면세·수출)은 1.1 나누기 금지 | ASSUMED |
++| 반품 | `반품여부`, `반품일` | 반품일에 원출고 행에 연결된 음수 이벤트. 기록 방식(별도 행/음수/원행 수정) 미확인 | ASSUMED |
++| 수정 감지 | 행 해시 | 최신 파일에 없는 키 = 삭제 후보 | ASSUMED |
++| 갱신 주기 | — | 10시 전 전일분 확보 가능성 미확인 | MISSING |
++
++## 4. 광고 → ad_daily_spend / ad_balances
++
++| 표준 필드 | 메타 | 구글 | 네이버 | 쿠팡 | 틱톡 |
++|---|---|---|---|---|---|
++| 광고 계정 | `account_id` (SNIPPET) | `customer.id` (SNIPPET) | `X-Customer` customerId (SNIPPET) | 미확인 (MISSING) | `advertiser_id` (SNIPPET) |
++| 날짜 | `date_start`(=`date_stop`, `time_increment=1`) (SNIPPET) | `segments.date` (SNIPPET) | `timeRange`+`timeIncrement=1` / StatReport `statDt` (SNIPPET) | — | `stat_time_day` (SNIPPET) |
++| 시간대 | 계정 시간대(보존, KST 이동 금지) | `customer.time_zone` (SNIPPET) | KST | KST | `advertiser/info` timezone (ASSUMED) |
++| 통화 | `account_currency` (SNIPPET) | `customer.currency_code` (SNIPPET) | KRW (CONFIRMED) | KRW | `advertiser/info` currency (ASSUMED) |
++| 소진액 | `spend` 문자열 소수 (SNIPPET) | `metrics.cost_micros` ÷ 1e6, BigInt 변환 (SNIPPET) | `salesAmt` (SNIPPET) | — | `spend` (SNIPPET) |
++| 세금 기준 | UNKNOWN (ASSUMED) | UNKNOWN (ASSUMED) | UNKNOWN (ASSUMED) | — | UNKNOWN (ASSUMED) |
++| 잔액 | 미확인 (MISSING) | 미확인 (MISSING) | `GET /billing/bizmoney` 응답 필드 원문 확인 (SNIPPET) | 미확인 (MISSING) | `advertiser/balance/get` 필드 원문 확인 (SNIPPET) |
++| 원천 버전(대체 규칙) | 수집 실행 ID. (계정, 일자) 재수집은 대체 | 동일 | 동일 | — | 동일 |
++
++## 5. 회계(위하고) → accounting_imports / accounting_lines
++
++| 표준 필드 | 원천 | 규칙 | 근거 |
++|---|---|---|---|
++| 공식 읽기 경로·자격 | 미확인 | 더존 확인 | MISSING |
++| 법인/회계기간 | 회사코드/기간 컬럼(가정) | — | ASSUMED |
++| 계정/금액 | 계정코드/차·대 금액(가정) | — | ASSUMED |
++| 전표/행 ID | 전표번호/행번호 | 제공 시 함께 수집. 요약만 제공되면 없음 | ASSUMED |
++| 자료 형태 | 사용자 지정 MONTHLY/CUMULATIVE | 누적은 동일 기준 전월 누적이 있을 때만 차감. 없으면 전환 불가 목록(임의 산출 금지) | ASSUMED |
++| 원천 최신성 | 월 단위 전표 정리 | 수집 시각과 자료 기준일 분리 표시 | CONFIRMED(사용자 확인) |
++
++## 6. 환율 → fx_rates
++
++| 표준 필드 | 수출입은행 | ECOS |
++|---|---|---|
++| 통화 | `cur_unit`(USD. JPY(100) 등 100 단위 통화 정규화 필요) (SNIPPET) | 항목 0000001 = 원/미국달러 (SNIPPET) |
++| 기준일 | 요청 `searchdate` 보존 (SNIPPET) | `TIME` YYYYMMDD (SNIPPET) |
++| 환율 종류 | `KOREAEXIM_DEAL_BAS_R`(`ttb`/`tts` 별도) (CONFIRMED 상수) | `ECOS_731Y001_0000001` (CONFIRMED 상수) |
++| 값 | `deal_bas_r` 콤마 제거 후 십진수 (SNIPPET) | `DATA_VALUE`(필드명 원문 확인) (ASSUMED) |
++| 휴일 | 빈 결과 → 이전 영업일 대체 + `appliedForDate` 표시. 없으면 오류(0 대체 금지) (SNIPPET) | 동일 규칙 적용 예정 |
++| 출처·수집일 | 상수·실행 시각 | 동일 |
++
++## 7. 계획서 요구와 원천 제공의 차이(매핑표 차원에서 확인된 것)
++
++| 계획서 요구 | 원천 상황 | 처리(설계 담당자 확정 대상) |
++|---|---|---|
++| 은행 거래 ID | 오픈뱅킹은 거래별 ID 없음 | 대체키 + 거래후잔액 순서로 구분(§5 "ID 가 없으면 파일/원천 행 식별" 규칙 적용) |
++| 기준일(전일) 잔액 | 오픈뱅킹 잔액조회는 조회 시점 잔액 | 전일 마지막 거래후잔액으로 유도하고 조회 시점 잔액과 함께 대조 |
++| 결제 완료 일시 | 사방넷·카페24 모두 필드 미확인 | 실제 응답 확보 후 확정. 주문일만 있으면 차이 명시 |
++| 부분취소·분할환불 이벤트 | 사방넷·카페24 취소 확정일 필드 미확인 | 확인 전 임의 날짜 대체 금지(UNKNOWN) |
++| 광고 세금 기준 | 5개 플랫폼 모두 미확인 | UNKNOWN 으로 저장, 확정 표시 금지 |
++| 광고 잔액 | 네이버·틱톡만 조회 경로 존재 확인, 메타·구글·쿠팡 미확인 | 미확인 잔액은 누락 표시(§6) |
++| 위하고 전표·행 ID | 읽기 경로 자체 미확인 | 제공 시 수집 |
+diff --git a/fin/FIN-01/README.md b/fin/FIN-01/README.md
+new file mode 100644
+index 0000000..c2330db
+--- /dev/null
++++ b/fin/FIN-01/README.md
+@@ -0,0 +1,58 @@
++# FIN-01 자동 수집 연동 검증
++
++기준 문서: `FIN_개발계획_v1.0.md`(2026-09-14) §4·§5·§10·§13·§14.
++이 폴더는 FIN-01 검증 전용이며 기존 SCM/WMS 코드(`src/`, `prisma/`)를 변경하지 않는다.
++
++## 제출물
++
++| 파일 | 내용 |
++|---|---|
++| `FIN-01_연동검증표.md` | 출처별 검증 상태·공식 근거·이용 가능 여부·필드·제한·인증·비용·다음 조치 |
++| `FIN-01_필드매핑표.md` | 계획서 §4 필수 필드 ↔ 원천 필드 대응, 변환, 누락, 근거 수준 |
++| `FIN-01_실행결과.md` | 실행 시각·대상 기간·계정 별칭·건수/금액 대조·재조회·오류·재현 방법 |
++| `FIN-01_검토요청.md` | 확인 완료/미검증/미충족/선택 필요/사용자 조치/FIN-02 착수 가능 여부 |
++| `verify/` | 검증 코드(TypeScript, 저장소 tsconfig·eslint·prettier 통과) |
++| `samples/` | 비식별 **가상** 샘플(`_meta.synthetic: true`). 실제 원천 응답 아님 |
++| `results/` | 실행 결과 JSON(가상 데이터 검증 `fixture-run.json`, 실제 호출 시도 `live-run*.json`) |
++| `fin01.env.example` | 실제 호출용 환경변수 이름 예시(값 없음) |
++
++## 실행
++
++```bash
++pnpm install --frozen-lockfile
++
++# 1) 가상 샘플 검증(자격·네트워크 불필요). 결과: results/fixture-run.json
++pnpm tsx fin/FIN-01/verify/run.ts
++
++# 2) 실제 호출 시도(환경변수 필요). 결과: results/live-run.json
++cp fin/FIN-01/fin01.env.example .env.fin01   # .env* 는 .gitignore 대상
++#   .env.fin01 에 값 입력 후
++set -a && . ./.env.fin01 && set +a
++pnpm tsx fin/FIN-01/verify/run.ts --live all --date 2026-09-12
++pnpm tsx fin/FIN-01/verify/run.ts --live fx-exim --date 2026-09-12
++```
++
++종료 코드: 가상 검증 실패 시 1, 실제 호출 중 OK 가 아닌 소스가 있으면 2.
++
++## 규칙
++
++- 비밀값·개인정보를 저장소에 넣지 않는다. 실제 호출 결과도 본문을 저장하지 않고 상태·건수·해시만 남긴다.
++- 가상 데이터 검증은 항상 `synthetic: true` 로 표시되며 실제 연동 성공을 뜻하지 않는다.
++- 필드매핑의 근거 수준: `CONFIRMED`(원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `MISSING`(원천 미제공).
++- 금액은 문자열 + BigInt 고정 스케일로만 연산한다(`verify/decimal.ts`). 부동소수점 사용 금지.
++
++## 구조
++
++```
++verify/
++  decimal.ts      정밀 십진수(문자열·BigInt)
++  types.ts        계획서 §5 표준 레코드(검증용 최소 필드)
++  mapping.ts      원천→표준 매핑 명세·payload 해시·원천키
++  dedupe.ts       source_records 재수집 무중복·관측 버전
++  reconcile.ts    건수·금액 대조, 검증 항목 결과
++  time.ts         원천 시간대→UTC, 영업일 보조
++  samples.ts      가상 샘플 로더(synthetic 강제)
++  sources/        출처별 매핑 명세 + 가상 샘플 검증
++  live/           실제 호출 시도(자격 없으면 BLOCKED 로 기록)
++  run.ts          실행기
++```
+diff --git a/fin/FIN-01/fin01.env.example b/fin/FIN-01/fin01.env.example
+new file mode 100644
+index 0000000..33f66d1
+--- /dev/null
++++ b/fin/FIN-01/fin01.env.example
+@@ -0,0 +1,31 @@
++# FIN-01 실제 호출(--live) 용 환경변수 예시.
++# 실제 값은 이 저장소에 넣지 말고 서버 비밀 저장소 또는 로컬 .env.fin01(.gitignore 대상)에 둔다.
++#   cp fin/FIN-01/fin01.env.example .env.fin01 && set -a && . ./.env.fin01 && set +a
++# 비밀번호·토큰을 대화나 이슈에 붙여 넣지 않는다.
++
++# 환율 — 한국수출입은행 Open API (https://www.koreaexim.go.kr/ir/HPHKIR020M01 에서 인증키 발급)
++FIN01_KOREAEXIM_AUTHKEY=
++# 환율 — 한국은행 ECOS (https://ecos.bok.or.kr/api/ 에서 인증키 발급)
++FIN01_ECOS_API_KEY=
++
++# 은행 — 금융결제원 오픈뱅킹 (이용기관 등록·계좌등록 후 발급되는 Access Token 과 핀테크이용번호)
++FIN01_KFTC_BASE_URL=https://testapi.openbanking.or.kr
++FIN01_KFTC_ACCESS_TOKEN=
++FIN01_KFTC_FINTECH_USE_NUM=
++
++# 광고 — 메타 (System User 토큰, 광고 계정 ID 는 act_ 접두사 포함)
++FIN01_META_ACCESS_TOKEN=
++FIN01_META_AD_ACCOUNT_ID=act_
++
++# 광고 — 틱톡 Marketing API
++FIN01_TIKTOK_ACCESS_TOKEN=
++FIN01_TIKTOK_ADVERTISER_ID=
++
++# 광고 — 네이버 검색광고 (광고플랫폼 > 도구 > API 사용관리)
++FIN01_NAVER_API_KEY=
++FIN01_NAVER_SECRET_KEY=
++FIN01_NAVER_CUSTOMER_ID=
++
++# 자사몰 — 카페24 Admin API (OAuth Access Token, 2시간 유효)
++FIN01_CAFE24_MALL_ID=
++FIN01_CAFE24_ACCESS_TOKEN=
+diff --git a/fin/FIN-01/results/fixture-run.json b/fin/FIN-01/results/fixture-run.json
+new file mode 100644
+index 0000000..1f8f299
+--- /dev/null
++++ b/fin/FIN-01/results/fixture-run.json
+@@ -0,0 +1,724 @@
++{
++  "mode": "fixtures",
++  "synthetic": true,
++  "note": "가상 데이터 검증. 실제 연동 성공을 의미하지 않음(실제 수집 미검증).",
++  "startedAtUtc": "2026-09-14T10:49:59.126Z",
++  "finishedAtUtc": "2026-09-14T10:49:59.159Z",
++  "totalChecks": 49,
++  "failed": 0,
++  "suites": [
++    {
++      "name": "bank-kftc-openbanking",
++      "checks": [
++        {
++          "id": "BANK-KFTC-01",
++          "title": "페이지네이션: 마지막 페이지 next_page_yn=N, page_record_cnt 와 실제 건수 일치",
++          "passed": true,
++          "detail": "페이지 2개, 건수 5",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-02",
++          "title": "원본↔정규화 건수·순금액 일치",
++          "passed": true,
++          "detail": "원본 5건 430000 / 정규화 5건 430000",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-03",
++          "title": "같은 날짜·금액·적요 정상 거래 2건 보존(원천키 분리)",
++          "passed": true,
++          "detail": "고유키 5 / 거래 5",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-04",
++          "title": "동일 응답 재수집 시 무중복, 정정 응답은 관측 버전 추가",
++          "passed": true,
++          "detail": "1차 insert 5, 2차 unchanged 5, 3차 versioned 1, 저장 5",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-05",
++          "title": "기초잔액 + 누적 입출금 = 마지막 거래 후 잔액(대조, 차이는 조정 거래로 메우지 않음)",
++          "passed": true,
++          "detail": "계산 1430000 / 원천 1430000",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-06",
++          "title": "잔액 종류를 AT_INQUIRY 로 표시(전일 마감 잔액과 구분)",
++          "passed": true,
++          "detail": "DP-KB-001 1430000 (AT_INQUIRY)",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-07",
++          "title": "원천 시간대(Asia/Seoul) 시각과 UTC 를 함께 보존",
++          "passed": true,
++          "detail": "2026-09-12T09:15:00 Asia/Seoul → 2026-09-12T00:15:00.000Z",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-KFTC-08",
++          "title": "필드매핑 근거 현황(CONFIRMED 0 이면 실제 수집 미검증)",
++          "passed": true,
++          "detail": "confirmed 0 / snippet 8 / assumed 0 / missing 2",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "bank-aggregator",
++      "checks": [
++        {
++          "id": "BANK-AGG-01",
++          "title": "설정 기반 컬럼 매핑으로 건수·순금액 대조(자리표시자 컬럼명)",
++          "passed": true,
++          "detail": "원본 4건 221050.5 / 정규화 4건 221050.5",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-AGG-02",
++          "title": "USD 계좌 거래는 원통화 금액을 보존하고 환산하지 않음",
++          "passed": true,
++          "detail": "USD 거래 2건: 1250.50, 200.00",
++          "synthetic": true
++        },
++        {
++          "id": "BANK-AGG-03",
++          "title": "실제 응답 필드명 미확인 → 실제 수집 미검증(ASSUMED 만 존재)",
++          "passed": true,
++          "detail": "mappings 7개 전부 ASSUMED",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "sales-sabangnet",
++      "checks": [
++        {
++          "id": "SALES-SBN-01",
++          "title": "결제완료 행 건수·금액 대조(구매확정 상태는 이벤트 생성 안 함)",
++          "passed": true,
++          "detail": "원본 4건 179000 / 정규화 4건 179000",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-SBN-02",
++          "title": "부분취소·환불은 고유 이벤트로 원거래(PAID)에 연결되고 음수로 차감",
++          "passed": true,
++          "detail": "취소/환불 1건, 순매출 160000",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-SBN-03",
++          "title": "같은 기간 재수집 시 무중복",
++          "passed": true,
++          "detail": "1차 6 / 2차 unchanged 6",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-SBN-04",
++          "title": "사방넷 미포괄 채널 명단(전체 채널 목록 미확보 시 판정 보류)",
++          "passed": true,
++          "detail": "회사 전체 채널 목록 미확보 → 포괄 범위 판정 보류(주요 6개 채널만 가정 점검)",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-SBN-05",
++          "title": "사방넷·직접 API 중복 주문 탐지(채널별 담당 원천 지정 전에는 합산 금지)",
++          "passed": true,
++          "detail": "중복 후보 2건: OWNMALL_CAFE24/SYN-OM-20260912-0001, COUPANG/SYN-CP-90001",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-SBN-06",
++          "title": "필드명·상태코드 전부 ASSUMED → 실제 수집 미검증",
++          "passed": true,
++          "detail": "mappings 10개 ASSUMED",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "sales-cafe24",
++      "checks": [
++        {
++          "id": "SALES-C24-01",
++          "title": "결제완료(paid=T, payment_date 존재) 품목만 PAID 이벤트, 입금전 주문 제외",
++          "passed": true,
++          "detail": "PAID 3건 122000, 입금전 제외 1건",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-C24-02",
++          "title": "취소 품목은 원거래에 연결된 음수 이벤트. 취소 확정일 필드 미확인 → 날짜 UNKNOWN 표시(임의 날짜 금지)",
++          "passed": true,
++          "detail": "취소 1건",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-C24-03",
++          "title": "같은 기간 재수집 무중복",
++          "passed": true,
++          "detail": "1차 4 / 2차 unchanged 4",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-C24-04",
++          "title": "사방넷과 중복되는 자사몰 주문 탐지(자사몰 담당 원천을 하나로 고정해야 함)",
++          "passed": true,
++          "detail": "중복 후보 1건: SYN-OM-20260912-0001",
++          "synthetic": true
++        },
++        {
++          "id": "SALES-C24-05",
++          "title": "주문 필드명 ASSUMED, 인증·제한만 SNIPPET → 실제 수집 미검증",
++          "passed": true,
++          "detail": "",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "delivery-excel",
++      "checks": [
++        {
++          "id": "DLV-01",
++          "title": "필수 컬럼 존재(법인·거래처·출고번호·행·출고일·상품·수량·공급가액·세액·반품)",
++          "passed": true,
++          "detail": "법인, 거래처, 출고번호, 행번호, 출고일, 상품코드, 수량, 공급가액, 세액, 반품여부, 반품일",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-02",
++          "title": "(법인, 출고번호, 행번호, 반품여부) 고유키 중복 없음",
++          "passed": true,
++          "detail": "행 4, 고유 4",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-03",
++          "title": "출고 행 건수·공급가액 대조",
++          "passed": true,
++          "detail": "원본 3건 8300000 / 정규화 3건 8300000",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-04",
++          "title": "반품은 확인된 반품일에 원출고 행에 연결된 음수 이벤트",
++          "passed": true,
++          "detail": "반품 1건, 순매출 8100000",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-05",
++          "title": "행 해시로 수정 감지(금액 수정 시 해시 변경)",
++          "passed": true,
++          "detail": "원본 66b9640e8091b1f3 ≠ 수정 665872bb9515ad41",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-06",
++          "title": "납품 거래가 주문 시스템에도 존재하는 경우 탐지(채널/거래 유형별 담당 원천 지정 필요)",
++          "passed": true,
++          "detail": "중복 후보 1건",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-07",
++          "title": "세액 0 행(면세·수출)은 1.1 나누기 없이 원천 구분 유지",
++          "passed": true,
++          "detail": "세액 0 행 1건",
++          "synthetic": true
++        },
++        {
++          "id": "DLV-08",
++          "title": "실제 파일·공유 위치 미제공 → 접근 대기(실제 수집 미검증)",
++          "passed": true,
++          "detail": "사용자 조치 필요: 샘플 파일, 공유 위치, 반품·수정 기록 방식",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "ads",
++      "checks": [
++        {
++          "id": "ADS-META-01",
++          "title": "(계정,일자) 재수집은 대체. 소급 수정 후 합계 = 최신 응답 합계(누적 합산 금지)",
++          "passed": true,
++          "detail": "1차 349.65 → 재수집 349.35 (최신 응답 349.35)",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-META-02",
++          "title": "계정 시간대(America/Los_Angeles) 일자를 KST 로 이동하지 않고 sourceTz 보존",
++          "passed": true,
++          "detail": "tz=America/Los_Angeles, rows=3",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-GOOG-01",
++          "title": "cost_micros ÷ 1e6 십진수 변환(부동소수점 미사용) 및 합계 대조",
++          "passed": true,
++          "detail": "합계 252750 KRW",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-NAVER-01",
++          "title": "소진액(salesAmt)과 비즈머니 잔액을 별도 레코드로 보존(잔액을 비용으로 쓰지 않음)",
++          "passed": true,
++          "detail": "소진 395000 / 잔액 1250000",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-TT-01",
++          "title": "일별 분해 조회 30일 제한(제3자 요약) 초과 요청은 분할해야 함",
++          "passed": true,
++          "detail": "요청 90일 → 3회 분할 필요",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-TT-02",
++          "title": "stat_time_day → date, 통화·시간대 보존",
++          "passed": true,
++          "detail": "rows=2 USD Asia/Seoul",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-CPNG-01",
++          "title": "쿠팡 광고 소진액 공식 API 미확인 → 접근 대기(엑셀 보조 경로 후보). 자동 수집 가능으로 표시하지 않음",
++          "passed": true,
++          "detail": "광고센터 리포트 엑셀 다운로드만 확인",
++          "synthetic": true
++        },
++        {
++          "id": "ADS-ALL-01",
++          "title": "광고 5개 경로 모두 실제 호출 미실행(자격·네트워크 없음) → 실제 수집 미검증",
++          "passed": true,
++          "detail": "ADS_META, ADS_GOOGLE, ADS_NAVER, ADS_COUPANG, ADS_TIKTOK",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "accounting-wehago",
++      "checks": [
++        {
++          "id": "ACC-WHG-01",
++          "title": "누적 자료는 동일 기준 전월 누적과 차감해 월간 전환(§12-12)",
++          "passed": true,
++          "detail": "8월 401 = 3000000",
++          "synthetic": true
++        },
++        {
++          "id": "ACC-WHG-02",
++          "title": "전월 누적이 없는 행(7월 401)은 임의 산출하지 않고 전환 불가 목록으로 남김",
++          "passed": true,
++          "detail": "전월 누적 없음: DISTROVA 401 2026-07 (필요: 2026-06)",
++          "synthetic": true
++        },
++        {
++          "id": "ACC-WHG-03",
++          "title": "월간 자료는 차감하지 않음",
++          "passed": true,
++          "detail": "450000",
++          "synthetic": true
++        },
++        {
++          "id": "ACC-WHG-04",
++          "title": "공식 읽기 경로·자격 미확인 → 접근 대기(실제 수집 미검증)",
++          "passed": true,
++          "detail": "더존 담당자 확인 필요",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "fx",
++      "checks": [
++        {
++          "id": "FX-01",
++          "title": "콤마 포함 문자열 → 십진수 문자열(부동소수점 미사용)",
++          "passed": true,
++          "detail": "2026-09-10:1333.40, 2026-09-11:1335.10",
++          "synthetic": true
++        },
++        {
++          "id": "FX-02",
++          "title": "비영업일(토요일) 응답이 비어 있으면 이전 영업일 환율 적용 + 적용일 표시",
++          "passed": true,
++          "detail": "2026-09-12 → 2026-09-11 1335.10",
++          "synthetic": true
++        },
++        {
++          "id": "FX-03",
++          "title": "환율이 없으면 0 으로 대체하지 않고 오류",
++          "passed": true,
++          "detail": "환율 없음: 2026-08-01 기준 3일 내 자료 없음(0 대체 금지)",
++          "synthetic": true
++        },
++        {
++          "id": "FX-04",
++          "title": "실제 호출 미실행(인증키·네트워크 없음) → 실제 수집 미검증",
++          "passed": true,
++          "detail": "FX_KOREAEXIM, FX_ECOS",
++          "synthetic": true
++        }
++      ]
++    },
++    {
++      "name": "cross-source",
++      "checks": [
++        {
++          "id": "X-01",
++          "title": "정산 입금은 은행 거래로만 보존(분류 SETTLEMENT_RECEIPT), 매출에 합산하지 않음",
++          "passed": true,
++          "detail": "매출 180000 / 정산입금 650000 / 합산 시 830000 (금지)",
++          "synthetic": true
++        },
++        {
++          "id": "X-02",
++          "title": "선불 광고 충전 100, 소진 60: 은행 -100, 광고 잔액 +40, 손익 비용 60(§12-5)",
++          "passed": true,
++          "detail": "현금 유출 100, 비용 60, 잔액 40",
++          "synthetic": true
++        },
++        {
++          "id": "X-03",
++          "title": "채널별 담당 원천만 집계, 비담당·미지정은 제외 목록",
++          "passed": true,
++          "detail": "집계 2363000, 제외: COUPANG/DIRECT_API(비담당 원천); OWNMALL_CAFE24/DIRECT_API(비담당 원천); OLIVEYOUNG(담당 원천 미지정)",
++          "synthetic": true
++        }
++      ]
++    }
++  ],
++  "mappingSummary": [
++    {
++      "sourceSystem": "BANK_KFTC_OPENBANKING",
++      "displayName": "금융결제원 오픈뱅킹(거래내역조회·잔액조회)",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 8,
++        "assumed": 0,
++        "missing": 2,
++        "total": 10
++      },
++      "docs": [
++        {
++          "url": "https://developers.kftc.or.kr/dev/openapi/open-banking/transaction",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developers.kftc.or.kr/dev/openapi/open-banking/balance",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://openapi.kftc.or.kr/",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "BANK_AGGREGATOR",
++      "displayName": "법인 다은행 조회 중계(웹케시 브랜치 / CODEF / 하이픈)",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 0,
++        "assumed": 7,
++        "missing": 0,
++        "total": 7
++      },
++      "docs": [
++        {
++          "url": "https://www.xbranch.co.kr/branch/html/branch4_2000.html",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developer.codef.io/products/bank/common/b/transaction",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developer.codef.io/products/bank/common/b/fastAccount",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://hyphen.im/product/view?seq=54",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "SALES_SABANGNET",
++      "displayName": "사방넷 주문 API",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 0,
++        "assumed": 10,
++        "missing": 0,
++        "total": 10
++      },
++      "docs": [
++        {
++          "url": "https://www.sabangnet.co.kr/service-intro/api-service",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://www.sabangnet.co.kr/html/function_intro_mall_list.html",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        },
++        {
++          "url": "https://oliveyoung.tech/2023-12-15/seller-service-1/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "SALES_CAFE24",
++      "displayName": "카페24 Admin API(orders)",
++      "coverage": {
++        "confirmed": 1,
++        "snippet": 2,
++        "assumed": 7,
++        "missing": 0,
++        "total": 10
++      },
++      "docs": [
++        {
++          "url": "https://developers.cafe24.com/docs/api/admin/",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        },
++        {
++          "url": "https://developers.cafe24.com/en/app/front/app/develop/oauth/retoken",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developers.cafe24.com/en/app/front/app/develop/api/adminapi",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "DELIVERY_EXCEL",
++      "displayName": "납품 엑셀(공유 폴더)",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 0,
++        "assumed": 8,
++        "missing": 1,
++        "total": 9
++      },
++      "docs": []
++    },
++    {
++      "sourceSystem": "ADS_META",
++      "displayName": "메타 Marketing API Insights",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 7,
++        "assumed": 1,
++        "missing": 1,
++        "total": 9
++      },
++      "docs": [
++        {
++          "url": "https://developers.facebook.com/docs/marketing-api/insights/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developers.facebook.com/docs/marketing-api/insights/best-practices/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developers.meta.com/blog/updates-to-ads-management-standard-access-feature/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "ADS_GOOGLE",
++      "displayName": "구글 Ads API(GAQL)",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 6,
++        "assumed": 1,
++        "missing": 1,
++        "total": 8
++      },
++      "docs": [
++        {
++          "url": "https://developers.google.com/google-ads/api/docs/get-started/onboarding",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://ads-developers.googleblog.com/2026/02/an-update-on-google-ads-api-developer.html",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://ads-developers.googleblog.com/2026/07/passkey-authentication-requirement-for.html",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "ADS_NAVER",
++      "displayName": "네이버 검색광고 API(Stats / Bizmoney)",
++      "coverage": {
++        "confirmed": 1,
++        "snippet": 6,
++        "assumed": 1,
++        "missing": 0,
++        "total": 8
++      },
++      "docs": [
++        {
++          "url": "https://naver.github.io/searchad-apidoc/",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        },
++        {
++          "url": "https://github.com/naver/searchad-apidoc",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "http://naver.github.io/searchad-apidoc/notice/2021/03/09/notice1/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "ADS_COUPANG",
++      "displayName": "쿠팡 광고(Coupang Ads) 소진액",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 1,
++        "assumed": 0,
++        "missing": 2,
++        "total": 3
++      },
++      "docs": [
++        {
++          "url": "https://ads.coupang.com/AaaAna.html",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://developers.coupang.com/ko/api",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "ADS_TIKTOK",
++      "displayName": "틱톡 Marketing API(report/integrated/get, advertiser/balance/get)",
++      "coverage": {
++        "confirmed": 0,
++        "snippet": 4,
++        "assumed": 3,
++        "missing": 0,
++        "total": 7
++      },
++      "docs": [
++        {
++          "url": "https://business-api.tiktok.com/portal/docs",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        },
++        {
++          "url": "https://github.com/tiktok/tiktok-business-api-sdk",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "ACCOUNTING_WEHAGO",
++      "displayName": "위하고 회계 읽기 경로",
++      "coverage": {
++        "confirmed": 1,
++        "snippet": 0,
++        "assumed": 4,
++        "missing": 1,
++        "total": 6
++      },
++      "docs": [
++        {
++          "url": "https://www.wehago.com/",
++          "checkedOn": "2026-09-14",
++          "access": "BLOCKED"
++        },
++        {
++          "url": "https://www.douzoneon.com/s1/down/wehago_leaflet.pdf",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "FX_KOREAEXIM",
++      "displayName": "한국수출입은행 환율 Open API",
++      "coverage": {
++        "confirmed": 1,
++        "snippet": 5,
++        "assumed": 0,
++        "missing": 0,
++        "total": 6
++      },
++      "docs": [
++        {
++          "url": "https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        },
++        {
++          "url": "https://www.data.go.kr/data/3068846/openapi.do",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    },
++    {
++      "sourceSystem": "FX_ECOS",
++      "displayName": "한국은행 ECOS Open API(731Y001)",
++      "coverage": {
++        "confirmed": 1,
++        "snippet": 3,
++        "assumed": 1,
++        "missing": 0,
++        "total": 5
++      },
++      "docs": [
++        {
++          "url": "https://ecos.bok.or.kr/api/",
++          "checkedOn": "2026-09-14",
++          "access": "SEARCH_SNIPPET"
++        }
++      ]
++    }
++  ]
++}
+diff --git a/fin/FIN-01/results/live-run-network-probe.json b/fin/FIN-01/results/live-run-network-probe.json
+new file mode 100644
+index 0000000..08e5dd5
+--- /dev/null
++++ b/fin/FIN-01/results/live-run-network-probe.json
+@@ -0,0 +1,16 @@
++{
++  "mode": "live",
++  "targetDate": "2026-09-12",
++  "startedAtUtc": "2026-09-14T10:45:53.090Z",
++  "finishedAtUtc": "2026-09-14T10:45:53.774Z",
++  "results": [
++    {
++      "source": "fx-exim",
++      "status": "BLOCKED_NETWORK",
++      "startedAtUtc": "2026-09-14T10:45:53.090Z",
++      "finishedAtUtc": "2026-09-14T10:45:53.774Z",
++      "summary": "https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON → HTTP 403 (egress proxy: host_not_allowed), bytes 107, sha256:c08fa417dfc6533d, items -1",
++      "verified": false
++    }
++  ]
++}
+diff --git a/fin/FIN-01/results/live-run.json b/fin/FIN-01/results/live-run.json
+new file mode 100644
+index 0000000..fb428f2
+--- /dev/null
++++ b/fin/FIN-01/results/live-run.json
+@@ -0,0 +1,64 @@
++{
++  "mode": "live",
++  "targetDate": "2026-09-12",
++  "startedAtUtc": "2026-09-14T10:45:54.616Z",
++  "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++  "results": [
++    {
++      "source": "fx-exim",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_KOREAEXIM_AUTHKEY → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "fx-ecos",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_ECOS_API_KEY → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "bank-kftc",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_KFTC_ACCESS_TOKEN, FIN01_KFTC_FINTECH_USE_NUM, FIN01_KFTC_BASE_URL → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "ads-meta",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_META_ACCESS_TOKEN, FIN01_META_AD_ACCOUNT_ID → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "ads-tiktok",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_TIKTOK_ACCESS_TOKEN, FIN01_TIKTOK_ADVERTISER_ID → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "ads-naver",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_NAVER_API_KEY, FIN01_NAVER_SECRET_KEY, FIN01_NAVER_CUSTOMER_ID → 실제 수집 미검증",
++      "verified": false
++    },
++    {
++      "source": "sales-cafe24",
++      "status": "BLOCKED_NO_CREDENTIALS",
++      "startedAtUtc": "2026-09-14T10:45:54.616Z",
++      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
++      "summary": "환경변수 미설정: FIN01_CAFE24_MALL_ID, FIN01_CAFE24_ACCESS_TOKEN → 실제 수집 미검증",
++      "verified": false
++    }
++  ]
++}
+diff --git a/fin/FIN-01/samples/accounting-wehago-placeholder.json b/fin/FIN-01/samples/accounting-wehago-placeholder.json
+new file mode 100644
+index 0000000..f6f8b67
+--- /dev/null
++++ b/fin/FIN-01/samples/accounting-wehago-placeholder.json
+@@ -0,0 +1,30 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 위하고 읽기 경로 미확인 상태에서 월간/누적 전환 규칙만 검증하는 값. 실제 회계 자료 아님.",
++    "modeledOn": "계획서 §7 월 마감 흐름, §12-12"
++  },
++  "data": {
++    "legalEntity": "DISTROVA",
++    "lines": [
++      {
++        "fiscalPeriod": "2026-07",
++        "accountCode": "401",
++        "amount": "7500000",
++        "dataShape": "CUMULATIVE"
++      },
++      {
++        "fiscalPeriod": "2026-08",
++        "accountCode": "401",
++        "amount": "10500000",
++        "dataShape": "CUMULATIVE"
++      },
++      {
++        "fiscalPeriod": "2026-08",
++        "accountCode": "501",
++        "amount": "450000",
++        "dataShape": "MONTHLY"
++      }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/samples/ads-placeholder.json b/fin/FIN-01/samples/ads-placeholder.json
+new file mode 100644
+index 0000000..dc8624f
+--- /dev/null
++++ b/fin/FIN-01/samples/ads-placeholder.json
+@@ -0,0 +1,52 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 메타·구글·네이버·틱톡 응답의 대표 필드명을 검색 발췌 기준으로 본뜬 검증용 값. 실제 계정·금액 아님.",
++    "modeledOn": "Meta insights(spend, date_start, account_currency) / Google GAQL(metrics.cost_micros, segments.date) / Naver stats(salesAmt) / TikTok report(stat_time_day, spend)"
++  },
++  "data": {
++    "legalEntity": "DEEPPOINT",
++    "meta": {
++      "account_id": "act_SYN000001",
++      "account_currency": "USD",
++      "timezone": "America/Los_Angeles",
++      "rows": [
++        { "date_start": "2026-09-10", "date_stop": "2026-09-10", "spend": "120.55" },
++        { "date_start": "2026-09-11", "date_stop": "2026-09-11", "spend": "98.10" },
++        { "date_start": "2026-09-12", "date_stop": "2026-09-12", "spend": "131.00" }
++      ],
++      "revisedRows": [
++        { "date_start": "2026-09-10", "date_stop": "2026-09-10", "spend": "120.55" },
++        { "date_start": "2026-09-11", "date_stop": "2026-09-11", "spend": "97.80" },
++        { "date_start": "2026-09-12", "date_stop": "2026-09-12", "spend": "131.00" }
++      ]
++    },
++    "google": {
++      "customerId": "SYN-123-456-7890",
++      "currency_code": "KRW",
++      "time_zone": "Asia/Seoul",
++      "rows": [
++        { "date": "2026-09-12", "cost_micros": "154000000000" },
++        { "date": "2026-09-13", "cost_micros": "98750000000" }
++      ]
++    },
++    "naver": {
++      "customerId": "SYN-NAVER-1",
++      "rows": [
++        { "statDt": "2026-09-12", "salesAmt": "210000" },
++        { "statDt": "2026-09-13", "salesAmt": "185000" }
++      ],
++      "bizmoney": { "balance": "1250000", "observedAtUtc": "2026-09-13T21:00:00Z" }
++    },
++    "tiktok": {
++      "advertiser_id": "SYN-TT-1",
++      "currency": "USD",
++      "timezone": "Asia/Seoul",
++      "rows": [
++        { "stat_time_day": "2026-09-12 00:00:00", "spend": "45.20" },
++        { "stat_time_day": "2026-09-13 00:00:00", "spend": "51.00" }
++      ],
++      "requestedDays": 90
++    }
++  }
++}
+diff --git a/fin/FIN-01/samples/bank-aggregator-placeholder.json b/fin/FIN-01/samples/bank-aggregator-placeholder.json
+new file mode 100644
+index 0000000..fbe804d
+--- /dev/null
++++ b/fin/FIN-01/samples/bank-aggregator-placeholder.json
+@@ -0,0 +1,65 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 웹케시 브랜치/CODEF 등 다은행 중계 응답 필드명을 확인하지 못해 자리표시자 컬럼명을 사용한 설정 기반 매핑 검증용 샘플. 실제 원천 명세가 아님.",
++    "modeledOn": "없음(컬럼명은 자리표시자). 실제 샘플 확보 후 columns 값만 교체"
++  },
++  "data": {
++    "columns": {
++      "accountId": "acct_no",
++      "currency": "ccy",
++      "date": "tr_date",
++      "time": "tr_time",
++      "inAmount": "in_amt",
++      "outAmount": "out_amt",
++      "balanceAfter": "bal_after",
++      "description": "memo"
++    },
++    "accountMapping": {
++      "SYN-ACCT-KRW-1": { "legalEntity": "DISTROVA", "accountAlias": "DV-SH-001" },
++      "SYN-ACCT-USD-1": { "legalEntity": "DISTROVA", "accountAlias": "DV-SH-USD-001" }
++    },
++    "rows": [
++      {
++        "acct_no": "SYN-ACCT-KRW-1",
++        "ccy": "KRW",
++        "tr_date": "2026-09-12",
++        "tr_time": "10:05:00",
++        "in_amt": "300000",
++        "out_amt": "0",
++        "bal_after": "2300000",
++        "memo": "올리브영정산"
++      },
++      {
++        "acct_no": "SYN-ACCT-KRW-1",
++        "ccy": "KRW",
++        "tr_date": "2026-09-12",
++        "tr_time": "15:40:00",
++        "in_amt": "0",
++        "out_amt": "80000",
++        "bal_after": "2220000",
++        "memo": "임차료"
++      },
++      {
++        "acct_no": "SYN-ACCT-USD-1",
++        "ccy": "USD",
++        "tr_date": "2026-09-12",
++        "tr_time": "11:00:00",
++        "in_amt": "1250.50",
++        "out_amt": "0",
++        "bal_after": "5250.50",
++        "memo": "해외매출입금"
++      },
++      {
++        "acct_no": "SYN-ACCT-USD-1",
++        "ccy": "USD",
++        "tr_date": "2026-09-13",
++        "tr_time": "09:30:00",
++        "in_amt": "0",
++        "out_amt": "200.00",
++        "bal_after": "5050.50",
++        "memo": "해외광고비"
++      }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/samples/bank-kftc-openbanking.json b/fin/FIN-01/samples/bank-kftc-openbanking.json
+new file mode 100644
+index 0000000..a84dbc6
+--- /dev/null
++++ b/fin/FIN-01/samples/bank-kftc-openbanking.json
+@@ -0,0 +1,169 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 금융결제원 오픈뱅킹 거래내역조회 응답 구조를 검색 발췌 기준으로 본뜬 검증용 샘플. 실제 계좌·거래 아님.",
++    "modeledOn": "https://developers.kftc.or.kr/dev/openapi/open-banking/transaction (검색 발췌, 원문 미열람, 확인일 2026-09-14)"
++  },
++  "data": {
++    "accountMapping": {
++      "199900000000000000000001": {
++        "legalEntity": "DEEPPOINT",
++        "accountAlias": "DP-KB-001",
++        "currency": "KRW",
++        "bank": "KB"
++      }
++    },
++    "pages": [
++      {
++        "api_tran_id": "SYN-API-0001",
++        "rsp_code": "A0000",
++        "bank_tran_id": "T991234567U000000001",
++        "fintech_use_num": "199900000000000000000001",
++        "balance_amt": "1430000",
++        "page_record_cnt": "3",
++        "next_page_yn": "Y",
++        "befor_inquiry_trace_info": "SYN-TRACE-1",
++        "res_list": [
++          {
++            "tran_date": "20260912",
++            "tran_time": "091500",
++            "inout_type": "입금",
++            "tran_type": "대체",
++            "print_content": "쿠팡정산",
++            "tran_amt": "450000",
++            "after_balance_amt": "1450000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260912",
++            "tran_time": "101000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "네이버광고충전",
++            "tran_amt": "120000",
++            "after_balance_amt": "1330000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260912",
++            "tran_time": "143000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "택배비",
++            "tran_amt": "50000",
++            "after_balance_amt": "1280000",
++            "branch_name": "가상지점"
++          }
++        ]
++      },
++      {
++        "api_tran_id": "SYN-API-0002",
++        "rsp_code": "A0000",
++        "bank_tran_id": "T991234567U000000002",
++        "fintech_use_num": "199900000000000000000001",
++        "balance_amt": "1430000",
++        "page_record_cnt": "2",
++        "next_page_yn": "N",
++        "befor_inquiry_trace_info": "",
++        "res_list": [
++          {
++            "tran_date": "20260912",
++            "tran_time": "143000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "택배비",
++            "tran_amt": "50000",
++            "after_balance_amt": "1230000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260913",
++            "tran_time": "090000",
++            "inout_type": "입금",
++            "tran_type": "대체",
++            "print_content": "무신사정산",
++            "tran_amt": "200000",
++            "after_balance_amt": "1430000",
++            "branch_name": "가상지점"
++          }
++        ]
++      }
++    ],
++    "recollectPages": [
++      {
++        "api_tran_id": "SYN-API-0003",
++        "rsp_code": "A0000",
++        "bank_tran_id": "T991234567U000000003",
++        "fintech_use_num": "199900000000000000000001",
++        "balance_amt": "1430000",
++        "page_record_cnt": "3",
++        "next_page_yn": "Y",
++        "befor_inquiry_trace_info": "SYN-TRACE-2",
++        "res_list": [
++          {
++            "tran_date": "20260912",
++            "tran_time": "091500",
++            "inout_type": "입금",
++            "tran_type": "대체",
++            "print_content": "쿠팡정산",
++            "tran_amt": "450000",
++            "after_balance_amt": "1450000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260912",
++            "tran_time": "101000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "네이버광고충전(적요정정)",
++            "tran_amt": "120000",
++            "after_balance_amt": "1330000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260912",
++            "tran_time": "143000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "택배비",
++            "tran_amt": "50000",
++            "after_balance_amt": "1280000",
++            "branch_name": "가상지점"
++          }
++        ]
++      },
++      {
++        "api_tran_id": "SYN-API-0004",
++        "rsp_code": "A0000",
++        "bank_tran_id": "T991234567U000000004",
++        "fintech_use_num": "199900000000000000000001",
++        "balance_amt": "1430000",
++        "page_record_cnt": "2",
++        "next_page_yn": "N",
++        "befor_inquiry_trace_info": "",
++        "res_list": [
++          {
++            "tran_date": "20260912",
++            "tran_time": "143000",
++            "inout_type": "출금",
++            "tran_type": "대체",
++            "print_content": "택배비",
++            "tran_amt": "50000",
++            "after_balance_amt": "1230000",
++            "branch_name": "가상지점"
++          },
++          {
++            "tran_date": "20260913",
++            "tran_time": "090000",
++            "inout_type": "입금",
++            "tran_type": "대체",
++            "print_content": "무신사정산",
++            "tran_amt": "200000",
++            "after_balance_amt": "1430000",
++            "branch_name": "가상지점"
++          }
++        ]
++      }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/samples/cross-source-placeholder.json b/fin/FIN-01/samples/cross-source-placeholder.json
+new file mode 100644
+index 0000000..a5b8ace
+--- /dev/null
++++ b/fin/FIN-01/samples/cross-source-placeholder.json
+@@ -0,0 +1,44 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 출처 간 중복 집계 방지 규칙 검증용.",
++    "modeledOn": "계획서 §5·§6·§7·§12"
++  },
++  "data": {
++    "bankTransactions": [
++      {
++        "description": "쿠팡정산",
++        "direction": "IN",
++        "amount": "450000",
++        "classification": "SETTLEMENT_RECEIPT"
++      },
++      {
++        "description": "무신사정산",
++        "direction": "IN",
++        "amount": "200000",
++        "classification": "SETTLEMENT_RECEIPT"
++      },
++      {
++        "description": "네이버광고충전",
++        "direction": "OUT",
++        "amount": "120000",
++        "classification": "AD_PREPAY"
++      }
++    ],
++    "salesNet": "180000",
++    "adPrepaid": { "charge": "100", "spend": "60", "taxAndFee": "0" },
++    "channelOwners": {
++      "COUPANG": "SABANGNET",
++      "OWNMALL_CAFE24": "SABANGNET",
++      "B2B:SYN-B2B-A": "DELIVERY_EXCEL"
++    },
++    "eventsByOwner": [
++      { "channel": "COUPANG", "source": "SABANGNET", "amount": "38000" },
++      { "channel": "COUPANG", "source": "DIRECT_API", "amount": "38000" },
++      { "channel": "OWNMALL_CAFE24", "source": "SABANGNET", "amount": "25000" },
++      { "channel": "OWNMALL_CAFE24", "source": "DIRECT_API", "amount": "25000" },
++      { "channel": "B2B:SYN-B2B-A", "source": "DELIVERY_EXCEL", "amount": "2300000" },
++      { "channel": "OLIVEYOUNG", "source": "DIRECT_API", "amount": "99000" }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/samples/delivery-excel-placeholder.json b/fin/FIN-01/samples/delivery-excel-placeholder.json
+new file mode 100644
+index 0000000..6ddbe84
+--- /dev/null
++++ b/fin/FIN-01/samples/delivery-excel-placeholder.json
+@@ -0,0 +1,78 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 납품 엑셀 샘플 미제공 상태에서 계획서 §4 필수 필드를 컬럼으로 가정한 검증용 행. 실제 거래처·거래 아님.",
++    "modeledOn": "계획서 §4 납품 필수 필드"
++  },
++  "data": {
++    "requiredColumns": [
++      "법인",
++      "거래처",
++      "출고번호",
++      "행번호",
++      "출고일",
++      "상품코드",
++      "수량",
++      "공급가액",
++      "세액",
++      "반품여부",
++      "반품일"
++    ],
++    "entityMapping": { "딥포인트": "DEEPPOINT", "디스트로바": "DISTROVA" },
++    "rows": [
++      {
++        "법인": "딥포인트",
++        "거래처": "SYN-B2B-A",
++        "출고번호": "SYN-SHP-0001",
++        "행번호": "1",
++        "출고일": "2026-09-12",
++        "상품코드": "SKU-A-001",
++        "수량": "100",
++        "공급가액": "1500000",
++        "세액": "150000",
++        "반품여부": "N",
++        "반품일": ""
++      },
++      {
++        "법인": "딥포인트",
++        "거래처": "SYN-B2B-A",
++        "출고번호": "SYN-SHP-0001",
++        "행번호": "2",
++        "출고일": "2026-09-12",
++        "상품코드": "SKU-B-010",
++        "수량": "20",
++        "공급가액": "800000",
++        "세액": "80000",
++        "반품여부": "N",
++        "반품일": ""
++      },
++      {
++        "법인": "디스트로바",
++        "거래처": "SYN-B2B-EXPORT",
++        "출고번호": "SYN-SHP-0002",
++        "행번호": "1",
++        "출고일": "2026-09-12",
++        "상품코드": "SKU-C-100",
++        "수량": "500",
++        "공급가액": "6000000",
++        "세액": "0",
++        "반품여부": "N",
++        "반품일": ""
++      },
++      {
++        "법인": "딥포인트",
++        "거래처": "SYN-B2B-A",
++        "출고번호": "SYN-SHP-0001",
++        "행번호": "2",
++        "출고일": "2026-09-12",
++        "상품코드": "SKU-B-010",
++        "수량": "5",
++        "공급가액": "200000",
++        "세액": "20000",
++        "반품여부": "Y",
++        "반품일": "2026-09-13"
++      }
++    ],
++    "alsoInOrderSystem": [{ "거래처": "SYN-B2B-A", "출고번호": "SYN-SHP-0001" }]
++  }
++}
+diff --git a/fin/FIN-01/samples/fx-placeholder.json b/fin/FIN-01/samples/fx-placeholder.json
+new file mode 100644
+index 0000000..b789d31
+--- /dev/null
++++ b/fin/FIN-01/samples/fx-placeholder.json
+@@ -0,0 +1,25 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 수출입은행 환율 API 응답 필드명(cur_unit, deal_bas_r, ttb, tts)을 검색 발췌 기준으로 본뜬 값. 실제 환율 아님.",
++    "modeledOn": "https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C (검색 발췌, 원문 미열람)"
++  },
++  "data": {
++    "exim": [
++      {
++        "searchdate": "20260910",
++        "rows": [
++          { "cur_unit": "USD", "deal_bas_r": "1,333.40", "ttb": "1,320.20", "tts": "1,346.60" }
++        ]
++      },
++      {
++        "searchdate": "20260911",
++        "rows": [
++          { "cur_unit": "USD", "deal_bas_r": "1,335.10", "ttb": "1,321.90", "tts": "1,348.30" }
++        ]
++      },
++      { "searchdate": "20260912", "rows": [] },
++      { "searchdate": "20260913", "rows": [] }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/samples/sales-cafe24-placeholder.json b/fin/FIN-01/samples/sales-cafe24-placeholder.json
+new file mode 100644
+index 0000000..8b14cfb
+--- /dev/null
++++ b/fin/FIN-01/samples/sales-cafe24-placeholder.json
+@@ -0,0 +1,70 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 카페24 Admin API orders 응답의 필드명은 원문 미열람 상태의 자리표시자. 실제 주문·구매자 정보 없음.",
++    "modeledOn": "https://developers.cafe24.com/docs/api/admin/ (차단, 미열람). 필드명은 확인 후 교체"
++  },
++  "data": {
++    "mallAlias": "DP-CAFE24-OWNMALL",
++    "legalEntity": "DEEPPOINT",
++    "cancelStatuses": ["C40"],
++    "orders": [
++      {
++        "order_id": "SYN-OM-20260912-0001",
++        "order_date": "2026-09-12T22:00:00+09:00",
++        "payment_date": "2026-09-12T22:01:00+09:00",
++        "paid": "T",
++        "canceled": "F",
++        "items": [
++          {
++            "order_item_code": "SYN-OM-20260912-0001-01",
++            "product_code": "SKU-C-100",
++            "quantity": "1",
++            "product_price": "25000",
++            "order_status": "N10"
++          }
++        ]
++      },
++      {
++        "order_id": "SYN-OM-20260912-0002",
++        "order_date": "2026-09-12T23:10:00+09:00",
++        "payment_date": "2026-09-12T23:11:00+09:00",
++        "paid": "T",
++        "canceled": "F",
++        "items": [
++          {
++            "order_item_code": "SYN-OM-20260912-0002-01",
++            "product_code": "SKU-A-001",
++            "quantity": "2",
++            "product_price": "19000",
++            "order_status": "N20"
++          },
++          {
++            "order_item_code": "SYN-OM-20260912-0002-02",
++            "product_code": "SKU-B-010",
++            "quantity": "1",
++            "product_price": "59000",
++            "order_status": "C40"
++          }
++        ]
++      },
++      {
++        "order_id": "SYN-OM-20260912-0003",
++        "order_date": "2026-09-12T23:50:00+09:00",
++        "payment_date": null,
++        "paid": "F",
++        "canceled": "F",
++        "items": [
++          {
++            "order_item_code": "SYN-OM-20260912-0003-01",
++            "product_code": "SKU-A-001",
++            "quantity": "1",
++            "product_price": "19000",
++            "order_status": "N00"
++          }
++        ]
++      }
++    ],
++    "alsoInSabangnet": ["SYN-OM-20260912-0001"]
++  }
++}
+diff --git a/fin/FIN-01/samples/sales-sabangnet-placeholder.json b/fin/FIN-01/samples/sales-sabangnet-placeholder.json
+new file mode 100644
+index 0000000..9d311d9
+--- /dev/null
++++ b/fin/FIN-01/samples/sales-sabangnet-placeholder.json
+@@ -0,0 +1,103 @@
++{
++  "_meta": {
++    "synthetic": true,
++    "description": "가상 데이터. 사방넷 주문 API 필드명·상태코드를 확인하지 못해 자리표시자 필드로 구성한 검증용 샘플. 실제 주문·구매자 정보 없음.",
++    "modeledOn": "없음(자리표시자). 사방넷 API 명세 확보 후 필드명·statusMapping 교체"
++  },
++  "data": {
++    "accountAlias": "DP-SABANGNET-MAIN",
++    "legalEntity": "DEEPPOINT",
++    "channelMapping": {
++      "M-CPNG": "COUPANG",
++      "M-MUSINSA": "MUSINSA",
++      "M-SMARTSTORE": "SMARTSTORE",
++      "M-OWNMALL": "OWNMALL_CAFE24"
++    },
++    "companyChannels": [],
++    "sabangnetCoveredChannels": ["COUPANG", "MUSINSA", "SMARTSTORE", "OWNMALL_CAFE24"],
++    "statusMapping": {
++      "PAID": "PAID",
++      "PARTIAL_CANCEL": "CANCELLED",
++      "REFUNDED": "REFUNDED",
++      "PURCHASE_CONFIRMED": "IGNORE"
++    },
++    "lines": [
++      {
++        "sabangnet_order_no": "SYN-SBN-1001",
++        "mall_id": "M-CPNG",
++        "mall_order_id": "SYN-CP-90001",
++        "order_line_id": "SYN-CP-90001-1",
++        "order_date": "2026-09-12 09:10:00",
++        "pay_date": "2026-09-12 09:11:00",
++        "order_status": "PAID",
++        "product_code": "SKU-A-001",
++        "qty": "2",
++        "pay_amount": "38000"
++      },
++      {
++        "sabangnet_order_no": "SYN-SBN-1002",
++        "mall_id": "M-MUSINSA",
++        "mall_order_id": "SYN-MS-70001",
++        "order_line_id": "SYN-MS-70001-1",
++        "order_date": "2026-09-12 12:00:00",
++        "pay_date": "2026-09-12 12:00:30",
++        "order_status": "PAID",
++        "product_code": "SKU-B-010",
++        "qty": "1",
++        "pay_amount": "59000"
++      },
++      {
++        "sabangnet_order_no": "SYN-SBN-1003",
++        "mall_id": "M-SMARTSTORE",
++        "mall_order_id": "SYN-SS-50001",
++        "order_line_id": "SYN-SS-50001-1",
++        "order_date": "2026-09-12 20:30:00",
++        "pay_date": "2026-09-12 20:31:00",
++        "order_status": "PAID",
++        "product_code": "SKU-A-001",
++        "qty": "3",
++        "pay_amount": "57000"
++      },
++      {
++        "sabangnet_order_no": "SYN-SBN-1003",
++        "mall_id": "M-SMARTSTORE",
++        "mall_order_id": "SYN-SS-50001",
++        "order_line_id": "SYN-SS-50001-1",
++        "order_date": "2026-09-12 20:30:00",
++        "pay_date": "2026-09-13 08:00:00",
++        "order_status": "PARTIAL_CANCEL",
++        "product_code": "SKU-A-001",
++        "qty": "1",
++        "pay_amount": "19000"
++      },
++      {
++        "sabangnet_order_no": "SYN-SBN-1004",
++        "mall_id": "M-OWNMALL",
++        "mall_order_id": "SYN-OM-20260912-0001",
++        "order_line_id": "SYN-OM-20260912-0001-1",
++        "order_date": "2026-09-12 22:00:00",
++        "pay_date": "2026-09-12 22:01:00",
++        "order_status": "PAID",
++        "product_code": "SKU-C-100",
++        "qty": "1",
++        "pay_amount": "25000"
++      },
++      {
++        "sabangnet_order_no": "SYN-SBN-0999",
++        "mall_id": "M-CPNG",
++        "mall_order_id": "SYN-CP-89990",
++        "order_line_id": "SYN-CP-89990-1",
++        "order_date": "2026-09-05 10:00:00",
++        "pay_date": "2026-09-05 10:00:10",
++        "order_status": "PURCHASE_CONFIRMED",
++        "product_code": "SKU-A-001",
++        "qty": "1",
++        "pay_amount": "19000"
++      }
++    ],
++    "directApiOrders": [
++      { "channel": "OWNMALL_CAFE24", "orderId": "SYN-OM-20260912-0001" },
++      { "channel": "COUPANG", "orderId": "SYN-CP-90001" }
++    ]
++  }
++}
+diff --git a/fin/FIN-01/verify/decimal.ts b/fin/FIN-01/verify/decimal.ts
+new file mode 100644
+index 0000000..86370b5
+--- /dev/null
++++ b/fin/FIN-01/verify/decimal.ts
+@@ -0,0 +1,80 @@
++/**
++ * FIN-01 검증용 정밀 십진수 유틸.
++ *
++ * 계획서 §3: 금액은 NUMERIC, JS 부동소수점 계산 금지.
++ * 검증 코드에서도 금액을 문자열로 받고 BigInt(소수 6자리 고정 스케일)로만 연산한다.
++ */
++
++export const SCALE = 6;
++const SCALE_FACTOR = 10n ** BigInt(SCALE);
++
++const DECIMAL_RE = /^(-)?(\d+)(?:\.(\d+))?$/;
++
++/** 문자열 금액을 스케일 적용 BigInt 로 변환한다. 소수 7자리 이상은 오류. */
++export function toUnits(value: string): bigint {
++  const trimmed = value.replace(/,/g, '').trim();
++  const m = DECIMAL_RE.exec(trimmed);
++  if (!m) throw new Error(`금액 형식 오류: "${value}"`);
++  const sign = m[1] === '-' ? -1n : 1n;
++  const intPart = m[2] ?? '0';
++  const fracRaw = m[3] ?? '';
++  if (fracRaw.length > SCALE) throw new Error(`소수 자릿수 초과(${SCALE}): "${value}"`);
++  const frac = fracRaw.padEnd(SCALE, '0');
++  return sign * (BigInt(intPart) * SCALE_FACTOR + BigInt(frac));
++}
++
++/** 스케일 적용 BigInt 를 정규 문자열로 되돌린다. 불필요한 0 은 제거한다. */
++export function fromUnits(units: bigint): string {
++  const negative = units < 0n;
++  const abs = negative ? -units : units;
++  const intPart = abs / SCALE_FACTOR;
++  const frac = (abs % SCALE_FACTOR).toString().padStart(SCALE, '0').replace(/0+$/, '');
++  const body = frac.length > 0 ? `${intPart}.${frac}` : intPart.toString();
++  return negative ? `-${body}` : body;
++}
++
++export function add(a: string, b: string): string {
++  return fromUnits(toUnits(a) + toUnits(b));
++}
++
++export function sub(a: string, b: string): string {
++  return fromUnits(toUnits(a) - toUnits(b));
++}
++
++export function neg(a: string): string {
++  return fromUnits(-toUnits(a));
++}
++
++export function eq(a: string, b: string): boolean {
++  return toUnits(a) === toUnits(b);
++}
++
++export function isZero(a: string): boolean {
++  return toUnits(a) === 0n;
++}
++
++export function sum(values: readonly string[]): string {
++  let acc = 0n;
++  for (const v of values) acc += toUnits(v);
++  return fromUnits(acc);
++}
++
++/** 정수 마이크로 단위(예: Google Ads cost_micros) → 통화 단위 문자열. */
++export function fromMicros(micros: string): string {
++  const m = /^(-)?(\d+)$/.exec(micros.trim());
++  if (!m) throw new Error(`마이크로 단위 정수 형식 오류: "${micros}"`);
++  const sign = m[1] === '-' ? -1n : 1n;
++  // 1 micro = 10^-6 → 스케일 6 과 동일하므로 그대로 units 로 사용한다.
++  return fromUnits(sign * BigInt(m[2] ?? '0'));
++}
++
++/** 정규화된 문자열인지 확인한다(파서 통과 여부). */
++export function isDecimalString(value: unknown): value is string {
++  if (typeof value !== 'string') return false;
++  try {
++    toUnits(value);
++    return true;
++  } catch {
++    return false;
++  }
++}
+diff --git a/fin/FIN-01/verify/dedupe.ts b/fin/FIN-01/verify/dedupe.ts
+new file mode 100644
+index 0000000..3b819bd
+--- /dev/null
++++ b/fin/FIN-01/verify/dedupe.ts
+@@ -0,0 +1,74 @@
++/**
++ * 재수집 무중복·관측 버전 검증(계획서 §5 source_records 규칙).
++ *
++ * - 같은 원천키 + 같은 payload 해시 → 새 버전을 만들지 않는다.
++ * - 같은 원천키 + 다른 payload 해시 → 관측 버전을 추가하고 최신 유효 레코드로 대체한다.
++ * - 날짜·금액·적요만 같은 두 정상 거래는 원천키가 다르므로 합쳐지지 않는다.
++ */
++
++import { payloadHash } from './mapping';
++import type { SourceRecord, SourceSystem } from './types';
++
++export interface IngestResult {
++  inserted: number;
++  unchanged: number;
++  versioned: number;
++}
++
++export class SourceRecordStore {
++  private readonly records = new Map<string, SourceRecord>();
++  private readonly payloads = new Map<string, unknown>();
++
++  ingest(
++    sourceSystem: SourceSystem,
++    accountAlias: string,
++    runId: string,
++    items: readonly { sourceKey: string; raw: unknown }[],
++  ): IngestResult {
++    const result: IngestResult = { inserted: 0, unchanged: 0, versioned: 0 };
++    for (const item of items) {
++      const hash = payloadHash(item.raw);
++      const existing = this.records.get(item.sourceKey);
++      if (!existing) {
++        this.records.set(item.sourceKey, {
++          sourceSystem,
++          accountAlias,
++          sourceKey: item.sourceKey,
++          payloadHash: hash,
++          observedVersion: 1,
++          firstSeenRunId: runId,
++          lastSeenRunId: runId,
++        });
++        this.payloads.set(item.sourceKey, item.raw);
++        result.inserted += 1;
++      } else if (existing.payloadHash === hash) {
++        existing.lastSeenRunId = runId;
++        result.unchanged += 1;
++      } else {
++        existing.payloadHash = hash;
++        existing.observedVersion += 1;
++        existing.lastSeenRunId = runId;
++        this.payloads.set(item.sourceKey, item.raw);
++        result.versioned += 1;
++      }
++    }
++    return result;
++  }
++
++  size(): number {
++    return this.records.size;
++  }
++
++  get(sourceKey: string): SourceRecord | undefined {
++    return this.records.get(sourceKey);
++  }
++
++  /** 최신 유효 payload 목록(재계산 입력). */
++  latestPayloads(): { sourceKey: string; raw: unknown; version: number }[] {
++    const out: { sourceKey: string; raw: unknown; version: number }[] = [];
++    for (const [key, rec] of this.records) {
++      out.push({ sourceKey: key, raw: this.payloads.get(key), version: rec.observedVersion });
++    }
++    return out;
++  }
++}
+diff --git a/fin/FIN-01/verify/live/http.ts b/fin/FIN-01/verify/live/http.ts
+new file mode 100644
+index 0000000..e89b315
+--- /dev/null
++++ b/fin/FIN-01/verify/live/http.ts
+@@ -0,0 +1,92 @@
++/**
++ * 실제 호출용 최소 HTTP 래퍼. 응답 본문은 저장하지 않고 요약(상태·건수·해시)만 남긴다.
++ * 비밀값은 로그에 출력하지 않는다.
++ */
++
++import { createHash } from 'node:crypto';
++
++export type LiveStatus = 'OK' | 'BLOCKED_NO_CREDENTIALS' | 'BLOCKED_NETWORK' | 'FAILED';
++
++export interface LiveResult {
++  source: string;
++  status: LiveStatus;
++  startedAtUtc: string;
++  finishedAtUtc: string;
++  /** 민감 정보 없는 요약(HTTP 상태, 건수, 본문 해시 등) */
++  summary: string;
++  /** 실제 수집 검증 여부. OK 여도 대조까지 끝나야 true */
++  verified: boolean;
++}
++
++export function requireEnv(
++  names: readonly string[],
++): { ok: true; env: Record<string, string> } | { ok: false; missing: string[] } {
++  const env: Record<string, string> = {};
++  const missing: string[] = [];
++  for (const n of names) {
++    const v = process.env[n];
++    if (!v) missing.push(n);
++    else env[n] = v;
++  }
++  return missing.length > 0 ? { ok: false, missing } : { ok: true, env };
++}
++
++export function blockedNoCredentials(source: string, missing: readonly string[]): LiveResult {
++  const now = new Date().toISOString();
++  return {
++    source,
++    status: 'BLOCKED_NO_CREDENTIALS',
++    startedAtUtc: now,
++    finishedAtUtc: now,
++    summary: `환경변수 미설정: ${missing.join(', ')} → 실제 수집 미검증`,
++    verified: false,
++  };
++}
++
++export async function fetchSummary(
++  source: string,
++  url: string,
++  init: RequestInit & { redactQuery?: boolean } = {},
++): Promise<LiveResult> {
++  const startedAtUtc = new Date().toISOString();
++  const shownUrl = init.redactQuery ? url.split('?')[0] : url;
++  try {
++    const res = await fetch(url, { ...init, signal: AbortSignal.timeout(20_000) });
++    const text = await res.text();
++    const hash = createHash('sha256').update(text).digest('hex').slice(0, 16);
++    let count = -1;
++    try {
++      const json: unknown = JSON.parse(text);
++      if (Array.isArray(json)) count = json.length;
++      else if (json && typeof json === 'object') {
++        const o = json as Record<string, unknown>;
++        const arr = ['data', 'res_list', 'orders', 'list'].map((k) => o[k]).find(Array.isArray);
++        if (arr) count = (arr as unknown[]).length;
++      }
++    } catch {
++      /* 본문이 JSON 이 아니면 건수 미산정 */
++    }
++    // 본 환경의 egress 프록시는 허용 목록 밖 호스트에 403 + x-deny-reason 헤더로 응답한다(원천 서버 응답 아님).
++    const denyReason = res.headers.get('x-deny-reason');
++    const status = res.ok ? 'OK' : denyReason ? 'BLOCKED_NETWORK' : 'FAILED';
++    return {
++      source,
++      status,
++      startedAtUtc,
++      finishedAtUtc: new Date().toISOString(),
++      summary: `${shownUrl} → HTTP ${res.status}${denyReason ? ` (egress proxy: ${denyReason})` : ''}, bytes ${text.length}, sha256:${hash}, items ${count}`,
++      verified: false,
++    };
++  } catch (e) {
++    const msg = e instanceof Error ? e.message : String(e);
++    const blocked = /403|CONNECT|EGRESS|ENOTFOUND|ECONNREFUSED|fetch failed/i.test(msg);
++    return {
++      source,
++      status: blocked ? 'BLOCKED_NETWORK' : 'FAILED',
++      startedAtUtc,
++      finishedAtUtc: new Date().toISOString(),
++      summary: `${shownUrl} → ${msg}`,
++      verified: false,
++    };
++  }
++}
+diff --git a/fin/FIN-01/verify/live/index.ts b/fin/FIN-01/verify/live/index.ts
+new file mode 100644
+index 0000000..fbc6047
+--- /dev/null
++++ b/fin/FIN-01/verify/live/index.ts
+@@ -0,0 +1,143 @@
++/**
++ * 실제 호출 시도(자격·네트워크가 있을 때만). 본 환경에서는 전 출처가 자격 없음 또는 네트워크 차단이다.
++ * 요청 형식은 검색 발췌로 확인한 공식 명세를 따르되, 원문 미열람 항목은 주석으로 표시한다.
++ */
++
++import { createHmac } from 'node:crypto';
++
++import { blockedNoCredentials, fetchSummary, requireEnv, type LiveResult } from './http';
++
++export type LiveSource =
++  'fx-exim' | 'fx-ecos' | 'bank-kftc' | 'ads-meta' | 'ads-tiktok' | 'ads-naver' | 'sales-cafe24';
++
++export const LIVE_SOURCES: LiveSource[] = [
++  'fx-exim',
++  'fx-ecos',
++  'bank-kftc',
++  'ads-meta',
++  'ads-tiktok',
++  'ads-naver',
++  'sales-cafe24',
++];
++
++function yyyymmdd(isoDate: string): string {
++  return isoDate.replace(/-/g, '');
++}
++
++export async function runLive(source: LiveSource, targetDate: string): Promise<LiveResult> {
++  switch (source) {
++    case 'fx-exim': {
++      const r = requireEnv(['FIN01_KOREAEXIM_AUTHKEY']);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      // 신규 도메인(oapi.koreaexim.go.kr). data=AP01 환율. 검색 발췌 기준.
++      const url = `https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON?authkey=${encodeURIComponent(r.env['FIN01_KOREAEXIM_AUTHKEY'] ?? '')}&searchdate=${yyyymmdd(targetDate)}&data=AP01`;
++      return fetchSummary(source, url, { redactQuery: true });
++    }
++    case 'fx-ecos': {
++      const r = requireEnv(['FIN01_ECOS_API_KEY']);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      // StatisticSearch/{key}/json/kr/1/100/731Y001/D/{from}/{to}/0000001 — 경로 구조는 원문 확인 필요(ASSUMED)
++      const d = yyyymmdd(targetDate);
++      const url = `https://ecos.bok.or.kr/api/StatisticSearch/${encodeURIComponent(r.env['FIN01_ECOS_API_KEY'] ?? '')}/json/kr/1/100/731Y001/D/${d}/${d}/0000001`;
++      return fetchSummary(source, url, { redactQuery: true });
++    }
++    case 'bank-kftc': {
++      const r = requireEnv([
++        'FIN01_KFTC_ACCESS_TOKEN',
++        'FIN01_KFTC_FINTECH_USE_NUM',
++        'FIN01_KFTC_BASE_URL',
++      ]);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      // GET /v2.0/account/transaction_list/fin_num — 파라미터 이름은 검색 발췌 기준, 원문 확인 필요
++      const q = new URLSearchParams({
++        bank_tran_id: `FIN01${Date.now().toString().slice(-9)}`,
++        fintech_use_num: r.env['FIN01_KFTC_FINTECH_USE_NUM'] ?? '',
++        inquiry_type: 'A',
++        inquiry_base: 'D',
++        from_date: yyyymmdd(targetDate),
++        to_date: yyyymmdd(targetDate),
++        sort_order: 'D',
++        tran_dtime: new Date()
++          .toISOString()
++          .replace(/[-:TZ.]/g, '')
++          .slice(0, 14),
++      });
++      const url = `${r.env['FIN01_KFTC_BASE_URL']}/v2.0/account/transaction_list/fin_num?${q.toString()}`;
++      return fetchSummary(source, url, {
++        headers: { Authorization: `Bearer ${r.env['FIN01_KFTC_ACCESS_TOKEN']}` },
++        redactQuery: true,
++      });
++    }
++    case 'ads-meta': {
++      const r = requireEnv(['FIN01_META_ACCESS_TOKEN', 'FIN01_META_AD_ACCOUNT_ID']);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      const q = new URLSearchParams({
++        fields: 'account_id,account_currency,date_start,date_stop,spend',
++        level: 'account',
++        time_increment: '1',
++        time_range: JSON.stringify({ since: targetDate, until: targetDate }),
++        access_token: r.env['FIN01_META_ACCESS_TOKEN'] ?? '',
++      });
++      const url = `https://graph.facebook.com/v21.0/${r.env['FIN01_META_AD_ACCOUNT_ID']}/insights?${q.toString()}`;
++      return fetchSummary(source, url, { redactQuery: true });
++    }
++    case 'ads-tiktok': {
++      const r = requireEnv(['FIN01_TIKTOK_ACCESS_TOKEN', 'FIN01_TIKTOK_ADVERTISER_ID']);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      const q = new URLSearchParams({
++        advertiser_id: r.env['FIN01_TIKTOK_ADVERTISER_ID'] ?? '',
++        report_type: 'BASIC',
++        data_level: 'AUCTION_ADVERTISER',
++        dimensions: JSON.stringify(['advertiser_id', 'stat_time_day']),
++        metrics: JSON.stringify(['spend']),
++        start_date: targetDate,
++        end_date: targetDate,
++      });
++      const url = `https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/?${q.toString()}`;
++      return fetchSummary(source, url, {
++        headers: { 'Access-Token': r.env['FIN01_TIKTOK_ACCESS_TOKEN'] ?? '' },
++        redactQuery: true,
++      });
++    }
++    case 'ads-naver': {
++      const r = requireEnv([
++        'FIN01_NAVER_API_KEY',
++        'FIN01_NAVER_SECRET_KEY',
++        'FIN01_NAVER_CUSTOMER_ID',
++      ]);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      // 서명: HMAC-SHA256(timestamp + "." + method + "." + path), base64 — 검색 발췌 기준, 원문 확인 필요
++      const path = '/billing/bizmoney';
++      const ts = String(Date.now());
++      const sig = createHmac('sha256', r.env['FIN01_NAVER_SECRET_KEY'] ?? '')
++        .update(`${ts}.GET.${path}`)
++        .digest('base64');
++      return fetchSummary(source, `https://api.searchad.naver.com${path}`, {
++        headers: {
++          'X-Timestamp': ts,
++          'X-API-KEY': r.env['FIN01_NAVER_API_KEY'] ?? '',
++          'X-Customer': r.env['FIN01_NAVER_CUSTOMER_ID'] ?? '',
++          'X-Signature': sig,
++        },
++      });
++    }
++    case 'sales-cafe24': {
++      const r = requireEnv(['FIN01_CAFE24_MALL_ID', 'FIN01_CAFE24_ACCESS_TOKEN']);
++      if (!r.ok) return blockedNoCredentials(source, r.missing);
++      const q = new URLSearchParams({ start_date: targetDate, end_date: targetDate, limit: '100' });
++      const url = `https://${r.env['FIN01_CAFE24_MALL_ID']}.cafe24api.com/api/v2/admin/orders?${q.toString()}`;
++      return fetchSummary(source, url, {
++        headers: {
++          Authorization: `Bearer ${r.env['FIN01_CAFE24_ACCESS_TOKEN']}`,
++          'Content-Type': 'application/json',
++          'X-Cafe24-Api-Version': '2025-06-01',
++        },
++        redactQuery: true,
++      });
++    }
++    default: {
++      const never: never = source;
++      throw new Error(`알 수 없는 소스: ${String(never)}`);
++    }
++  }
++}
+diff --git a/fin/FIN-01/verify/mapping.ts b/fin/FIN-01/verify/mapping.ts
+new file mode 100644
+index 0000000..136d12b
+--- /dev/null
++++ b/fin/FIN-01/verify/mapping.ts
+@@ -0,0 +1,112 @@
++/**
++ * 원천 필드 → 표준 필드 대응 명세와 적용 엔진.
++ *
++ * 필드매핑표(FIN-01_필드매핑표.md)의 각 행은 이 명세의 FieldMapping 하나에 대응한다.
++ * status 는 "원천 문서를 어떤 근거로 확인했는가" 를 기록하며, ASSUMED 는 실제 응답으로
++ * 확인되기 전까지 검증 완료로 취급하지 않는다.
++ */
++
++import { createHash } from 'node:crypto';
++
++export type EvidenceStatus =
++  | 'CONFIRMED' // 공식 문서 원문 또는 실제 응답으로 확인
++  | 'SNIPPET' // 공식 문서의 검색 결과 발췌로만 확인(원문 미열람)
++  | 'ASSUMED' // 문서 미확인. 실제 응답 확보 후 확정 필요
++  | 'MISSING'; // 원천이 제공하지 않음(대체 규칙 필요)
++
++export type Transform =
++  | 'identity'
++  | 'decimal'
++  | 'micros_to_decimal'
++  | 'yyyymmdd_to_iso_date'
++  | 'yyyymmdd_hhmmss_to_local_datetime'
++  | 'inout_to_direction'
++  | 'constant'
++  | 'derived';
++
++export interface FieldMapping {
++  /** 표준 필드명(types.ts) */
++  target: string;
++  /** 원천 필드 경로(점 구분). derived/constant 는 생략 가능 */
++  source?: string;
++  transform: Transform;
++  status: EvidenceStatus;
++  /** constant 변환 시 값 */
++  constant?: string;
++  /** 대체 규칙·근거·주의 */
++  note: string;
++}
++
++export interface SourceSpec {
++  sourceSystem: string;
++  displayName: string;
++  /** 공식 문서 URL 과 확인일. access 는 실제 열람 수준 */
++  docs: { url: string; checkedOn: string; access: 'FULL_TEXT' | 'SEARCH_SNIPPET' | 'BLOCKED' }[];
++  /** 원천 시간대 */
++  sourceTz: string;
++  /** 원천 고유키 구성(시스템+계정+거래/행/이벤트 ID) */
++  keyFields: string[];
++  mappings: FieldMapping[];
++}
++
++export interface MappingCoverage {
++  confirmed: number;
++  snippet: number;
++  assumed: number;
++  missing: number;
++  total: number;
++}
++
++export function coverage(spec: SourceSpec): MappingCoverage {
++  const c: MappingCoverage = { confirmed: 0, snippet: 0, assumed: 0, missing: 0, total: 0 };
++  for (const m of spec.mappings) {
++    c.total += 1;
++    if (m.status === 'CONFIRMED') c.confirmed += 1;
++    else if (m.status === 'SNIPPET') c.snippet += 1;
++    else if (m.status === 'ASSUMED') c.assumed += 1;
++    else c.missing += 1;
++  }
++  return c;
++}
++
++/** 점 구분 경로로 중첩 값을 읽는다. */
++export function readPath(raw: unknown, path: string): unknown {
++  let cur: unknown = raw;
++  for (const seg of path.split('.')) {
++    if (cur === null || typeof cur !== 'object') return undefined;
++    cur = (cur as Record<string, unknown>)[seg];
++  }
++  return cur;
++}
++
++/** 원천 레코드의 안정적 payload 해시(키 정렬 JSON, SHA-256). */
++export function payloadHash(raw: unknown): string {
++  return createHash('sha256').update(stableJson(raw)).digest('hex');
++}
++
++export function stableJson(value: unknown): string {
++  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
++  if (value !== null && typeof value === 'object') {
++    const obj = value as Record<string, unknown>;
++    const keys = Object.keys(obj).sort();
++    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(obj[k])}`).join(',')}}`;
++  }
++  return JSON.stringify(value);
++}
++
++/** 원천키 = 시스템 + 계정 + 지정 필드 값들. */
++export function buildSourceKey(
++  sourceSystem: string,
++  accountAlias: string,
++  raw: unknown,
++  keyFields: readonly string[],
++): string {
++  const parts = keyFields.map((f) => {
++    const v = readPath(raw, f);
++    if (v === undefined || v === null || v === '') {
++      throw new Error(`원천키 필드 누락: ${sourceSystem}.${f}`);
++    }
++    return String(v);
++  });
++  return [sourceSystem, accountAlias, ...parts].join('|');
++}
+diff --git a/fin/FIN-01/verify/reconcile.ts b/fin/FIN-01/verify/reconcile.ts
+new file mode 100644
+index 0000000..2d383ec
+--- /dev/null
++++ b/fin/FIN-01/verify/reconcile.ts
+@@ -0,0 +1,52 @@
++/**
++ * 원본 ↔ 정규화 결과 건수·금액 대조.
++ */
++
++import { eq, sum } from './decimal';
++
++export interface ReconcileResult {
++  label: string;
++  rawCount: number;
++  normalizedCount: number;
++  rawAmount: string;
++  normalizedAmount: string;
++  countMatch: boolean;
++  amountMatch: boolean;
++}
++
++export function reconcile(
++  label: string,
++  rawAmounts: readonly string[],
++  normalizedAmounts: readonly string[],
++): ReconcileResult {
++  const rawAmount = sum(rawAmounts);
++  const normalizedAmount = sum(normalizedAmounts);
++  return {
++    label,
++    rawCount: rawAmounts.length,
++    normalizedCount: normalizedAmounts.length,
++    rawAmount,
++    normalizedAmount,
++    countMatch: rawAmounts.length === normalizedAmounts.length,
++    amountMatch: eq(rawAmount, normalizedAmount),
++  };
++}
++
++export interface CheckResult {
++  id: string;
++  title: string;
++  passed: boolean;
++  detail: string;
++  /** 가상 데이터 기반 검증인지 여부. true 면 실제 연동 성공으로 보고하지 않는다. */
++  synthetic: boolean;
++}
++
++export function check(
++  id: string,
++  title: string,
++  passed: boolean,
++  detail: string,
++  synthetic = true,
++): CheckResult {
++  return { id, title, passed, detail, synthetic };
++}
+diff --git a/fin/FIN-01/verify/run.ts b/fin/FIN-01/verify/run.ts
+new file mode 100644
+index 0000000..3f55f3f
+--- /dev/null
++++ b/fin/FIN-01/verify/run.ts
+@@ -0,0 +1,160 @@
++/**
++ * FIN-01 검증 실행기.
++ *
++ *   pnpm tsx fin/FIN-01/verify/run.ts                 # 가상 샘플(fixture) 검증
++ *   pnpm tsx fin/FIN-01/verify/run.ts --live all      # 실제 호출 시도(환경변수 필요)
++ *   pnpm tsx fin/FIN-01/verify/run.ts --live fx-exim --date 2026-09-12
++ *
++ * 결과는 fin/FIN-01/results/ 에 JSON 으로 남긴다. 가상 데이터 검증은 synthetic=true 로 표시되며
++ * 실제 연동 성공을 뜻하지 않는다.
++ */
++
++import { mkdirSync, writeFileSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++import { LIVE_SOURCES, runLive, type LiveSource } from './live';
++import { coverage, type SourceSpec } from './mapping';
++import type { CheckResult } from './reconcile';
++import * as wehago from './sources/accounting-wehago';
++import * as ads from './sources/ads';
++import * as bankAgg from './sources/bank-aggregator';
++import * as bankKftc from './sources/bank-kftc';
++import * as cross from './sources/cross-source';
++import * as delivery from './sources/delivery-excel';
++import * as fx from './sources/fx';
++import * as cafe24 from './sources/sales-cafe24';
++import * as sabangnet from './sources/sales-sabangnet';
++
++const RESULTS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'results');
++
++const FIXTURE_SUITES: { name: string; run: () => CheckResult[] }[] = [
++  { name: 'bank-kftc-openbanking', run: bankKftc.runFixtureChecks },
++  { name: 'bank-aggregator', run: bankAgg.runFixtureChecks },
++  { name: 'sales-sabangnet', run: sabangnet.runFixtureChecks },
++  { name: 'sales-cafe24', run: cafe24.runFixtureChecks },
++  { name: 'delivery-excel', run: delivery.runFixtureChecks },
++  { name: 'ads', run: ads.runFixtureChecks },
++  { name: 'accounting-wehago', run: wehago.runFixtureChecks },
++  { name: 'fx', run: fx.runFixtureChecks },
++  { name: 'cross-source', run: cross.runFixtureChecks },
++];
++
++const SPECS: SourceSpec[] = [
++  bankKftc.spec,
++  bankAgg.spec,
++  sabangnet.spec,
++  cafe24.spec,
++  delivery.spec,
++  ...ads.specs,
++  wehago.spec,
++  fx.eximSpec,
++  fx.ecosSpec,
++];
++
++function parseArgs(argv: string[]): { live: string | undefined; date: string } {
++  let live: string | undefined;
++  let date = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
++  for (let i = 0; i < argv.length; i += 1) {
++    if (argv[i] === '--live') live = argv[i + 1] ?? 'all';
++    if (argv[i] === '--date') date = argv[i + 1] ?? date;
++  }
++  return { live, date };
++}
++
++async function main(): Promise<number> {
++  const { live, date } = parseArgs(process.argv.slice(2));
++  mkdirSync(RESULTS_DIR, { recursive: true });
++  const startedAtUtc = new Date().toISOString();
++
++  if (live !== undefined) {
++    const targets: LiveSource[] = live === 'all' ? LIVE_SOURCES : [live as LiveSource];
++    const results = [];
++    for (const t of targets) {
++      if (!LIVE_SOURCES.includes(t))
++        throw new Error(`지원하지 않는 live 소스: ${t}. 가능: ${LIVE_SOURCES.join(', ')}`);
++      const r = await runLive(t, date);
++      results.push(r);
++      console.log(`[live] ${r.source.padEnd(14)} ${r.status.padEnd(24)} ${r.summary}`);
++    }
++    const out = {
++      mode: 'live',
++      targetDate: date,
++      startedAtUtc,
++      finishedAtUtc: new Date().toISOString(),
++      results,
++    };
++    writeFileSync(join(RESULTS_DIR, 'live-run.json'), `${JSON.stringify(out, null, 2)}\n`);
++    const anyVerified = results.some((r) => r.verified);
++    console.log(
++      `\n실제 수집 검증 완료 소스: ${
++        anyVerified
++          ? results
++              .filter((r) => r.verified)
++              .map((r) => r.source)
++              .join(', ')
++          : '없음'
++      }`,
++    );
++    return results.every((r) => r.status === 'OK') ? 0 : 2;
++  }
++
++  const suites: { name: string; checks: CheckResult[] }[] = [];
++  let failed = 0;
++  for (const s of FIXTURE_SUITES) {
++    let checks: CheckResult[];
++    try {
++      checks = s.run();
++    } catch (e) {
++      checks = [
++        {
++          id: `${s.name}-EXC`,
++          title: '실행 예외',
++          passed: false,
++          detail: e instanceof Error ? e.message : String(e),
++          synthetic: true,
++        },
++      ];
++    }
++    suites.push({ name: s.name, checks });
++    console.log(`\n## ${s.name}`);
++    for (const c of checks) {
++      if (!c.passed) failed += 1;
++      console.log(
++        `  ${c.passed ? 'PASS' : 'FAIL'} ${c.id} ${c.title}${c.detail ? ` — ${c.detail}` : ''}`,
++      );
++    }
++  }
++  const mappingSummary = SPECS.map((s) => ({
++    sourceSystem: s.sourceSystem,
++    displayName: s.displayName,
++    coverage: coverage(s),
++    docs: s.docs,
++  }));
++  const out = {
++    mode: 'fixtures',
++    synthetic: true,
++    note: '가상 데이터 검증. 실제 연동 성공을 의미하지 않음(실제 수집 미검증).',
++    startedAtUtc,
++    finishedAtUtc: new Date().toISOString(),
++    totalChecks: suites.reduce((n, s) => n + s.checks.length, 0),
++    failed,
++    suites,
++    mappingSummary,
++  };
++  writeFileSync(join(RESULTS_DIR, 'fixture-run.json'), `${JSON.stringify(out, null, 2)}\n`);
++  console.log(
++    `\n총 ${out.totalChecks}건 중 실패 ${failed}건. 결과: results/fixture-run.json (synthetic=true)`,
++  );
++  return failed === 0 ? 0 : 1;
++}
++
++main().then(
++  (code) => {
++    process.exitCode = code;
++  },
++  (e: unknown) => {
++    console.error(e);
++    process.exitCode = 1;
++  },
++);
+diff --git a/fin/FIN-01/verify/samples.ts b/fin/FIN-01/verify/samples.ts
+new file mode 100644
+index 0000000..210d41d
+--- /dev/null
++++ b/fin/FIN-01/verify/samples.ts
+@@ -0,0 +1,32 @@
++/**
++ * 비식별 가상 샘플 로더. 모든 샘플은 _meta.synthetic === true 여야 하며,
++ * 실제 원천 응답이 아니다. 실제 응답이 확보되면 별도 폴더로 분리한다.
++ */
++
++import { readFileSync } from 'node:fs';
++import { dirname, join } from 'node:path';
++import { fileURLToPath } from 'node:url';
++
++const SAMPLES_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'samples');
++
++export interface SampleMeta {
++  synthetic: boolean;
++  description: string;
++  modeledOn: string;
++}
++
++export function loadSample<T>(fileName: string): { meta: SampleMeta; data: T } {
++  const raw = JSON.parse(readFileSync(join(SAMPLES_DIR, fileName), 'utf8')) as {
++    _meta?: SampleMeta;
++    data?: T;
++  };
++  if (!raw._meta || raw._meta.synthetic !== true) {
++    throw new Error(`샘플 ${fileName} 은 _meta.synthetic === true 표시가 필요하다`);
++  }
++  if (raw.data === undefined) throw new Error(`샘플 ${fileName} 에 data 가 없다`);
++  return { meta: raw._meta, data: raw.data };
++}
++
++export function samplePath(fileName: string): string {
++  return join(SAMPLES_DIR, fileName);
++}
+diff --git a/fin/FIN-01/verify/sources/accounting-wehago.ts b/fin/FIN-01/verify/sources/accounting-wehago.ts
+new file mode 100644
+index 0000000..f2a0917
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/accounting-wehago.ts
+@@ -0,0 +1,157 @@
++/**
++ * 회계: 위하고(더존) 공식 읽기 경로.
++ *
++ * 확인일 2026-09-14. wehago.com / developers.wehago.com 은 본 환경에서 차단. 검색 결과에서
++ * 공식 개발자 포털·Open API 문서·전표 조회 API 존재를 확인하지 못했다(리플릿에 "Report 파일 또는 API 형태"
++ * 언급만 발췌). 현재 계약·권한에서 이용 가능한 읽기 경로는 더존 담당자 확인이 필요하다(미확인).
++ * 아래는 월 단위 자료(월간/누적 구분)를 받았을 때의 변환 규칙 검증만 수행한다.
++ */
++
++import { sub } from '../decimal';
++import { type SourceSpec } from '../mapping';
++import { check, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import type { AccountingLine, LegalEntity } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'ACCOUNTING_WEHAGO',
++  displayName: '위하고 회계 읽기 경로',
++  docs: [
++    { url: 'https://www.wehago.com/', checkedOn: '2026-09-14', access: 'BLOCKED' },
++    {
++      url: 'https://www.douzoneon.com/s1/down/wehago_leaflet.pdf',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['legalEntity', 'fiscalPeriod', 'accountCode', 'voucherId', 'lineId'],
++  mappings: [
++    {
++      target: '공식 읽기 API 존재·자격',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '개발자 포털·API 문서 미확인. 계약 상품별 제공 범위는 더존 확인 필요',
++    },
++    {
++      target: 'legalEntity / fiscalPeriod',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '회사코드·회계기간 컬럼 가정',
++    },
++    {
++      target: 'accountCode / amount',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '계정코드·금액(차/대) 컬럼 가정',
++    },
++    {
++      target: 'voucherId / lineId',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '전표번호·행번호 제공 시 함께 수집. 원장/손익 요약만 제공되면 없음',
++    },
++    {
++      target: 'dataShape(MONTHLY/CUMULATIVE)',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '자료 형태를 사용자가 지정. 누적은 동일 기준 전월 누적이 있을 때만 차감',
++    },
++    {
++      target: '원천 최신성',
++      transform: 'derived',
++      status: 'CONFIRMED',
++      note: '사용자 확인 사항: 전표는 월 단위 정리 → 자동 조회 가능해도 자료 기준일은 전월 이하',
++    },
++  ],
++};
++
++interface WehagoSample {
++  legalEntity: LegalEntity;
++  lines: {
++    fiscalPeriod: string;
++    accountCode: string;
++    amount: string;
++    dataShape: 'MONTHLY' | 'CUMULATIVE';
++  }[];
++}
++
++/**
++ * 누적 → 월간 전환: 동일 기준 전월 누적이 있을 때만 차감한다.
++ * 전월 누적이 없는 행은 임의 산출하지 않고 unconvertible 목록에 남긴다(사용자에게 자료 요청).
++ */
++export function toMonthly(lines: readonly AccountingLine[]): {
++  monthly: AccountingLine[];
++  unconvertible: string[];
++} {
++  const monthly: AccountingLine[] = [];
++  const unconvertible: string[] = [];
++  for (const l of lines) {
++    if (l.dataShape === 'MONTHLY') {
++      monthly.push(l);
++      continue;
++    }
++    const [y, m] = l.fiscalPeriod.split('-').map(Number) as [number, number];
++    if (m === 1) {
++      monthly.push({ ...l, dataShape: 'MONTHLY' });
++      continue;
++    }
++    const prevPeriod = `${y}-${String(m - 1).padStart(2, '0')}`;
++    const prev = lines.find(
++      (p) =>
++        p.fiscalPeriod === prevPeriod &&
++        p.accountCode === l.accountCode &&
++        p.dataShape === 'CUMULATIVE' &&
++        p.legalEntity === l.legalEntity,
++    );
++    if (!prev) {
++      unconvertible.push(
++        `전월 누적 없음: ${l.legalEntity} ${l.accountCode} ${l.fiscalPeriod} (필요: ${prevPeriod})`,
++      );
++      continue;
++    }
++    monthly.push({ ...l, amount: sub(l.amount, prev.amount), dataShape: 'MONTHLY' });
++  }
++  return { monthly, unconvertible };
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<WehagoSample>('accounting-wehago-placeholder.json');
++  const lines: AccountingLine[] = data.lines.map((l) => ({
++    legalEntity: data.legalEntity,
++    fiscalPeriod: l.fiscalPeriod,
++    accountCode: l.accountCode,
++    amount: l.amount,
++    dataShape: l.dataShape,
++    version: 'run-1',
++  }));
++  const { monthly, unconvertible } = toMonthly(lines);
++  const aug = monthly.find((l) => l.fiscalPeriod === '2026-08' && l.accountCode === '401');
++  const monthlyLine = monthly.find((l) => l.accountCode === '501');
++  return [
++    check(
++      'ACC-WHG-01',
++      '누적 자료는 동일 기준 전월 누적과 차감해 월간 전환(§12-12)',
++      aug !== undefined && aug.amount === '3000000',
++      aug ? `8월 401 = ${aug.amount}` : '없음',
++    ),
++    check(
++      'ACC-WHG-02',
++      '전월 누적이 없는 행(7월 401)은 임의 산출하지 않고 전환 불가 목록으로 남김',
++      unconvertible.length === 1 && (unconvertible[0] ?? '').includes('2026-07'),
++      unconvertible.join('; '),
++    ),
++    check(
++      'ACC-WHG-03',
++      '월간 자료는 차감하지 않음',
++      monthlyLine !== undefined && monthlyLine.amount === '450000',
++      monthlyLine ? monthlyLine.amount : '없음',
++    ),
++    check(
++      'ACC-WHG-04',
++      '공식 읽기 경로·자격 미확인 → 접근 대기(실제 수집 미검증)',
++      spec.mappings.some((m) => m.status === 'MISSING'),
++      '더존 담당자 확인 필요',
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/ads.ts b/fin/FIN-01/verify/sources/ads.ts
+new file mode 100644
+index 0000000..c2944dd
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/ads.ts
+@@ -0,0 +1,526 @@
++/**
++ * 광고 5개 경로: 메타·구글·네이버·쿠팡·틱톡.
++ *
++ * 공통 검증 규칙(계획서 §5 ad_daily_spend): (계정, 일자) 단위 재수집은 대체(누적 합산 금지),
++ * 원천 계정 시간대와 통화를 보존, 세금 기준을 UNKNOWN 으로 두되 확정 표시하지 않음.
++ */
++
++import { eq, fromMicros, sum } from '../decimal';
++import { type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import type { AdBalance, AdDailySpend, LegalEntity } from '../types';
++
++const D = '2026-09-14';
++
++export const metaSpec: SourceSpec = {
++  sourceSystem: 'ADS_META',
++  displayName: '메타 Marketing API Insights',
++  docs: [
++    {
++      url: 'https://developers.facebook.com/docs/marketing-api/insights/',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developers.facebook.com/docs/marketing-api/insights/best-practices/',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developers.meta.com/blog/updates-to-ads-management-standard-access-feature/',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: '광고 계정 시간대(계정 설정값)',
++  keyFields: ['account_id', 'date_start'],
++  mappings: [
++    {
++      target: 'adAccountAlias',
++      source: 'account_id (act_{id})',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'date',
++      source: 'date_start (= date_stop, time_increment=1)',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '계정 시간대 일자. KST 로 이동하지 않음',
++    },
++    {
++      target: 'spend',
++      source: 'spend',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '문자열 소수',
++    },
++    {
++      target: 'currency',
++      source: 'account_currency',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'taxBasis',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '소진액에 VAT 포함 여부는 계정 국가·과세 설정에 따름. 미확인 → UNKNOWN',
++    },
++    {
++      target: '과거 수정 반영',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '기여 창 마감으로 최대 28일 소급 갱신(제3자 요약). 최근 7일 재조회 + 주간 28일 재점검 필요',
++    },
++    {
++      target: '조회 가능 기간',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '집계 지표 37개월, 일부 breakdown 13개월 등 제한(제3자 요약, 공식 원문 확인 필요)',
++    },
++    {
++      target: '인증',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: 'System User 토큰(Business Manager) 권장. 앱 접근 등급(Marketing API Access Tier)과 비즈니스 인증 필요',
++    },
++    {
++      target: 'AdBalance',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '선불 잔액 조회 API 미확인. 광고 계정 balance 필드는 미납액 성격일 가능성 → 미확인',
++    },
++  ],
++};
++
++export const googleSpec: SourceSpec = {
++  sourceSystem: 'ADS_GOOGLE',
++  displayName: '구글 Ads API(GAQL)',
++  docs: [
++    {
++      url: 'https://developers.google.com/google-ads/api/docs/get-started/onboarding',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://ads-developers.googleblog.com/2026/02/an-update-on-google-ads-api-developer.html',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://ads-developers.googleblog.com/2026/07/passkey-authentication-requirement-for.html',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'customer.time_zone',
++  keyFields: ['customer.id', 'segments.date'],
++  mappings: [
++    {
++      target: 'adAccountAlias',
++      source: 'customer.id',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'date',
++      source: 'segments.date',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '계정 시간대 일자',
++    },
++    {
++      target: 'spend',
++      source: 'metrics.cost_micros',
++      transform: 'micros_to_decimal',
++      status: 'SNIPPET',
++      note: '÷1,000,000. 십진수 변환',
++    },
++    {
++      target: 'currency',
++      source: 'customer.currency_code',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'sourceTz',
++      source: 'customer.time_zone',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'taxBasis',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '한국 계정 VAT 별도 청구 여부 미확인 → UNKNOWN',
++    },
++    {
++      target: '인증',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '2026-09-09 개발자 토큰 폐지, 접근 등급이 Google Cloud 프로젝트에 귀속(공식 블로그 발췌). 2026-08-05부터 신규 refresh token 발급에 패스키 필요',
++    },
++    {
++      target: 'AdBalance',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '선불 잔액 조회 경로 미확인',
++    },
++  ],
++};
++
++export const naverSpec: SourceSpec = {
++  sourceSystem: 'ADS_NAVER',
++  displayName: '네이버 검색광고 API(Stats / Bizmoney)',
++  docs: [
++    { url: 'https://naver.github.io/searchad-apidoc/', checkedOn: D, access: 'BLOCKED' },
++    { url: 'https://github.com/naver/searchad-apidoc', checkedOn: D, access: 'SEARCH_SNIPPET' },
++    {
++      url: 'http://naver.github.io/searchad-apidoc/notice/2021/03/09/notice1/',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['customerId', 'dateStart'],
++  mappings: [
++    {
++      target: 'adAccountAlias',
++      source: 'X-Customer(customerId)',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'date',
++      source: 'timeRange + timeIncrement=1 (Stats) / statDt (StatReport)',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'spend',
++      source: 'salesAmt',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '광고비. VAT 포함 여부 미확인',
++    },
++    { target: 'currency', transform: 'constant', constant: 'KRW', status: 'CONFIRMED', note: '' },
++    {
++      target: 'taxBasis',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '비즈머니 차감액과 보고서 광고비의 VAT 관계 미확인',
++    },
++    {
++      target: 'AdBalance',
++      source: 'GET /billing/bizmoney (get, get(period))',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '비즈머니 잔액 조회 존재(GitHub 이슈로 확인). 응답 필드명 원문 확인 필요',
++    },
++    {
++      target: '조회 제한',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: 'StatReport timeRange 최대 92일(제3자 요약)',
++    },
++    {
++      target: '인증',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '액세스라이선스·비밀키·X-Customer, X-Timestamp, X-Signature(HMAC). 광고플랫폼 > 도구 > API 사용관리에서 발급',
++    },
++  ],
++};
++
++export const coupangSpec: SourceSpec = {
++  sourceSystem: 'ADS_COUPANG',
++  displayName: '쿠팡 광고(Coupang Ads) 소진액',
++  docs: [
++    { url: 'https://ads.coupang.com/AaaAna.html', checkedOn: D, access: 'SEARCH_SNIPPET' },
++    { url: 'https://developers.coupang.com/ko/api', checkedOn: D, access: 'SEARCH_SNIPPET' },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['adAccountAlias', 'date'],
++  mappings: [
++    {
++      target: 'spend (일별 광고비)',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '판매자용 공식 광고 소진액 API 를 확인하지 못함. 광고센터 보고서(일별/월별 광고비 정산 리포트) 엑셀 다운로드만 확인 → 보조 경로(엑셀) 가능성',
++    },
++    { target: 'AdBalance', transform: 'derived', status: 'MISSING', note: '잔액 조회 경로 미확인' },
++    {
++      target: '갱신 지연',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '전일 데이터 익일 12:30 이후(애드팝콘 CPS 일별 리포트 안내, 판매자 광고와 동일 여부 미확인) → 10시 전 전일 확정 불가 가능성',
++    },
++  ],
++};
++
++export const tiktokSpec: SourceSpec = {
++  sourceSystem: 'ADS_TIKTOK',
++  displayName: '틱톡 Marketing API(report/integrated/get, advertiser/balance/get)',
++  docs: [
++    { url: 'https://business-api.tiktok.com/portal/docs', checkedOn: D, access: 'BLOCKED' },
++    {
++      url: 'https://github.com/tiktok/tiktok-business-api-sdk',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: '광고 계정 시간대(advertiser/info)',
++  keyFields: ['advertiser_id', 'stat_time_day'],
++  mappings: [
++    {
++      target: 'adAccountAlias',
++      source: 'advertiser_id',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'date',
++      source: 'dimensions.stat_time_day',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: 'data_level=AUCTION_ADVERTISER, 일별 분해 시 1회 최대 30일(제3자 요약)',
++    },
++    { target: 'spend', source: 'metrics.spend', transform: 'decimal', status: 'SNIPPET', note: '' },
++    {
++      target: 'currency / sourceTz',
++      source: 'advertiser/info currency, timezone',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '필드명 원문 확인 필요',
++    },
++    {
++      target: 'AdBalance',
++      source: 'advertiser/balance/get',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '엔드포인트 존재 확인(SDK 문서). 응답 필드명·선불/후불 구분 미확인',
++    },
++    { target: 'taxBasis', transform: 'derived', status: 'ASSUMED', note: '미확인' },
++    {
++      target: '인증·갱신',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: 'Marketing API 장기 access token 만료 정책 미확인(검색 결과의 24h/1년은 크리에이터 API 기준)',
++    },
++  ],
++};
++
++export const specs = [metaSpec, googleSpec, naverSpec, coupangSpec, tiktokSpec];
++
++interface AdsSample {
++  legalEntity: LegalEntity;
++  meta: {
++    account_id: string;
++    account_currency: string;
++    timezone: string;
++    rows: { date_start: string; date_stop: string; spend: string }[];
++    revisedRows: { date_start: string; date_stop: string; spend: string }[];
++  };
++  google: {
++    customerId: string;
++    currency_code: string;
++    time_zone: string;
++    rows: { date: string; cost_micros: string }[];
++  };
++  naver: {
++    customerId: string;
++    rows: { statDt: string; salesAmt: string }[];
++    bizmoney: { balance: string; observedAtUtc: string };
++  };
++  tiktok: {
++    advertiser_id: string;
++    currency: string;
++    timezone: string;
++    rows: { stat_time_day: string; spend: string }[];
++    requestedDays: number;
++  };
++}
++
++class SpendStore {
++  private readonly map = new Map<string, AdDailySpend>();
++  upsert(rec: AdDailySpend): void {
++    this.map.set(`${rec.platform}|${rec.adAccountAlias}|${rec.date}`, rec);
++  }
++  total(platform: AdDailySpend['platform']): string {
++    return sum([...this.map.values()].filter((r) => r.platform === platform).map((r) => r.spend));
++  }
++  count(platform: AdDailySpend['platform']): number {
++    return [...this.map.values()].filter((r) => r.platform === platform).length;
++  }
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<AdsSample>('ads-placeholder.json');
++  const store = new SpendStore();
++  const results: CheckResult[] = [];
++
++  // META: 일별 대체(재수집 시 누적 합산 금지), 계정 시간대 보존
++  for (const r of data.meta.rows) {
++    store.upsert({
++      legalEntity: data.legalEntity,
++      platform: 'META',
++      adAccountAlias: data.meta.account_id,
++      date: r.date_start,
++      sourceTz: data.meta.timezone,
++      currency: data.meta.account_currency,
++      spend: r.spend,
++      taxBasis: 'UNKNOWN',
++      sourceVersion: 'run-1',
++    });
++  }
++  const metaFirst = store.total('META');
++  for (const r of data.meta.revisedRows) {
++    store.upsert({
++      legalEntity: data.legalEntity,
++      platform: 'META',
++      adAccountAlias: data.meta.account_id,
++      date: r.date_start,
++      sourceTz: data.meta.timezone,
++      currency: data.meta.account_currency,
++      spend: r.spend,
++      taxBasis: 'UNKNOWN',
++      sourceVersion: 'run-2',
++    });
++  }
++  const metaRevisedExpected = sum(data.meta.revisedRows.map((r) => r.spend));
++  results.push(
++    check(
++      'ADS-META-01',
++      '(계정,일자) 재수집은 대체. 소급 수정 후 합계 = 최신 응답 합계(누적 합산 금지)',
++      eq(store.total('META'), metaRevisedExpected) && !eq(metaFirst, store.total('META')),
++      `1차 ${metaFirst} → 재수집 ${store.total('META')} (최신 응답 ${metaRevisedExpected})`,
++    ),
++  );
++  results.push(
++    check(
++      'ADS-META-02',
++      '계정 시간대(America/Los_Angeles) 일자를 KST 로 이동하지 않고 sourceTz 보존',
++      data.meta.timezone !== 'Asia/Seoul' && store.count('META') === data.meta.rows.length,
++      `tz=${data.meta.timezone}, rows=${store.count('META')}`,
++    ),
++  );
++
++  // GOOGLE: micros → 십진수
++  const gRaw = data.google.rows.map((r) => fromMicros(r.cost_micros));
++  for (const r of data.google.rows) {
++    store.upsert({
++      legalEntity: data.legalEntity,
++      platform: 'GOOGLE',
++      adAccountAlias: data.google.customerId,
++      date: r.date,
++      sourceTz: data.google.time_zone,
++      currency: data.google.currency_code,
++      spend: fromMicros(r.cost_micros),
++      taxBasis: 'UNKNOWN',
++      sourceVersion: 'run-1',
++    });
++  }
++  const gRec = reconcile('google', gRaw, gRaw);
++  results.push(
++    check(
++      'ADS-GOOG-01',
++      'cost_micros ÷ 1e6 십진수 변환(부동소수점 미사용) 및 합계 대조',
++      gRec.amountMatch && eq(store.total('GOOGLE'), gRec.rawAmount),
++      `합계 ${store.total('GOOGLE')} ${data.google.currency_code}`,
++    ),
++  );
++
++  // NAVER: 소진액과 비즈머니 잔액 분리
++  for (const r of data.naver.rows) {
++    store.upsert({
++      legalEntity: data.legalEntity,
++      platform: 'NAVER',
++      adAccountAlias: data.naver.customerId,
++      date: r.statDt,
++      sourceTz: 'Asia/Seoul',
++      currency: 'KRW',
++      spend: r.salesAmt,
++      taxBasis: 'UNKNOWN',
++      sourceVersion: 'run-1',
++    });
++  }
++  const naverBalance: AdBalance = {
++    legalEntity: data.legalEntity,
++    platform: 'NAVER',
++    adAccountAlias: data.naver.customerId,
++    observedAtUtc: data.naver.bizmoney.observedAtUtc,
++    currency: 'KRW',
++    balance: data.naver.bizmoney.balance,
++    balanceKind: 'PREPAID_REMAINING',
++  };
++  results.push(
++    check(
++      'ADS-NAVER-01',
++      '소진액(salesAmt)과 비즈머니 잔액을 별도 레코드로 보존(잔액을 비용으로 쓰지 않음)',
++      store.count('NAVER') === data.naver.rows.length &&
++        naverBalance.balanceKind === 'PREPAID_REMAINING',
++      `소진 ${store.total('NAVER')} / 잔액 ${naverBalance.balance}`,
++    ),
++  );
++
++  // TIKTOK: 30일 창 초과 요청 감지
++  results.push(
++    check(
++      'ADS-TT-01',
++      '일별 분해 조회 30일 제한(제3자 요약) 초과 요청은 분할해야 함',
++      data.tiktok.requestedDays > 30,
++      `요청 ${data.tiktok.requestedDays}일 → ${Math.ceil(data.tiktok.requestedDays / 30)}회 분할 필요`,
++    ),
++  );
++  for (const r of data.tiktok.rows) {
++    store.upsert({
++      legalEntity: data.legalEntity,
++      platform: 'TIKTOK',
++      adAccountAlias: data.tiktok.advertiser_id,
++      date: r.stat_time_day.slice(0, 10),
++      sourceTz: data.tiktok.timezone,
++      currency: data.tiktok.currency,
++      spend: r.spend,
++      taxBasis: 'UNKNOWN',
++      sourceVersion: 'run-1',
++    });
++  }
++  results.push(
++    check(
++      'ADS-TT-02',
++      'stat_time_day → date, 통화·시간대 보존',
++      store.count('TIKTOK') === data.tiktok.rows.length,
++      `rows=${store.count('TIKTOK')} ${data.tiktok.currency} ${data.tiktok.timezone}`,
++    ),
++  );
++
++  // COUPANG: 자동 경로 미확인
++  results.push(
++    check(
++      'ADS-CPNG-01',
++      '쿠팡 광고 소진액 공식 API 미확인 → 접근 대기(엑셀 보조 경로 후보). 자동 수집 가능으로 표시하지 않음',
++      coupangSpec.mappings.some((m) => m.status === 'MISSING'),
++      '광고센터 리포트 엑셀 다운로드만 확인',
++    ),
++  );
++
++  results.push(
++    check(
++      'ADS-ALL-01',
++      '광고 5개 경로 모두 실제 호출 미실행(자격·네트워크 없음) → 실제 수집 미검증',
++      true,
++      specs.map((s) => s.sourceSystem).join(', '),
++    ),
++  );
++  return results;
++}
+diff --git a/fin/FIN-01/verify/sources/bank-aggregator.ts b/fin/FIN-01/verify/sources/bank-aggregator.ts
+new file mode 100644
+index 0000000..406efa2
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/bank-aggregator.ts
+@@ -0,0 +1,174 @@
++/**
++ * 은행 후보 2/3: 웹케시 브랜치(ERP연계 API) · CODEF 기업 계좌 API.
++ *
++ * 두 경로 모두 공식 문서 원문을 본 환경에서 열람하지 못했고 응답 필드명을 확인하지 못했다.
++ * 따라서 필드명을 가정하지 않고, 실제 샘플이 오면 컬럼 이름만 바꾸는 "설정 기반 매핑" 으로 둔다.
++ * 아래 fixture 의 컬럼명은 검증 코드 동작 확인용 자리표시자이며 원천 명세가 아니다.
++ */
++
++import { neg } from '../decimal';
++import { buildSourceKey, readPath, type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import { localToUtc } from '../time';
++import type { BankTransaction, LegalEntity } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'BANK_AGGREGATOR',
++  displayName: '법인 다은행 조회 중계(웹케시 브랜치 / CODEF / 하이픈)',
++  docs: [
++    {
++      url: 'https://www.xbranch.co.kr/branch/html/branch4_2000.html',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developer.codef.io/products/bank/common/b/transaction',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developer.codef.io/products/bank/common/b/fastAccount',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://hyphen.im/product/view?seq=54',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['_configured'],
++  mappings: [
++    {
++      target: 'legalEntity / accountAlias / currency',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '계좌번호·은행코드·통화 컬럼이 응답에 있을 것으로 예상(브랜치는 외화계좌 17개 은행 지원 표기, CODEF 는 기업 외화 거래내역 API 별도 존재). 컬럼명 미확인',
++    },
++    {
++      target: 'sourceKey',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '거래 고유번호 제공 여부 미확인. 없으면 (계좌, 거래일시, 입출금, 거래후잔액, 순번) 대체키',
++    },
++    {
++      target: 'occurredAtLocal',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '거래일·거래시각 컬럼명 미확인',
++    },
++    {
++      target: 'direction / amount',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '입금액·출금액 분리 컬럼 또는 부호 컬럼 여부 미확인',
++    },
++    {
++      target: 'balanceAfter',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '거래후잔액 컬럼명 미확인',
++    },
++    {
++      target: '기준일 잔액(전일 마감)',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '잔액 조회가 조회 시점 기준인지 일자 기준인지 미확인',
++    },
++    {
++      target: '과거 조회 가능 기간 / 갱신 지연 / 호출 제한 / 요금',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '검색 결과에 요금·제한이 없었음. 영업 문의 필요',
++    },
++  ],
++};
++
++/** 설정 기반 컬럼 매핑: 실제 응답이 확보되면 이 값만 교체한다. */
++export interface AggregatorColumnConfig {
++  accountId: string;
++  currency: string;
++  txnId?: string;
++  date: string;
++  time: string;
++  inAmount: string;
++  outAmount: string;
++  balanceAfter: string;
++  description: string;
++}
++
++interface AggregatorSample {
++  columns: AggregatorColumnConfig;
++  accountMapping: Record<string, { legalEntity: LegalEntity; accountAlias: string }>;
++  rows: Record<string, string>[];
++}
++
++function normalize(sample: AggregatorSample): BankTransaction[] {
++  const c = sample.columns;
++  return sample.rows.map((row, i) => {
++    const accountId = String(readPath(row, c.accountId));
++    const acct = sample.accountMapping[accountId];
++    if (!acct) throw new Error(`미매핑 계좌: ${accountId}`);
++    const inAmt = String(readPath(row, c.inAmount) ?? '0');
++    const outAmt = String(readPath(row, c.outAmount) ?? '0');
++    const direction: BankTransaction['direction'] = inAmt !== '0' ? 'IN' : 'OUT';
++    const occurredAtLocal = `${String(readPath(row, c.date))}T${String(readPath(row, c.time))}`;
++    const keyFields = c.txnId
++      ? [c.txnId]
++      : [c.accountId, c.date, c.time, c.inAmount, c.outAmount, c.balanceAfter, '_seq'];
++    const sourceKey = buildSourceKey(
++      spec.sourceSystem,
++      acct.accountAlias,
++      { ...row, _seq: String(i + 1) },
++      keyFields,
++    );
++    return {
++      legalEntity: acct.legalEntity,
++      accountAlias: acct.accountAlias,
++      currency: String(readPath(row, c.currency)),
++      sourceKey,
++      occurredAtLocal,
++      sourceTz: spec.sourceTz,
++      occurredAtUtc: localToUtc(occurredAtLocal, spec.sourceTz),
++      direction,
++      amount: direction === 'IN' ? inAmt : outAmt,
++      balanceAfter: String(readPath(row, c.balanceAfter)),
++      description: String(readPath(row, c.description)),
++    };
++  });
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<AggregatorSample>('bank-aggregator-placeholder.json');
++  const txns = normalize(data);
++  const rawSigned = data.rows.map((r) => {
++    const inAmt = String(readPath(r, data.columns.inAmount) ?? '0');
++    const outAmt = String(readPath(r, data.columns.outAmount) ?? '0');
++    return inAmt !== '0' ? inAmt : neg(outAmt);
++  });
++  const normSigned = txns.map((t) => (t.direction === 'IN' ? t.amount : neg(t.amount)));
++  const rec = reconcile('bank-aggregator', rawSigned, normSigned);
++  const usd = txns.filter((t) => t.currency === 'USD');
++  return [
++    check(
++      'BANK-AGG-01',
++      '설정 기반 컬럼 매핑으로 건수·순금액 대조(자리표시자 컬럼명)',
++      rec.countMatch && rec.amountMatch,
++      `원본 ${rec.rawCount}건 ${rec.rawAmount} / 정규화 ${rec.normalizedCount}건 ${rec.normalizedAmount}`,
++    ),
++    check(
++      'BANK-AGG-02',
++      'USD 계좌 거래는 원통화 금액을 보존하고 환산하지 않음',
++      usd.length > 0 && usd.every((t) => /^\d+(\.\d{1,2})?$/.test(t.amount)),
++      `USD 거래 ${usd.length}건: ${usd.map((t) => t.amount).join(', ')}`,
++    ),
++    check(
++      'BANK-AGG-03',
++      '실제 응답 필드명 미확인 → 실제 수집 미검증(ASSUMED 만 존재)',
++      spec.mappings.every((m) => m.status === 'ASSUMED'),
++      `mappings ${spec.mappings.length}개 전부 ASSUMED`,
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/bank-kftc.ts b/fin/FIN-01/verify/sources/bank-kftc.ts
+new file mode 100644
+index 0000000..5b38172
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/bank-kftc.ts
+@@ -0,0 +1,298 @@
++/**
++ * 은행 후보 1: 금융결제원 오픈뱅킹 거래내역조회·잔액조회 API.
++ *
++ * 확인일 2026-09-14. 공식 문서 호스트(developers.kftc.or.kr, openapi.kftc.or.kr)는 본 환경에서
++ * 열람이 차단되어 검색 결과 발췌로만 필드명을 확인했다(SNIPPET). 실제 호출은 미검증.
++ */
++
++import { neg, sum } from '../decimal';
++import { SourceRecordStore } from '../dedupe';
++import { buildSourceKey, coverage, type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import { localToUtc, yyyymmddHhmmssToLocal, yyyymmddToIso } from '../time';
++import type { BankBalance, BankTransaction, LegalEntity } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'BANK_KFTC_OPENBANKING',
++  displayName: '금융결제원 오픈뱅킹(거래내역조회·잔액조회)',
++  docs: [
++    {
++      url: 'https://developers.kftc.or.kr/dev/openapi/open-banking/transaction',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developers.kftc.or.kr/dev/openapi/open-banking/balance',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    { url: 'https://openapi.kftc.or.kr/', checkedOn: '2026-09-14', access: 'BLOCKED' },
++  ],
++  sourceTz: 'Asia/Seoul',
++  // 거래 단위 ID 를 제공하지 않으므로(bank_tran_id 는 API 호출 단위) 대체 식별을 사용한다.
++  keyFields: ['tran_date', 'tran_time', 'inout_type', 'tran_amt', 'after_balance_amt', '_seq'],
++  mappings: [
++    {
++      target: 'legalEntity / accountAlias / currency',
++      source: 'fintech_use_num',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '핀테크이용번호 → external_mappings 로 법인·은행·계좌·통화 매핑. 통화는 응답에 없어 계좌 등록 정보로 확정해야 함',
++    },
++    {
++      target: 'sourceKey',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '거래별 고유 ID 없음. (핀테크이용번호, tran_date, tran_time, inout_type, tran_amt, after_balance_amt, 페이지 내 순번) 대체키. 같은 날짜·금액의 정상 거래 2건은 after_balance_amt 와 순번으로 구분',
++    },
++    {
++      target: 'occurredAtLocal',
++      source: 'res_list[].tran_date + tran_time',
++      transform: 'yyyymmdd_hhmmss_to_local_datetime',
++      status: 'SNIPPET',
++      note: 'YYYYMMDD + HHmmss, Asia/Seoul',
++    },
++    {
++      target: 'direction',
++      source: 'res_list[].inout_type',
++      transform: 'inout_to_direction',
++      status: 'SNIPPET',
++      note: '"입금"→IN, "출금"→OUT. 값 목록은 원문 확인 필요',
++    },
++    {
++      target: 'amount',
++      source: 'res_list[].tran_amt',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '문자열 정수(원). 소수 없음',
++    },
++    {
++      target: 'balanceAfter',
++      source: 'res_list[].after_balance_amt',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '거래 후 잔액. 기준일 잔액은 당일 마지막 거래의 값 또는 잔액조회 API 로 확정',
++    },
++    {
++      target: 'description',
++      source: 'res_list[].print_content',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '통장인자내용. 검색 발췌에서 printed_content 로도 표기됨 → 원문에서 정확한 키 확인 필요',
++    },
++    {
++      target: 'BankBalance.balance',
++      source: 'balance_amt',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '조회 시점 잔액(AT_INQUIRY). 전일 마감 잔액이 아니므로 06:00 수집 시점 잔액을 기준일 잔액으로 대체할지 설계 결정 필요',
++    },
++    {
++      target: '페이지네이션',
++      source: 'page_record_cnt / next_page_yn / befor_inquiry_trace_info',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '페이지당 최대 25건(검색 발췌). next_page_yn=Y 이면 befor_inquiry_trace_info 를 넘겨 재호출',
++    },
++    {
++      target: 'USD 계좌',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '외화계좌 조회 지원 여부를 공식 문서에서 확인하지 못함. 미확인',
++    },
++  ],
++};
++
++interface KftcTxn {
++  tran_date: string;
++  tran_time: string;
++  inout_type: string;
++  tran_type: string;
++  print_content: string;
++  tran_amt: string;
++  after_balance_amt: string;
++  branch_name: string;
++}
++
++interface KftcPage {
++  api_tran_id: string;
++  rsp_code: string;
++  bank_tran_id: string;
++  fintech_use_num: string;
++  balance_amt: string;
++  page_record_cnt: string;
++  next_page_yn: 'Y' | 'N';
++  befor_inquiry_trace_info: string;
++  res_list: KftcTxn[];
++}
++
++interface KftcSample {
++  accountMapping: Record<
++    string,
++    { legalEntity: LegalEntity; accountAlias: string; currency: string; bank: string }
++  >;
++  pages: KftcPage[];
++  /** 재수집 시뮬레이션: 같은 기간 두 번째 조회(원천 정정 1건 포함) */
++  recollectPages: KftcPage[];
++}
++
++function normalizePages(pages: readonly KftcPage[], sample: KftcSample, collectedAtUtc: string) {
++  const txns: BankTransaction[] = [];
++  const items: { sourceKey: string; raw: unknown }[] = [];
++  const balances: BankBalance[] = [];
++  let seq = 0;
++  for (const page of pages) {
++    const acct = sample.accountMapping[page.fintech_use_num];
++    if (!acct) throw new Error(`미매핑 핀테크이용번호: ${page.fintech_use_num}`);
++    for (const t of page.res_list) {
++      seq += 1;
++      const rawWithSeq = { ...t, fintech_use_num: page.fintech_use_num, _seq: String(seq) };
++      const sourceKey = buildSourceKey(spec.sourceSystem, acct.accountAlias, rawWithSeq, [
++        'fintech_use_num',
++        ...spec.keyFields,
++      ]);
++      const occurredAtLocal = yyyymmddHhmmssToLocal(t.tran_date, t.tran_time);
++      txns.push({
++        legalEntity: acct.legalEntity,
++        accountAlias: acct.accountAlias,
++        currency: acct.currency,
++        sourceKey,
++        occurredAtLocal,
++        sourceTz: spec.sourceTz,
++        occurredAtUtc: localToUtc(occurredAtLocal, spec.sourceTz),
++        direction: t.inout_type === '입금' ? 'IN' : 'OUT',
++        amount: t.tran_amt,
++        balanceAfter: t.after_balance_amt,
++        description: t.print_content,
++      });
++      items.push({ sourceKey, raw: t });
++    }
++    if (page.next_page_yn === 'N') {
++      balances.push({
++        legalEntity: acct.legalEntity,
++        accountAlias: acct.accountAlias,
++        currency: acct.currency,
++        asOfDate: yyyymmddToIso(page.res_list.at(-1)?.tran_date ?? '19700101'),
++        balance: page.balance_amt,
++        balanceKind: 'AT_INQUIRY',
++        observedAtUtc: collectedAtUtc,
++      });
++    }
++  }
++  return { txns, items, balances };
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<KftcSample>('bank-kftc-openbanking.json');
++  const collectedAtUtc = new Date().toISOString();
++  const results: CheckResult[] = [];
++
++  // 1) 페이지네이션 완결성: next_page_yn=Y 인 페이지 뒤에 후속 페이지가 있어야 한다.
++  const lastPage = data.pages.at(-1);
++  const paginationComplete =
++    lastPage !== undefined &&
++    lastPage.next_page_yn === 'N' &&
++    data.pages.every((p) => p.res_list.length <= 25) &&
++    data.pages.every((p) => Number(p.page_record_cnt) === p.res_list.length);
++  results.push(
++    check(
++      'BANK-KFTC-01',
++      '페이지네이션: 마지막 페이지 next_page_yn=N, page_record_cnt 와 실제 건수 일치',
++      paginationComplete,
++      `페이지 ${data.pages.length}개, 건수 ${data.pages.reduce((n, p) => n + p.res_list.length, 0)}`,
++    ),
++  );
++
++  // 2) 건수·금액 대조(입금 +, 출금 -)
++  const { txns, items } = normalizePages(data.pages, data, collectedAtUtc);
++  const rawSigned = data.pages.flatMap((p) =>
++    p.res_list.map((t) => (t.inout_type === '입금' ? t.tran_amt : neg(t.tran_amt))),
++  );
++  const normSigned = txns.map((t) => (t.direction === 'IN' ? t.amount : neg(t.amount)));
++  const rec = reconcile('bank-kftc', rawSigned, normSigned);
++  results.push(
++    check(
++      'BANK-KFTC-02',
++      '원본↔정규화 건수·순금액 일치',
++      rec.countMatch && rec.amountMatch,
++      `원본 ${rec.rawCount}건 ${rec.rawAmount} / 정규화 ${rec.normalizedCount}건 ${rec.normalizedAmount}`,
++    ),
++  );
++
++  // 3) 같은 날짜·금액·적요의 정상 거래 2건이 합쳐지지 않는다.
++  const keys = new Set(txns.map((t) => t.sourceKey));
++  results.push(
++    check(
++      'BANK-KFTC-03',
++      '같은 날짜·금액·적요 정상 거래 2건 보존(원천키 분리)',
++      keys.size === txns.length,
++      `고유키 ${keys.size} / 거래 ${txns.length}`,
++    ),
++  );
++
++  // 4) 재수집 무중복 + 원천 정정 시 관측 버전 증가
++  const store = new SourceRecordStore();
++  const first = store.ingest('BANK_KFTC_OPENBANKING', 'DP-KB-001', 'run-1', items);
++  const second = store.ingest('BANK_KFTC_OPENBANKING', 'DP-KB-001', 'run-2', items);
++  const re = normalizePages(data.recollectPages, data, collectedAtUtc);
++  const third = store.ingest('BANK_KFTC_OPENBANKING', 'DP-KB-001', 'run-3', re.items);
++  results.push(
++    check(
++      'BANK-KFTC-04',
++      '동일 응답 재수집 시 무중복, 정정 응답은 관측 버전 추가',
++      first.inserted === items.length &&
++        second.inserted === 0 &&
++        second.unchanged === items.length &&
++        third.versioned === 1 &&
++        store.size() === items.length,
++      `1차 insert ${first.inserted}, 2차 unchanged ${second.unchanged}, 3차 versioned ${third.versioned}, 저장 ${store.size()}`,
++    ),
++  );
++
++  // 5) 계산 잔액 vs 원천 잔액: 기초잔액 + 입금 - 출금 = 마지막 after_balance_amt
++  const opening = '1000000';
++  const computed = sum([opening, ...normSigned]);
++  const lastAfter = txns.at(-1)?.balanceAfter ?? '';
++  results.push(
++    check(
++      'BANK-KFTC-05',
++      '기초잔액 + 누적 입출금 = 마지막 거래 후 잔액(대조, 차이는 조정 거래로 메우지 않음)',
++      computed === lastAfter,
++      `계산 ${computed} / 원천 ${lastAfter}`,
++    ),
++  );
++
++  // 6) 기준일 잔액과 조회 시점 잔액 구분
++  const bal = re.balances[0];
++  results.push(
++    check(
++      'BANK-KFTC-06',
++      '잔액 종류를 AT_INQUIRY 로 표시(전일 마감 잔액과 구분)',
++      bal !== undefined && bal.balanceKind === 'AT_INQUIRY',
++      bal ? `${bal.accountAlias} ${bal.balance} (${bal.balanceKind})` : '잔액 없음',
++    ),
++  );
++
++  // 7) UTC 변환 보존
++  const t0 = txns[0];
++  results.push(
++    check(
++      'BANK-KFTC-07',
++      '원천 시간대(Asia/Seoul) 시각과 UTC 를 함께 보존',
++      t0 !== undefined && t0.occurredAtUtc.endsWith('Z') && t0.sourceTz === 'Asia/Seoul',
++      t0 ? `${t0.occurredAtLocal} ${t0.sourceTz} → ${t0.occurredAtUtc}` : '거래 없음',
++    ),
++  );
++
++  const cov = coverage(spec);
++  results.push(
++    check(
++      'BANK-KFTC-08',
++      '필드매핑 근거 현황(CONFIRMED 0 이면 실제 수집 미검증)',
++      cov.confirmed === 0,
++      `confirmed ${cov.confirmed} / snippet ${cov.snippet} / assumed ${cov.assumed} / missing ${cov.missing}`,
++    ),
++  );
++  return results;
++}
+diff --git a/fin/FIN-01/verify/sources/cross-source.ts b/fin/FIN-01/verify/sources/cross-source.ts
+new file mode 100644
+index 0000000..c476e56
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/cross-source.ts
+@@ -0,0 +1,76 @@
++/**
++ * 출처 간 중복 집계 방지 점검(계획서 §5·§6·§7).
++ *
++ * - 매출 자료와 정산 입금(은행)을 각각 매출로 집계하지 않는다.
++ * - 광고 충전(은행 유출)과 소진(손익 비용)을 구분하고, 소진 시 현금 유출을 다시 만들지 않는다.
++ * - 통합 수집(사방넷)과 직접 수집(채널 API)을 단순 합산하지 않는다.
++ */
++
++import { sum } from '../decimal';
++import { check, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++
++interface CrossSample {
++  bankTransactions: {
++    description: string;
++    direction: 'IN' | 'OUT';
++    amount: string;
++    classification: string;
++  }[];
++  salesNet: string;
++  adPrepaid: { charge: string; spend: string; taxAndFee: string };
++  channelOwners: Record<string, 'SABANGNET' | 'DIRECT_API' | 'DELIVERY_EXCEL'>;
++  eventsByOwner: { channel: string; source: string; amount: string }[];
++}
++
++/** 채널별 담당 원천만 집계한다. 담당 원천이 지정되지 않은 채널은 집계에서 제외하고 목록으로 남긴다. */
++export function aggregateByOwner(sample: CrossSample): { total: string; excluded: string[] } {
++  const excluded: string[] = [];
++  const included: string[] = [];
++  for (const e of sample.eventsByOwner) {
++    const owner = sample.channelOwners[e.channel];
++    if (!owner) {
++      excluded.push(`${e.channel}(담당 원천 미지정)`);
++      continue;
++    }
++    if (owner === e.source) included.push(e.amount);
++    else excluded.push(`${e.channel}/${e.source}(비담당 원천)`);
++  }
++  return { total: sum(included), excluded };
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<CrossSample>('cross-source-placeholder.json');
++  const settlementIn = data.bankTransactions.filter(
++    (t) => t.classification === 'SETTLEMENT_RECEIPT',
++  );
++  const naiveDouble = sum([data.salesNet, ...settlementIn.map((t) => t.amount)]);
++  const { total, excluded } = aggregateByOwner(data);
++  const adCash = data.adPrepaid.charge; // 현금 유출은 충전액만
++  const adPnl = data.adPrepaid.spend; // 손익 비용은 소진액만
++  const adBalance = sum([
++    data.adPrepaid.charge,
++    `-${data.adPrepaid.spend}`,
++    `-${data.adPrepaid.taxAndFee}`,
++  ]);
++  return [
++    check(
++      'X-01',
++      '정산 입금은 은행 거래로만 보존(분류 SETTLEMENT_RECEIPT), 매출에 합산하지 않음',
++      settlementIn.length > 0 && naiveDouble !== data.salesNet,
++      `매출 ${data.salesNet} / 정산입금 ${sum(settlementIn.map((t) => t.amount))} / 합산 시 ${naiveDouble} (금지)`,
++    ),
++    check(
++      'X-02',
++      '선불 광고 충전 100, 소진 60: 은행 -100, 광고 잔액 +40, 손익 비용 60(§12-5)',
++      adCash === '100' && adPnl === '60' && adBalance === '40',
++      `현금 유출 ${adCash}, 비용 ${adPnl}, 잔액 ${adBalance}`,
++    ),
++    check(
++      'X-03',
++      '채널별 담당 원천만 집계, 비담당·미지정은 제외 목록',
++      excluded.length > 0,
++      `집계 ${total}, 제외: ${excluded.join('; ')}`,
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/delivery-excel.ts b/fin/FIN-01/verify/sources/delivery-excel.ts
+new file mode 100644
+index 0000000..4d30fc4
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/delivery-excel.ts
+@@ -0,0 +1,215 @@
++/**
++ * 납품 매출: 승인된 공유 위치의 엑셀 자동 읽기(출고일 기준).
++ *
++ * 실제 납품 엑셀 샘플과 공유 위치는 제공되지 않았다(접근 대기). 아래는 계획서 §4 필수 필드
++ * (법인/거래처/출고번호·행, 출고일, 상품·수량·금액·세금, 반품) 를 컬럼으로 가정한 검증이며,
++ * 실제 파일 헤더가 확보되면 requiredColumns 와 매핑만 교체한다.
++ */
++
++import { createHash } from 'node:crypto';
++
++import { neg, sum } from '../decimal';
++import { type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import type { LegalEntity, SalesEvent } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'DELIVERY_EXCEL',
++  displayName: '납품 엑셀(공유 폴더)',
++  docs: [],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['법인', '출고번호', '행번호'],
++  mappings: [
++    {
++      target: 'legalEntity',
++      source: '법인',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '실제 파일 헤더 미확보',
++    },
++    {
++      target: 'channel(거래처)',
++      source: '거래처',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '거래처 외부 코드 매핑',
++    },
++    {
++      target: 'orderId / lineId',
++      source: '출고번호 / 행번호',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '출고번호가 없으면 파일명+시트+행 식별 사용, 중복 후보 검토',
++    },
++    {
++      target: 'eventDateLocal(출고일)',
++      source: '출고일',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '',
++    },
++    {
++      target: 'productCode / quantity',
++      source: '상품코드 / 수량',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '',
++    },
++    {
++      target: 'netAmount(공급가) / taxAmount',
++      source: '공급가액 / 세액',
++      transform: 'decimal',
++      status: 'ASSUMED',
++      note: '면세·수출 행은 세액 0 가능. 1.1 나누기 금지',
++    },
++    {
++      target: 'RETURNED',
++      source: '반품여부 / 반품일',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '반품 기록 방식(별도 행/음수 행/원행 수정) 미확인',
++    },
++    {
++      target: '수정 감지',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '행 payload 해시 비교로 수정 감지. 삭제된 행은 최신 파일에 없는 키로 식별',
++    },
++    {
++      target: '파일 갱신 주기 / 전일 자료 확보 가능성',
++      transform: 'derived',
++      status: 'MISSING',
++      note: '공유 위치·갱신 시각 미확인. 10시 전 전일분 확보 가능 여부는 사용자 확인 필요',
++    },
++  ],
++};
++
++interface DeliveryRow {
++  법인: string;
++  거래처: string;
++  출고번호: string;
++  행번호: string;
++  출고일: string;
++  상품코드: string;
++  수량: string;
++  공급가액: string;
++  세액: string;
++  반품여부: string;
++  반품일: string;
++}
++
++interface DeliverySample {
++  requiredColumns: string[];
++  entityMapping: Record<string, LegalEntity>;
++  rows: DeliveryRow[];
++  /** 같은 거래처의 주문이 사방넷(주문 시스템)에도 있는 경우 */
++  alsoInOrderSystem: { 거래처: string; 출고번호: string }[];
++}
++
++function rowHash(row: DeliveryRow): string {
++  return createHash('sha256').update(JSON.stringify(row)).digest('hex').slice(0, 16);
++}
++
++function normalize(sample: DeliverySample): SalesEvent[] {
++  const events: SalesEvent[] = [];
++  for (const r of sample.rows) {
++    const legalEntity = sample.entityMapping[r.법인] ?? 'UNMAPPED';
++    const lineId = `${r.출고번호}-${r.행번호}`;
++    const isReturn = r.반품여부 === 'Y';
++    const base: SalesEvent = {
++      legalEntity,
++      channel: `B2B:${r.거래처}`,
++      saleType: 'DELIVERY',
++      sourceSystem: 'DELIVERY_EXCEL',
++      orderId: r.출고번호,
++      lineId,
++      eventId: `${lineId}:${isReturn ? 'RETURNED' : 'SHIPPED'}`,
++      eventType: isReturn ? 'RETURNED' : 'SHIPPED',
++      eventDateLocal: isReturn ? r.반품일 : r.출고일,
++      sourceTz: spec.sourceTz,
++      currency: 'KRW',
++      netAmount: isReturn ? neg(r.공급가액) : r.공급가액,
++      amountBasis: 'SUPPLY',
++      taxAmount: isReturn ? neg(r.세액) : r.세액,
++      productCode: r.상품코드,
++      quantity: isReturn ? neg(r.수량) : r.수량,
++    };
++    if (isReturn) base.linkedEventId = `${lineId}:SHIPPED`;
++    events.push(base);
++  }
++  return events;
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<DeliverySample>('delivery-excel-placeholder.json');
++  const first = data.rows[0];
++  const headerOk =
++    first !== undefined && data.requiredColumns.every((c) => Object.keys(first).includes(c));
++  const keys = data.rows.map((r) => `${r.법인}|${r.출고번호}|${r.행번호}|${r.반품여부}`);
++  const unique = new Set(keys).size === keys.length;
++  const events = normalize(data);
++  const shipped = events.filter((e) => e.eventType === 'SHIPPED');
++  const returned = events.filter((e) => e.eventType === 'RETURNED');
++  const rec = reconcile(
++    'delivery-shipped',
++    data.rows.filter((r) => r.반품여부 !== 'Y').map((r) => r.공급가액),
++    shipped.map((e) => e.netAmount),
++  );
++  const hashes = data.rows.map(rowHash);
++  const modified = { ...data.rows[1], 공급가액: '999' } as DeliveryRow;
++  const overlap = data.alsoInOrderSystem.filter((o) =>
++    shipped.some((e) => e.channel === `B2B:${o.거래처}` && e.orderId === o.출고번호),
++  );
++  const taxFreeRows = data.rows.filter((r) => r.세액 === '0');
++  return [
++    check(
++      'DLV-01',
++      '필수 컬럼 존재(법인·거래처·출고번호·행·출고일·상품·수량·공급가액·세액·반품)',
++      headerOk,
++      data.requiredColumns.join(', '),
++    ),
++    check(
++      'DLV-02',
++      '(법인, 출고번호, 행번호, 반품여부) 고유키 중복 없음',
++      unique,
++      `행 ${keys.length}, 고유 ${new Set(keys).size}`,
++    ),
++    check(
++      'DLV-03',
++      '출고 행 건수·공급가액 대조',
++      rec.countMatch && rec.amountMatch,
++      `원본 ${rec.rawCount}건 ${rec.rawAmount} / 정규화 ${rec.normalizedCount}건 ${rec.normalizedAmount}`,
++    ),
++    check(
++      'DLV-04',
++      '반품은 확인된 반품일에 원출고 행에 연결된 음수 이벤트',
++      returned.length > 0 && returned.every((r) => r.linkedEventId && r.eventDateLocal !== ''),
++      `반품 ${returned.length}건, 순매출 ${sum(events.map((e) => e.netAmount))}`,
++    ),
++    check(
++      'DLV-05',
++      '행 해시로 수정 감지(금액 수정 시 해시 변경)',
++      hashes[1] !== undefined && rowHash(modified) !== hashes[1],
++      `원본 ${hashes[1]} ≠ 수정 ${rowHash(modified)}`,
++    ),
++    check(
++      'DLV-06',
++      '납품 거래가 주문 시스템에도 존재하는 경우 탐지(채널/거래 유형별 담당 원천 지정 필요)',
++      overlap.length > 0,
++      `중복 후보 ${overlap.length}건`,
++    ),
++    check(
++      'DLV-07',
++      '세액 0 행(면세·수출)은 1.1 나누기 없이 원천 구분 유지',
++      taxFreeRows.length > 0 && taxFreeRows.every((r) => r.세액 === '0'),
++      `세액 0 행 ${taxFreeRows.length}건`,
++    ),
++    check(
++      'DLV-08',
++      '실제 파일·공유 위치 미제공 → 접근 대기(실제 수집 미검증)',
++      true,
++      '사용자 조치 필요: 샘플 파일, 공유 위치, 반품·수정 기록 방식',
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/fx.ts b/fin/FIN-01/verify/sources/fx.ts
+new file mode 100644
+index 0000000..da8803b
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/fx.ts
+@@ -0,0 +1,203 @@
++/**
++ * 환율: 한국수출입은행 Open API / 한국은행 ECOS / 서울외국환중개(웹 공표).
++ *
++ * 확인일 2026-09-14. 세 출처 호스트 모두 본 환경에서 차단. 검색 발췌로 확인한 것:
++ * - 수출입은행: oapi.koreaexim.go.kr/site/program/financial/exchangeJSON?authkey=&searchdate=YYYYMMDD&data=AP01,
++ *   응답 cur_unit/ttb/tts/deal_bas_r 등, 영업일 11시경 갱신, 일 1,000회 제한, 인증키 2년 미사용 파기,
++ *   구 도메인 병행 종료 2026-04-30.
++ * - ECOS: 통계표 731Y001 항목 0000001(원/미국달러 매매기준율), 인증키 무료, 약 1,000회/일.
++ * - 서울외국환중개: 매매기준율(시장평균환율) 영업일 08:30경 공표, API 여부 미확인.
++ */
++
++import { type SourceSpec } from '../mapping';
++import { check, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import { addDays, isWeekend } from '../time';
++import type { FxRate } from '../types';
++
++const D = '2026-09-14';
++
++export const eximSpec: SourceSpec = {
++  sourceSystem: 'FX_KOREAEXIM',
++  displayName: '한국수출입은행 환율 Open API',
++  docs: [
++    {
++      url: 'https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://www.data.go.kr/data/3068846/openapi.do',
++      checkedOn: D,
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['searchdate', 'cur_unit'],
++  mappings: [
++    {
++      target: 'currency',
++      source: 'cur_unit',
++      transform: 'identity',
++      status: 'SNIPPET',
++      note: '"USD". 일부 통화는 100 단위(JPY(100) 등) 표기 → 정규화 필요',
++    },
++    {
++      target: 'asOfDate',
++      source: 'searchdate(요청)',
++      transform: 'yyyymmdd_to_iso_date',
++      status: 'SNIPPET',
++      note: '응답에 기준일이 없을 수 있어 요청일을 보존',
++    },
++    {
++      target: 'rate',
++      source: 'deal_bas_r',
++      transform: 'decimal',
++      status: 'SNIPPET',
++      note: '매매기준율. 천 단위 콤마 포함 문자열 → 제거 후 십진수',
++    },
++    {
++      target: 'rateType',
++      transform: 'constant',
++      constant: 'KOREAEXIM_DEAL_BAS_R',
++      status: 'CONFIRMED',
++      note: 'ttb/tts 는 별도 종류',
++    },
++    {
++      target: '휴일 처리',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '비영업일 조회 시 빈 결과(제3자 사례). 이전 영업일 환율 대체 + 적용일 표시',
++    },
++    {
++      target: '호출 제한 / 인증',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '일 1,000회, authkey 발급 즉시, 2년 미사용 파기',
++    },
++  ],
++};
++
++export const ecosSpec: SourceSpec = {
++  sourceSystem: 'FX_ECOS',
++  displayName: '한국은행 ECOS Open API(731Y001)',
++  docs: [{ url: 'https://ecos.bok.or.kr/api/', checkedOn: D, access: 'SEARCH_SNIPPET' }],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['STAT_CODE', 'ITEM_CODE1', 'TIME'],
++  mappings: [
++    {
++      target: 'currency',
++      source: 'ITEM_CODE1=0000001',
++      transform: 'constant',
++      constant: 'USD',
++      status: 'SNIPPET',
++      note: '원/미국달러(매매기준율). 항목 코드 원문 확인 필요',
++    },
++    {
++      target: 'asOfDate',
++      source: 'TIME(YYYYMMDD)',
++      transform: 'yyyymmdd_to_iso_date',
++      status: 'SNIPPET',
++      note: '',
++    },
++    {
++      target: 'rate',
++      source: 'DATA_VALUE',
++      transform: 'decimal',
++      status: 'ASSUMED',
++      note: '필드명 원문 확인 필요',
++    },
++    {
++      target: 'rateType',
++      transform: 'constant',
++      constant: 'ECOS_731Y001_0000001',
++      status: 'CONFIRMED',
++      note: '',
++    },
++    {
++      target: '호출 제한 / 인증',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: '무료 인증키, 약 1,000회/일',
++    },
++  ],
++};
++
++interface FxSample {
++  exim: {
++    searchdate: string;
++    rows: { cur_unit: string; deal_bas_r: string; ttb: string; tts: string }[];
++  }[];
++}
++
++/** 보고일 환율: 보고일 자료가 없으면 최근 이용 가능한 이전 영업일 환율을 쓰고 적용일을 표시. 없으면 오류(0 대체 금지). */
++export function pickRateForDate(
++  rates: readonly FxRate[],
++  reportDate: string,
++  maxLookbackDays = 7,
++): FxRate {
++  let d = reportDate;
++  for (let i = 0; i <= maxLookbackDays; i += 1) {
++    const hit = rates.find((r) => r.asOfDate === d);
++    if (hit) return { ...hit, appliedForDate: reportDate };
++    d = addDays(d, -1);
++  }
++  throw new Error(`환율 없음: ${reportDate} 기준 ${maxLookbackDays}일 내 자료 없음(0 대체 금지)`);
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<FxSample>('fx-placeholder.json');
++  const now = new Date().toISOString();
++  const rates: FxRate[] = [];
++  for (const day of data.exim) {
++    for (const r of day.rows) {
++      if (r.cur_unit !== 'USD') continue;
++      rates.push({
++        currency: 'USD',
++        asOfDate: `${day.searchdate.slice(0, 4)}-${day.searchdate.slice(4, 6)}-${day.searchdate.slice(6, 8)}`,
++        rateType: 'KOREAEXIM_DEAL_BAS_R',
++        rate: r.deal_bas_r.replace(/,/g, ''),
++        source: 'FX_KOREAEXIM',
++        collectedAtUtc: now,
++      });
++    }
++  }
++  const sat = '2026-09-12';
++  const picked = pickRateForDate(rates, sat);
++  let missingErr = '';
++  try {
++    pickRateForDate(rates, '2026-08-01', 3);
++  } catch (e) {
++    missingErr = e instanceof Error ? e.message : String(e);
++  }
++  const emptyDay = data.exim.find((d) => d.rows.length === 0);
++  return [
++    check(
++      'FX-01',
++      '콤마 포함 문자열 → 십진수 문자열(부동소수점 미사용)',
++      rates.every((r) => /^\d+(\.\d+)?$/.test(r.rate)),
++      rates.map((r) => `${r.asOfDate}:${r.rate}`).join(', '),
++    ),
++    check(
++      'FX-02',
++      '비영업일(토요일) 응답이 비어 있으면 이전 영업일 환율 적용 + 적용일 표시',
++      isWeekend(sat) &&
++        emptyDay !== undefined &&
++        picked.asOfDate === '2026-09-11' &&
++        picked.appliedForDate === sat,
++      `${sat} → ${picked.asOfDate} ${picked.rate}`,
++    ),
++    check(
++      'FX-03',
++      '환율이 없으면 0 으로 대체하지 않고 오류',
++      missingErr.includes('0 대체 금지'),
++      missingErr,
++    ),
++    check(
++      'FX-04',
++      '실제 호출 미실행(인증키·네트워크 없음) → 실제 수집 미검증',
++      true,
++      `${eximSpec.sourceSystem}, ${ecosSpec.sourceSystem}`,
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/sales-cafe24.ts b/fin/FIN-01/verify/sources/sales-cafe24.ts
+new file mode 100644
+index 0000000..3457487
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/sales-cafe24.ts
+@@ -0,0 +1,248 @@
++/**
++ * 자사몰: 카페24 Admin API(사방넷이 자사몰 주문을 포괄하지 못할 때만 사용).
++ *
++ * 확인일 2026-09-14. developers.cafe24.com 은 본 환경에서 차단. 검색 발췌로 확인한 것:
++ * OAuth 2.0, Access Token 유효 2시간, Refresh Token 2주(갱신 시 둘 다 재발급), Leaky Bucket 호출 제한
++ * (x-ratelimit-remaining 헤더), X-Cafe24-Api-Version 헤더, 날짜는 ISO 8601, HTTPS 전용.
++ * 주문 리소스 필드명(order_id, payment_date, paid, canceled, items[].order_item_code 등)은 원문 미열람 → ASSUMED.
++ */
++
++import { neg, sum } from '../decimal';
++import { SourceRecordStore } from '../dedupe';
++import { buildSourceKey, type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import type { LegalEntity, SalesEvent } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'SALES_CAFE24',
++  displayName: '카페24 Admin API(orders)',
++  docs: [
++    {
++      url: 'https://developers.cafe24.com/docs/api/admin/',
++      checkedOn: '2026-09-14',
++      access: 'BLOCKED',
++    },
++    {
++      url: 'https://developers.cafe24.com/en/app/front/app/develop/oauth/retoken',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://developers.cafe24.com/en/app/front/app/develop/api/adminapi',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['order_id', 'order_item_code'],
++  mappings: [
++    {
++      target: 'legalEntity',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '몰(mall_id) 단위 매핑',
++    },
++    {
++      target: 'channel',
++      transform: 'constant',
++      constant: 'OWNMALL_CAFE24',
++      status: 'CONFIRMED',
++      note: '고정',
++    },
++    {
++      target: 'orderId / lineId',
++      source: 'order_id / items[].order_item_code',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '주문·품목 식별자 필드명 원문 확인 필요',
++    },
++    {
++      target: 'eventDateLocal (결제 완료)',
++      source: 'payment_date (paid=T 인 경우)',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '결제일 필드 존재·형식(ISO 8601) 원문 확인 필요. 입금전(미결제) 주문은 제외',
++    },
++    {
++      target: 'eventType CANCELLED/REFUNDED',
++      source: 'canceled / items[].order_status',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '취소·반품·환불 상태 코드 체계 원문 확인 필요. 환불 확정일 필드 존재 여부 미확인',
++    },
++    {
++      target: 'netAmount / amountBasis',
++      source: 'items[].product_price × quantity − 할인',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '공급가/세포함 구분 및 할인·배송비 필드 원문 확인 필요',
++    },
++    {
++      target: 'productCode',
++      source: 'items[].product_code',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '',
++    },
++    {
++      target: '인증·갱신',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: 'OAuth2, access 2h / refresh 2주. 2주 내 갱신 실패 시 재인가 필요 → 무인 수집 시 갱신 스케줄 필수',
++    },
++    {
++      target: '호출 제한',
++      transform: 'derived',
++      status: 'SNIPPET',
++      note: 'Leaky Bucket, x-ratelimit-remaining 헤더로 잔여 확인. 정확한 버킷 크기는 원문 확인 필요',
++    },
++    {
++      target: '변경 조회',
++      source: 'updated_start_date 류 파라미터',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '수정일 기준 조회 파라미터 존재 여부 미확인',
++    },
++  ],
++};
++
++interface Cafe24Item {
++  order_item_code: string;
++  product_code: string;
++  quantity: string;
++  product_price: string;
++  order_status: string;
++}
++
++interface Cafe24Order {
++  order_id: string;
++  order_date: string;
++  payment_date: string | null;
++  paid: 'T' | 'F';
++  canceled: 'T' | 'F';
++  items: Cafe24Item[];
++}
++
++interface Cafe24Sample {
++  mallAlias: string;
++  legalEntity: LegalEntity;
++  cancelStatuses: string[];
++  orders: Cafe24Order[];
++  /** 사방넷에서도 수집되는 자사몰 주문(중복 후보) */
++  alsoInSabangnet: string[];
++}
++
++function normalize(sample: Cafe24Sample) {
++  const events: SalesEvent[] = [];
++  const items: { sourceKey: string; raw: unknown }[] = [];
++  for (const o of sample.orders) {
++    for (const it of o.items) {
++      const raw = { ...it, order_id: o.order_id };
++      const sourceKey = buildSourceKey(spec.sourceSystem, sample.mallAlias, raw, spec.keyFields);
++      items.push({ sourceKey, raw: { ...raw, paid: o.paid, canceled: o.canceled } });
++      if (o.paid !== 'T' || !o.payment_date) continue; // 입금전 주문 제외
++      const gross = mul(it.product_price, it.quantity);
++      events.push({
++        legalEntity: sample.legalEntity,
++        channel: 'OWNMALL_CAFE24',
++        saleType: 'CONSUMER',
++        sourceSystem: 'SALES_CAFE24',
++        orderId: o.order_id,
++        lineId: it.order_item_code,
++        eventId: `${it.order_item_code}:PAID`,
++        eventType: 'PAID',
++        eventDateLocal: o.payment_date.slice(0, 10),
++        eventAtLocal: o.payment_date.slice(0, 19),
++        sourceTz: spec.sourceTz,
++        currency: 'KRW',
++        netAmount: gross,
++        amountBasis: 'UNKNOWN',
++        productCode: it.product_code,
++        quantity: it.quantity,
++      });
++      if (sample.cancelStatuses.includes(it.order_status)) {
++        events.push({
++          legalEntity: sample.legalEntity,
++          channel: 'OWNMALL_CAFE24',
++          saleType: 'CONSUMER',
++          sourceSystem: 'SALES_CAFE24',
++          orderId: o.order_id,
++          lineId: it.order_item_code,
++          eventId: `${it.order_item_code}:CANCELLED`,
++          eventType: 'CANCELLED',
++          // 취소 확정일 필드가 확인되지 않아 결제일을 그대로 두지 않고 누락 표시용으로 빈 값 대신 결제일을 쓰지 않는다.
++          eventDateLocal: 'UNKNOWN',
++          sourceTz: spec.sourceTz,
++          currency: 'KRW',
++          netAmount: neg(gross),
++          amountBasis: 'UNKNOWN',
++          productCode: it.product_code,
++          quantity: neg(it.quantity),
++          linkedEventId: `${it.order_item_code}:PAID`,
++        });
++      }
++    }
++  }
++  return { events, items };
++}
++
++/** 정수 수량 × 금액(소수 허용) — BigInt 스케일 곱. */
++function mul(amount: string, qty: string): string {
++  const q = BigInt(qty);
++  let acc = '0';
++  for (let i = 0n; i < q; i += 1n) acc = sum([acc, amount]);
++  return acc;
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<Cafe24Sample>('sales-cafe24-placeholder.json');
++  const { events, items } = normalize(data);
++  const paid = events.filter((e) => e.eventType === 'PAID');
++  const rawPaid = data.orders
++    .filter((o) => o.paid === 'T' && o.payment_date)
++    .flatMap((o) => o.items.map((it) => mul(it.product_price, it.quantity)));
++  const rec = reconcile(
++    'cafe24-paid',
++    rawPaid,
++    paid.map((e) => e.netAmount),
++  );
++  const unpaid = data.orders.filter((o) => o.paid !== 'T').length;
++  const cancels = events.filter((e) => e.eventType === 'CANCELLED');
++  const store = new SourceRecordStore();
++  const a = store.ingest('SALES_CAFE24', data.mallAlias, 'run-1', items);
++  const b = store.ingest('SALES_CAFE24', data.mallAlias, 'run-2', items);
++  const overlap = paid.filter((e) => data.alsoInSabangnet.includes(e.orderId));
++  return [
++    check(
++      'SALES-C24-01',
++      '결제완료(paid=T, payment_date 존재) 품목만 PAID 이벤트, 입금전 주문 제외',
++      rec.countMatch && rec.amountMatch && unpaid > 0,
++      `PAID ${rec.normalizedCount}건 ${rec.normalizedAmount}, 입금전 제외 ${unpaid}건`,
++    ),
++    check(
++      'SALES-C24-02',
++      '취소 품목은 원거래에 연결된 음수 이벤트. 취소 확정일 필드 미확인 → 날짜 UNKNOWN 표시(임의 날짜 금지)',
++      cancels.length > 0 && cancels.every((c) => c.linkedEventId && c.eventDateLocal === 'UNKNOWN'),
++      `취소 ${cancels.length}건`,
++    ),
++    check(
++      'SALES-C24-03',
++      '같은 기간 재수집 무중복',
++      a.inserted === items.length && b.inserted === 0,
++      `1차 ${a.inserted} / 2차 unchanged ${b.unchanged}`,
++    ),
++    check(
++      'SALES-C24-04',
++      '사방넷과 중복되는 자사몰 주문 탐지(자사몰 담당 원천을 하나로 고정해야 함)',
++      overlap.length > 0,
++      `중복 후보 ${overlap.length}건: ${overlap.map((e) => e.orderId).join(', ')}`,
++    ),
++    check(
++      'SALES-C24-05',
++      '주문 필드명 ASSUMED, 인증·제한만 SNIPPET → 실제 수집 미검증',
++      spec.mappings.some((m) => m.status === 'ASSUMED'),
++      '',
++    ),
++  ];
++}
+diff --git a/fin/FIN-01/verify/sources/sales-sabangnet.ts b/fin/FIN-01/verify/sources/sales-sabangnet.ts
+new file mode 100644
+index 0000000..d8d9213
+--- /dev/null
++++ b/fin/FIN-01/verify/sources/sales-sabangnet.ts
+@@ -0,0 +1,261 @@
++/**
++ * 소비자 매출 1순위: 사방넷 API(주문 수집).
++ *
++ * 확인일 2026-09-14. 공식 사이트(sabangnet.co.kr)와 연동 가이드 호스트는 본 환경에서 차단되어
++ * 검색 발췌로 다음만 확인했다: API 서비스는 유료 부가서비스, 연동키는 마이페이지 > 서비스 관리 >
++ * 연동키(API 인증키) 관리에서 확인, 무신사·스마트스토어·카카오 등 연동 가능(올리브영은 올리브영 외부셀러
++ * 서비스가 사방넷과 연동됨을 올리브영 기술블로그에서 확인). 주문 필드명·상태 코드·결제완료 일시 제공 여부는
++ * 미확인이며 아래 필드명은 전부 자리표시자(ASSUMED)다.
++ */
++
++import { neg, sum } from '../decimal';
++import { SourceRecordStore } from '../dedupe';
++import { buildSourceKey, type SourceSpec } from '../mapping';
++import { check, reconcile, type CheckResult } from '../reconcile';
++import { loadSample } from '../samples';
++import type { LegalEntity, SalesEvent } from '../types';
++
++export const spec: SourceSpec = {
++  sourceSystem: 'SALES_SABANGNET',
++  displayName: '사방넷 주문 API',
++  docs: [
++    {
++      url: 'https://www.sabangnet.co.kr/service-intro/api-service',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++    {
++      url: 'https://www.sabangnet.co.kr/html/function_intro_mall_list.html',
++      checkedOn: '2026-09-14',
++      access: 'BLOCKED',
++    },
++    {
++      url: 'https://oliveyoung.tech/2023-12-15/seller-service-1/',
++      checkedOn: '2026-09-14',
++      access: 'SEARCH_SNIPPET',
++    },
++  ],
++  sourceTz: 'Asia/Seoul',
++  keyFields: ['order_line_id'],
++  mappings: [
++    {
++      target: 'legalEntity',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '사방넷 계정(연동키) 단위로 법인 매핑. 한 계정에 두 법인 몰이 섞이면 몰 ID 별 매핑 필요',
++    },
++    {
++      target: 'channel',
++      source: 'mall_id (자리표시자)',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '사방넷 몰 코드 → channels 매핑. 실제 필드명 미확인',
++    },
++    {
++      target: 'orderId / lineId',
++      source: 'mall_order_id / order_line_id (자리표시자)',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '사방넷 주문 고유번호와 몰 주문번호 중 무엇이 행 단위 고유키인지 미확인',
++    },
++    {
++      target: 'eventDateLocal (결제 완료일)',
++      source: 'pay_date (자리표시자)',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '결제 완료 일시 필드 제공 여부 미확인. 주문일만 제공되면 계획서 기준(결제 완료)과 불일치 → 매핑표에 차이 명시',
++    },
++    {
++      target: 'eventType',
++      source: 'order_status (자리표시자)',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '상태 코드표 미확인. 결제완료/취소/부분취소/환불 값과 구매확정 값을 구분해야 함',
++    },
++    {
++      target: 'netAmount / amountBasis',
++      source: 'pay_amount (자리표시자)',
++      transform: 'decimal',
++      status: 'ASSUMED',
++      note: '공급가/세포함, 할인·배송비 포함 여부 미확인 → amountBasis UNKNOWN',
++    },
++    {
++      target: 'productCode',
++      source: 'product_code (자리표시자)',
++      transform: 'identity',
++      status: 'ASSUMED',
++      note: '사방넷 상품코드 vs 몰 상품코드 중 어떤 값이 오는지 미확인. 미매핑은 원본 코드 보존',
++    },
++    {
++      target: 'quantity',
++      source: 'qty (자리표시자)',
++      transform: 'decimal',
++      status: 'ASSUMED',
++      note: '',
++    },
++    {
++      target: '부분취소/분할환불 식별',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '취소 행이 별도 행으로 오는지, 원행의 상태만 바뀌는지 미확인. 후자면 관측 버전 비교로 이벤트를 생성해야 함',
++    },
++    {
++      target: '변경 조회(수정일 기준)',
++      transform: 'derived',
++      status: 'ASSUMED',
++      note: '수정일 기준 재조회 파라미터 제공 여부 미확인. 없으면 최근 7일 전체 재조회(계획서 §10)',
++    },
++  ],
++};
++
++interface SabangnetLine {
++  sabangnet_order_no: string;
++  mall_id: string;
++  mall_order_id: string;
++  order_line_id: string;
++  order_date: string;
++  pay_date: string;
++  order_status: string;
++  product_code: string;
++  qty: string;
++  pay_amount: string;
++}
++
++interface SabangnetSample {
++  accountAlias: string;
++  legalEntity: LegalEntity;
++  channelMapping: Record<string, string>;
++  /** 회사 전체 채널 목록(미확보 시 빈 배열) 과 사방넷 포괄 채널 */
++  companyChannels: string[];
++  sabangnetCoveredChannels: string[];
++  statusMapping: Record<string, SalesEvent['eventType'] | 'IGNORE'>;
++  lines: SabangnetLine[];
++  /** 직접 채널 API 에도 존재하는 주문(중복 후보) */
++  directApiOrders: { channel: string; orderId: string }[];
++}
++
++function normalize(sample: SabangnetSample): {
++  events: SalesEvent[];
++  items: { sourceKey: string; raw: unknown }[];
++} {
++  const events: SalesEvent[] = [];
++  const items: { sourceKey: string; raw: unknown }[] = [];
++  for (const line of sample.lines) {
++    const channel = sample.channelMapping[line.mall_id] ?? `UNMAPPED:${line.mall_id}`;
++    const mapped = sample.statusMapping[line.order_status];
++    if (mapped === undefined) throw new Error(`미매핑 주문상태: ${line.order_status}`);
++    const sourceKey = buildSourceKey(spec.sourceSystem, sample.accountAlias, line, [
++      ...spec.keyFields,
++      'order_status',
++    ]);
++    items.push({ sourceKey, raw: line });
++    if (mapped === 'IGNORE') continue;
++    const isReversal = mapped === 'CANCELLED' || mapped === 'REFUNDED';
++    const event: SalesEvent = {
++      legalEntity: sample.legalEntity,
++      channel,
++      saleType: 'CONSUMER',
++      sourceSystem: 'SALES_SABANGNET',
++      orderId: line.mall_order_id,
++      lineId: line.order_line_id,
++      eventId: `${line.order_line_id}:${mapped}`,
++      eventType: mapped,
++      eventDateLocal: line.pay_date.slice(0, 10),
++      sourceTz: spec.sourceTz,
++      currency: 'KRW',
++      netAmount: isReversal ? neg(line.pay_amount) : line.pay_amount,
++      amountBasis: 'UNKNOWN',
++      productCode: line.product_code,
++      quantity: isReversal ? neg(line.qty) : line.qty,
++    };
++    if (isReversal) event.linkedEventId = `${line.order_line_id}:PAID`;
++    events.push(event);
++  }
++  return { events, items };
++}
++
++export function runFixtureChecks(): CheckResult[] {
++  const { data } = loadSample<SabangnetSample>('sales-sabangnet-placeholder.json');
++  const { events, items } = normalize(data);
++  const results: CheckResult[] = [];
++
++  const paid = events.filter((e) => e.eventType === 'PAID');
++  const reversals = events.filter((e) => e.eventType !== 'PAID');
++  const rawPaid = data.lines
++    .filter((l) => data.statusMapping[l.order_status] === 'PAID')
++    .map((l) => l.pay_amount);
++  const rec = reconcile(
++    'sabangnet-paid',
++    rawPaid,
++    paid.map((e) => e.netAmount),
++  );
++  results.push(
++    check(
++      'SALES-SBN-01',
++      '결제완료 행 건수·금액 대조(구매확정 상태는 이벤트 생성 안 함)',
++      rec.countMatch && rec.amountMatch,
++      `원본 ${rec.rawCount}건 ${rec.rawAmount} / 정규화 ${rec.normalizedCount}건 ${rec.normalizedAmount}`,
++    ),
++  );
++
++  const linked = reversals.every(
++    (r) => r.linkedEventId !== undefined && paid.some((p) => p.eventId === r.linkedEventId),
++  );
++  results.push(
++    check(
++      'SALES-SBN-02',
++      '부분취소·환불은 고유 이벤트로 원거래(PAID)에 연결되고 음수로 차감',
++      reversals.length > 0 && linked && reversals.every((r) => r.netAmount.startsWith('-')),
++      `취소/환불 ${reversals.length}건, 순매출 ${sum(events.map((e) => e.netAmount))}`,
++    ),
++  );
++
++  const store = new SourceRecordStore();
++  const a = store.ingest('SALES_SABANGNET', data.accountAlias, 'run-1', items);
++  const b = store.ingest('SALES_SABANGNET', data.accountAlias, 'run-2', items);
++  results.push(
++    check(
++      'SALES-SBN-03',
++      '같은 기간 재수집 시 무중복',
++      a.inserted === items.length && b.inserted === 0 && b.unchanged === items.length,
++      `1차 ${a.inserted} / 2차 unchanged ${b.unchanged}`,
++    ),
++  );
++
++  // 채널 포괄 범위: 회사 전체 목록이 없으면 "확인 불가" 로만 보고한다.
++  const companyListKnown = data.companyChannels.length > 0;
++  const missing = data.companyChannels.filter((c) => !data.sabangnetCoveredChannels.includes(c));
++  results.push(
++    check(
++      'SALES-SBN-04',
++      '사방넷 미포괄 채널 명단(전체 채널 목록 미확보 시 판정 보류)',
++      true,
++      companyListKnown
++        ? `미포괄: ${missing.join(', ') || '없음'}`
++        : '회사 전체 채널 목록 미확보 → 포괄 범위 판정 보류(주요 6개 채널만 가정 점검)',
++    ),
++  );
++
++  // 사방넷과 직접 채널 API 에 같은 주문이 있으면 담당 원천을 하나로 지정해야 한다.
++  const dup = data.directApiOrders.filter((d) =>
++    events.some((e) => e.channel === d.channel && e.orderId === d.orderId),
++  );
++  results.push(
++    check(
++      'SALES-SBN-05',
++      '사방넷·직접 API 중복 주문 탐지(채널별 담당 원천 지정 전에는 합산 금지)',
++      dup.length > 0,
++      `중복 후보 ${dup.length}건: ${dup.map((d) => `${d.channel}/${d.orderId}`).join(', ')}`,
++    ),
++  );
++
++  results.push(
++    check(
++      'SALES-SBN-06',
++      '필드명·상태코드 전부 ASSUMED → 실제 수집 미검증',
++      spec.mappings.every((m) => m.status === 'ASSUMED'),
++      `mappings ${spec.mappings.length}개 ASSUMED`,
++    ),
++  );
++  return results;
++}
+diff --git a/fin/FIN-01/verify/time.ts b/fin/FIN-01/verify/time.ts
+new file mode 100644
+index 0000000..abc6e7b
+--- /dev/null
++++ b/fin/FIN-01/verify/time.ts
+@@ -0,0 +1,77 @@
++/**
++ * 원천 시간대 → UTC 변환(외부 의존 없이 Intl 로 처리).
++ * 계획서 §5: UTC 시각과 원천 시간대를 함께 저장하고, 날짜를 임의 이동하지 않는다.
++ */
++
++const DT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/;
++
++/** 특정 시간대의 벽시계 시각(YYYY-MM-DDTHH:mm:ss)을 UTC ISO 문자열로 변환한다. */
++export function localToUtc(local: string, timeZone: string): string {
++  const m = DT_RE.exec(local);
++  if (!m) throw new Error(`로컬 시각 형식 오류: ${local}`);
++  const [y, mo, d, h, mi, s] = m.slice(1).map(Number) as [
++    number,
++    number,
++    number,
++    number,
++    number,
++    number,
++  ];
++  // 1차 추정: 벽시계 값을 UTC 로 간주한 뒤 해당 시간대 오프셋만큼 보정한다(2회 반복으로 DST 경계 처리).
++  let guess = Date.UTC(y, mo - 1, d, h, mi, s);
++  for (let i = 0; i < 2; i += 1) {
++    const offset = tzOffsetMs(guess, timeZone);
++    guess = Date.UTC(y, mo - 1, d, h, mi, s) - offset;
++  }
++  return new Date(guess).toISOString();
++}
++
++function tzOffsetMs(epochMs: number, timeZone: string): number {
++  const fmt = new Intl.DateTimeFormat('en-US', {
++    timeZone,
++    hourCycle: 'h23',
++    year: 'numeric',
++    month: '2-digit',
++    day: '2-digit',
++    hour: '2-digit',
++    minute: '2-digit',
++    second: '2-digit',
++  });
++  const parts = fmt.formatToParts(new Date(epochMs));
++  const get = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? '0');
++  const asUtc = Date.UTC(
++    get('year'),
++    get('month') - 1,
++    get('day'),
++    get('hour'),
++    get('minute'),
++    get('second'),
++  );
++  return asUtc - epochMs;
++}
++
++/** 'YYYYMMDD' → 'YYYY-MM-DD' */
++export function yyyymmddToIso(v: string): string {
++  const m = /^(\d{4})(\d{2})(\d{2})$/.exec(v);
++  if (!m) throw new Error(`YYYYMMDD 형식 오류: ${v}`);
++  return `${m[1]}-${m[2]}-${m[3]}`;
++}
++
++/** 'YYYYMMDD' + 'HHmmss' → 'YYYY-MM-DDTHH:mm:ss' */
++export function yyyymmddHhmmssToLocal(date: string, time: string): string {
++  const t = /^(\d{2})(\d{2})(\d{2})$/.exec(time);
++  if (!t) throw new Error(`HHmmss 형식 오류: ${time}`);
++  return `${yyyymmddToIso(date)}T${t[1]}:${t[2]}:${t[3]}`;
++}
++
++/** 요일 기반 영업일 판정(주말만). 공휴일은 별도 달력 입력이 필요하므로 여기서 판정하지 않는다. */
++export function isWeekend(isoDate: string): boolean {
++  const day = new Date(`${isoDate}T00:00:00Z`).getUTCDay();
++  return day === 0 || day === 6;
++}
++
++export function addDays(isoDate: string, days: number): string {
++  const d = new Date(`${isoDate}T00:00:00Z`);
++  d.setUTCDate(d.getUTCDate() + days);
++  return d.toISOString().slice(0, 10);
++}
+diff --git a/fin/FIN-01/verify/types.ts b/fin/FIN-01/verify/types.ts
+new file mode 100644
+index 0000000..b75480a
+--- /dev/null
++++ b/fin/FIN-01/verify/types.ts
+@@ -0,0 +1,146 @@
++/**
++ * FIN-01 검증용 표준 레코드 타입.
++ *
++ * 계획서 §5 데이터 구조의 필수 필드만 옮긴 것이며, 새 데이터 모델을 설계하지 않는다.
++ * 금액은 전부 십진수 문자열(decimal.ts 참조).
++ */
++
++export type LegalEntity = 'DEEPPOINT' | 'DISTROVA' | 'UNMAPPED';
++
++export type SourceSystem =
++  | 'BANK_KFTC_OPENBANKING'
++  | 'BANK_AGGREGATOR'
++  | 'SALES_SABANGNET'
++  | 'SALES_CAFE24'
++  | 'DELIVERY_EXCEL'
++  | 'ADS_META'
++  | 'ADS_GOOGLE'
++  | 'ADS_NAVER'
++  | 'ADS_COUPANG'
++  | 'ADS_TIKTOK'
++  | 'ACCOUNTING_WEHAGO'
++  | 'FX_KOREAEXIM'
++  | 'FX_ECOS';
++
++/** source_runs: 대상 기간, 수집 시각, 원천 최신일, 결과·오류 */
++export interface SourceRun {
++  sourceSystem: SourceSystem;
++  accountAlias: string;
++  periodFrom: string; // YYYY-MM-DD (원천 시간대 기준)
++  periodTo: string;
++  collectedAtUtc: string; // ISO-8601 UTC
++  sourceLatestDate?: string; // 원천 자료 기준일(수집 시각과 구분)
++  status: 'OK' | 'PARTIAL' | 'FAILED' | 'BLOCKED';
++  note?: string;
++}
++
++/** source_records: 원천키, payload 해시, 관측 버전 */
++export interface SourceRecord {
++  sourceSystem: SourceSystem;
++  accountAlias: string;
++  sourceKey: string;
++  payloadHash: string;
++  observedVersion: number;
++  firstSeenRunId: string;
++  lastSeenRunId: string;
++}
++
++/** bank_transactions */
++export interface BankTransaction {
++  legalEntity: LegalEntity;
++  accountAlias: string;
++  currency: string;
++  sourceKey: string;
++  occurredAtLocal: string; // YYYY-MM-DDTHH:mm:ss (원천 시간대)
++  sourceTz: string;
++  occurredAtUtc: string;
++  direction: 'IN' | 'OUT';
++  amount: string;
++  balanceAfter?: string;
++  description: string;
++}
++
++/** bank_balances */
++export interface BankBalance {
++  legalEntity: LegalEntity;
++  accountAlias: string;
++  currency: string;
++  asOfDate: string;
++  balance: string;
++  balanceKind: 'END_OF_DAY' | 'AT_INQUIRY';
++  observedAtUtc: string;
++}
++
++/** sales_events */
++export type SalesEventType = 'PAID' | 'SHIPPED' | 'CANCELLED' | 'REFUNDED' | 'RETURNED';
++
++export interface SalesEvent {
++  legalEntity: LegalEntity;
++  channel: string;
++  saleType: 'CONSUMER' | 'DELIVERY';
++  sourceSystem: SourceSystem;
++  orderId: string;
++  lineId: string;
++  eventId: string;
++  eventType: SalesEventType;
++  eventDateLocal: string; // YYYY-MM-DD
++  eventAtLocal?: string; // YYYY-MM-DDTHH:mm:ss, 원천이 시각을 주는 경우
++  sourceTz: string;
++  currency: string;
++  /** 부호 있는 순매출(취소/환불/반품은 음수). 공급가/세포함 여부는 amountBasis 로 구분 */
++  netAmount: string;
++  amountBasis: 'SUPPLY' | 'GROSS_INCL_VAT' | 'UNKNOWN';
++  taxAmount?: string;
++  discountAmount?: string;
++  productCode: string;
++  quantity: string;
++  /** 취소·환불·반품이 연결되는 원거래 이벤트 ID */
++  linkedEventId?: string;
++}
++
++/** ad_daily_spend */
++export interface AdDailySpend {
++  legalEntity: LegalEntity;
++  platform: 'META' | 'GOOGLE' | 'NAVER' | 'COUPANG' | 'TIKTOK';
++  adAccountAlias: string;
++  date: string; // 원천 계정 시간대 기준 일자
++  sourceTz: string;
++  currency: string;
++  spend: string;
++  taxBasis: 'EXCL_VAT' | 'INCL_VAT' | 'UNKNOWN';
++  sourceVersion: string; // 수집 실행 ID. 같은 (계정,일자) 재수집 시 대체
++}
++
++/** ad_balances */
++export interface AdBalance {
++  legalEntity: LegalEntity;
++  platform: AdDailySpend['platform'];
++  adAccountAlias: string;
++  observedAtUtc: string;
++  currency: string;
++  balance: string;
++  balanceKind: 'PREPAID_REMAINING' | 'POSTPAID_OWED' | 'UNKNOWN';
++}
++
++/** accounting_lines */
++export interface AccountingLine {
++  legalEntity: LegalEntity;
++  fiscalPeriod: string; // YYYY-MM
++  accountCode: string;
++  amount: string;
++  dataShape: 'MONTHLY' | 'CUMULATIVE';
++  voucherId?: string;
++  lineId?: string;
++  version: string;
++}
++
++/** fx_rates */
++export interface FxRate {
++  currency: string;
++  asOfDate: string; // 환율 기준일
++  appliedForDate?: string; // 휴일 대체 시 실제 적용 보고일
++  rateType: string; // 예: 'KOREAEXIM_DEAL_BAS_R', 'ECOS_731Y001_0000001'
++  rate: string;
++  source: SourceSystem;
++  collectedAtUtc: string;
++}

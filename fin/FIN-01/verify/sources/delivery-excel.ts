@@ -79,8 +79,8 @@ export const spec: SourceSpec = {
     {
       target: '파일 갱신 주기 / 전일 자료 확보 가능성',
       transform: 'derived',
-      status: 'MISSING',
-      note: '공유 위치·갱신 시각 미확인. 10시 전 전일분 확보 가능 여부는 사용자 확인 필요',
+      status: 'UNVERIFIED',
+      note: '공유 위치·갱신 시각을 확인하지 못함. 10시 전 전일분 확보 가능 여부는 사용자 확인 필요',
     },
   ],
 };

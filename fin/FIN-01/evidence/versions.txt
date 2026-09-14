@@ -1,0 +1,12 @@
+# 런타임·패키지 버전 (2026-09-14T11:15:10Z)
+node v22.22.2
+pnpm 10.33.0
+os Linux 6.18.44-fc-v24 x86_64
+packageManager pnpm@10.33.0
+typescript 5.9.3
+tsx 4.23.9
+eslint 9.39.5
+prettier 3.9.6
+vitest 3.2.7
+next 16.3.0
+runtime deps: Node 내장 모듈만(node:crypto, node:fs, node:path, node:url, fetch). 추가 패키지 없음

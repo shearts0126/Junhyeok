@@ -2,8 +2,8 @@
   "mode": "fixtures",
   "synthetic": true,
   "note": "가상 데이터 검증. 실제 연동 성공을 의미하지 않음(실제 수집 미검증).",
-  "startedAtUtc": "2026-09-14T10:49:59.126Z",
-  "finishedAtUtc": "2026-09-14T10:49:59.159Z",
+  "startedAtUtc": "2026-09-14T11:15:19.982Z",
+  "finishedAtUtc": "2026-09-14T11:15:20.015Z",
   "totalChecks": 49,
   "failed": 0,
   "suites": [
@@ -63,7 +63,7 @@
           "id": "BANK-KFTC-08",
           "title": "필드매핑 근거 현황(CONFIRMED 0 이면 실제 수집 미검증)",
           "passed": true,
-          "detail": "confirmed 0 / snippet 8 / assumed 0 / missing 2",
+          "detail": "confirmed 0 / snippet 8 / assumed 0 / unverified 2 / missing 0",
           "synthetic": true
         }
       ]
@@ -289,7 +289,7 @@
         },
         {
           "id": "ADS-CPNG-01",
-          "title": "쿠팡 광고 소진액 공식 API 미확인 → 접근 대기(엑셀 보조 경로 후보). 자동 수집 가능으로 표시하지 않음",
+          "title": "쿠팡 광고 소진액 공식 API 존재 여부 확인하지 못함(미지원 단정 아님) → 미확인. 자동 수집 가능으로 표시하지 않음",
           "passed": true,
           "detail": "광고센터 리포트 엑셀 다운로드만 확인",
           "synthetic": true
@@ -404,7 +404,8 @@
         "confirmed": 0,
         "snippet": 8,
         "assumed": 0,
-        "missing": 2,
+        "unverified": 2,
+        "missing": 0,
         "total": 10
       },
       "docs": [
@@ -432,6 +433,7 @@
         "confirmed": 0,
         "snippet": 0,
         "assumed": 7,
+        "unverified": 0,
         "missing": 0,
         "total": 7
       },
@@ -465,6 +467,7 @@
         "confirmed": 0,
         "snippet": 0,
         "assumed": 10,
+        "unverified": 0,
         "missing": 0,
         "total": 10
       },
@@ -493,6 +496,7 @@
         "confirmed": 1,
         "snippet": 2,
         "assumed": 7,
+        "unverified": 0,
         "missing": 0,
         "total": 10
       },
@@ -521,7 +525,8 @@
         "confirmed": 0,
         "snippet": 0,
         "assumed": 8,
-        "missing": 1,
+        "unverified": 1,
+        "missing": 0,
         "total": 9
       },
       "docs": []
@@ -533,7 +538,8 @@
         "confirmed": 0,
         "snippet": 7,
         "assumed": 1,
-        "missing": 1,
+        "unverified": 1,
+        "missing": 0,
         "total": 9
       },
       "docs": [
@@ -561,7 +567,8 @@
         "confirmed": 0,
         "snippet": 6,
         "assumed": 1,
-        "missing": 1,
+        "unverified": 1,
+        "missing": 0,
         "total": 8
       },
       "docs": [
@@ -589,6 +596,7 @@
         "confirmed": 1,
         "snippet": 6,
         "assumed": 1,
+        "unverified": 0,
         "missing": 0,
         "total": 8
       },
@@ -617,7 +625,8 @@
         "confirmed": 0,
         "snippet": 1,
         "assumed": 0,
-        "missing": 2,
+        "unverified": 1,
+        "missing": 1,
         "total": 3
       },
       "docs": [
@@ -640,6 +649,7 @@
         "confirmed": 0,
         "snippet": 4,
         "assumed": 3,
+        "unverified": 0,
         "missing": 0,
         "total": 7
       },
@@ -663,7 +673,8 @@
         "confirmed": 1,
         "snippet": 0,
         "assumed": 4,
-        "missing": 1,
+        "unverified": 1,
+        "missing": 0,
         "total": 6
       },
       "docs": [
@@ -686,6 +697,7 @@
         "confirmed": 1,
         "snippet": 5,
         "assumed": 0,
+        "unverified": 0,
         "missing": 0,
         "total": 6
       },
@@ -709,6 +721,7 @@
         "confirmed": 1,
         "snippet": 3,
         "assumed": 1,
+        "unverified": 0,
         "missing": 0,
         "total": 5
       },

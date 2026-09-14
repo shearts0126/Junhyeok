@@ -91,8 +91,8 @@ export const metaSpec: SourceSpec = {
     {
       target: 'AdBalance',
       transform: 'derived',
-      status: 'MISSING',
-      note: '선불 잔액 조회 API 미확인. 광고 계정 balance 필드는 미납액 성격일 가능성 → 미확인',
+      status: 'UNVERIFIED',
+      note: '선불 잔액 조회 API 존재 여부를 확인하지 못함(광고 계정 balance 필드의 의미도 미확인)',
     },
   ],
 };
@@ -170,8 +170,8 @@ export const googleSpec: SourceSpec = {
     {
       target: 'AdBalance',
       transform: 'derived',
-      status: 'MISSING',
-      note: '선불 잔액 조회 경로 미확인',
+      status: 'UNVERIFIED',
+      note: '선불 잔액 조회 경로를 확인하지 못함',
     },
   ],
 };
@@ -254,8 +254,8 @@ export const coupangSpec: SourceSpec = {
     {
       target: 'spend (일별 광고비)',
       transform: 'derived',
-      status: 'MISSING',
-      note: '판매자용 공식 광고 소진액 API 를 확인하지 못함. 광고센터 보고서(일별/월별 광고비 정산 리포트) 엑셀 다운로드만 확인 → 보조 경로(엑셀) 가능성',
+      status: 'UNVERIFIED',
+      note: '판매자용 공식 광고 소진액 API 존재 여부를 확인하지 못함("미지원" 아님). 광고센터 보고서(일별/월별 광고비 정산 리포트) 엑셀 다운로드는 발췌로 확인 → 쿠팡 광고 담당 문의 전까지 보조 경로(엑셀) 후보',
     },
     { target: 'AdBalance', transform: 'derived', status: 'MISSING', note: '잔액 조회 경로 미확인' },
     {
@@ -508,8 +508,8 @@ export function runFixtureChecks(): CheckResult[] {
   results.push(
     check(
       'ADS-CPNG-01',
-      '쿠팡 광고 소진액 공식 API 미확인 → 접근 대기(엑셀 보조 경로 후보). 자동 수집 가능으로 표시하지 않음',
-      coupangSpec.mappings.some((m) => m.status === 'MISSING'),
+      '쿠팡 광고 소진액 공식 API 존재 여부 확인하지 못함(미지원 단정 아님) → 미확인. 자동 수집 가능으로 표시하지 않음',
+      coupangSpec.mappings.some((m) => m.status === 'UNVERIFIED'),
       '광고센터 리포트 엑셀 다운로드만 확인',
     ),
   );

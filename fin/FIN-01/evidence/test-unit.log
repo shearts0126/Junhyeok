@@ -1,0 +1,20 @@
+# command: pnpm test:unit
+# started: 2026-09-14T11:16:21Z
+ ✓ |unit| src/modules/bom/bom-cycle.test.ts (19 tests) 13ms
+ ✓ |unit| src/app/master/skus/[id]/external-mapping-ui.test.ts (32 tests) 19ms
+ ✓ |unit| src/app/master/skus/list-params.test.ts (12 tests) 14ms
+ ✓ |unit| src/modules/sku/sku-barcode-normalization.test.ts (49 tests) 21ms
+ ✓ |unit| src/modules/bom/bom-domain-rules.test.ts (22 tests) 12ms
+ ✓ |unit| src/app/master/skus/[id]/supplier-ui.test.ts (30 tests) 23ms
+ ✓ |unit| src/modules/audit/audit-logger.test.ts (19 tests) 20ms
+ ✓ |unit| src/shared/db/transaction.test.ts (19 tests) 21ms
+ ✓ |unit| src/shared/health.test.ts (8 tests) 6ms
+
+ Test Files  56 passed (56)
+      Tests  2158 passed (2158)
+   Start at  11:16:22
+   Duration  24.86s (transform 3.94s, setup 0ms, collect 19.27s, tests 30.46s, environment 13ms, prepare 6.29s)
+
+# exit code: 0
+# finished: 2026-09-14T11:16:47Z
+# note: 전체 출력은 생략(tail -15). 1차 실행(10:52 UTC)도 56 files / 2158 tests 통과

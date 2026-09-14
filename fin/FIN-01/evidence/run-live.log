@@ -1,0 +1,14 @@
+# command: pnpm tsx fin/FIN-01/verify/run.ts --live all --date 2026-09-12
+# started: 2026-09-14T11:15:20Z
+[live] fx-exim        BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_SNIPPET parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_KOREAEXIM_AUTHKEY → 실제 수집 미검증
+[live] fx-ecos        BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_ASSUMED parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_ECOS_API_KEY → 실제 수집 미검증
+[live] bank-kftc      BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_ASSUMED parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_KFTC_ACCESS_TOKEN, FIN01_KFTC_FINTECH_USE_NUM, FIN01_KFTC_BASE_URL → 실제 수집 미검증
+[live] ads-meta       BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_SNIPPET parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_META_ACCESS_TOKEN, FIN01_META_AD_ACCOUNT_ID → 실제 수집 미검증
+[live] ads-tiktok     BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_ASSUMED parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_TIKTOK_ACCESS_TOKEN, FIN01_TIKTOK_ADVERTISER_ID → 실제 수집 미검증
+[live] ads-naver      BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_ASSUMED parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_NAVER_API_KEY, FIN01_NAVER_SECRET_KEY, FIN01_NAVER_CUSTOMER_ID → 실제 수집 미검증
+[live] sales-cafe24   BLOCKED_NO_CREDENTIALS   impl=REQUEST_BUILT_SPEC_ASSUMED parse=NO(조회 구현 미완료) 환경변수 미설정: FIN01_CAFE24_MALL_ID, FIN01_CAFE24_ACCESS_TOKEN → 실제 수집 미검증
+
+실제 수집 검증 완료 소스: 없음
+응답 파싱·정규화·대조 구현: 없음 → 모든 --live 소스는 자격정보가 있어도 "조회 구현 미완료" 상태
+# exit code: 2
+# finished: 2026-09-14T11:15:20Z

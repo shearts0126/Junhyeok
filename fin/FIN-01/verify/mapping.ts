@@ -11,8 +11,9 @@ import { createHash } from 'node:crypto';
 export type EvidenceStatus =
   | 'CONFIRMED' // 공식 문서 원문 또는 실제 응답으로 확인
   | 'SNIPPET' // 공식 문서의 검색 결과 발췌로만 확인(원문 미열람)
-  | 'ASSUMED' // 문서 미확인. 실제 응답 확보 후 확정 필요
-  | 'MISSING'; // 원천이 제공하지 않음(대체 규칙 필요)
+  | 'ASSUMED' // 문서 미확인 상태의 자리표시자. 실제 응답 확보 후 확정 필요
+  | 'UNVERIFIED' // 제공 여부 자체를 확인하지 못함("지원하지 않음" 이 아님)
+  | 'MISSING'; // 원천이 제공하지 않음을 공식 근거로 확인(대체 규칙 필요)
 
 export type Transform =
   | 'identity'
@@ -53,17 +54,26 @@ export interface MappingCoverage {
   confirmed: number;
   snippet: number;
   assumed: number;
+  unverified: number;
   missing: number;
   total: number;
 }
 
 export function coverage(spec: SourceSpec): MappingCoverage {
-  const c: MappingCoverage = { confirmed: 0, snippet: 0, assumed: 0, missing: 0, total: 0 };
+  const c: MappingCoverage = {
+    confirmed: 0,
+    snippet: 0,
+    assumed: 0,
+    unverified: 0,
+    missing: 0,
+    total: 0,
+  };
   for (const m of spec.mappings) {
     c.total += 1;
     if (m.status === 'CONFIRMED') c.confirmed += 1;
     else if (m.status === 'SNIPPET') c.snippet += 1;
     else if (m.status === 'ASSUMED') c.assumed += 1;
+    else if (m.status === 'UNVERIFIED') c.unverified += 1;
     else c.missing += 1;
   }
   return c;

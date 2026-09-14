@@ -7,9 +7,26 @@ import { createHash } from 'node:crypto';
 
 export type LiveStatus = 'OK' | 'BLOCKED_NO_CREDENTIALS' | 'BLOCKED_NETWORK' | 'FAILED';
 
+/**
+ * --live 코드의 구현 수준. 자격정보를 넣어도 PARSE_AND_RECONCILE 전까지는 "조회 구현 미완료" 다.
+ * - CREDENTIAL_CHECK_ONLY: 환경변수 유무만 확인
+ * - REQUEST_BUILT_SPEC_SNIPPET: 검색 발췌로 확인한 공식 명세대로 요청을 구성·전송(응답 파싱 없음)
+ * - REQUEST_BUILT_SPEC_ASSUMED: 경로·파라미터 일부가 추정값인 요청을 구성·전송(응답 파싱 없음)
+ * - PARSE_AND_RECONCILE: 실제 응답을 표준 레코드로 정규화하고 건수·금액 대조까지 수행(현재 어떤 소스도 미구현)
+ */
+export type ImplementationLevel =
+  | 'CREDENTIAL_CHECK_ONLY'
+  | 'REQUEST_BUILT_SPEC_SNIPPET'
+  | 'REQUEST_BUILT_SPEC_ASSUMED'
+  | 'PARSE_AND_RECONCILE';
+
 export interface LiveResult {
   source: string;
   status: LiveStatus;
+  /** 이 소스에 대해 코드가 도달한 구현 수준 */
+  implementation: ImplementationLevel;
+  /** 응답 파싱·정규화·대조 구현 여부. false 면 "조회 구현 미완료" */
+  parsingImplemented: boolean;
   startedAtUtc: string;
   finishedAtUtc: string;
   /** 민감 정보 없는 요약(HTTP 상태, 건수, 본문 해시 등) */
@@ -31,11 +48,17 @@ export function requireEnv(
   return missing.length > 0 ? { ok: false, missing } : { ok: true, env };
 }
 
-export function blockedNoCredentials(source: string, missing: readonly string[]): LiveResult {
+export function blockedNoCredentials(
+  source: string,
+  missing: readonly string[],
+  implementation: ImplementationLevel,
+): LiveResult {
   const now = new Date().toISOString();
   return {
     source,
     status: 'BLOCKED_NO_CREDENTIALS',
+    implementation,
+    parsingImplemented: false,
     startedAtUtc: now,
     finishedAtUtc: now,
     summary: `환경변수 미설정: ${missing.join(', ')} → 실제 수집 미검증`,
@@ -46,6 +69,7 @@ export function blockedNoCredentials(source: string, missing: readonly string[])
 export async function fetchSummary(
   source: string,
   url: string,
+  implementation: ImplementationLevel,
   init: RequestInit & { redactQuery?: boolean } = {},
 ): Promise<LiveResult> {
   const startedAtUtc = new Date().toISOString();
@@ -72,6 +96,8 @@ export async function fetchSummary(
     return {
       source,
       status,
+      implementation,
+      parsingImplemented: false,
       startedAtUtc,
       finishedAtUtc: new Date().toISOString(),
       summary: `${shownUrl} → HTTP ${res.status}${denyReason ? ` (egress proxy: ${denyReason})` : ''}, bytes ${text.length}, sha256:${hash}, items ${count}`,
@@ -83,6 +109,8 @@ export async function fetchSummary(
     return {
       source,
       status: blocked ? 'BLOCKED_NETWORK' : 'FAILED',
+      implementation,
+      parsingImplemented: false,
       startedAtUtc,
       finishedAtUtc: new Date().toISOString(),
       summary: `${shownUrl} → ${msg}`,

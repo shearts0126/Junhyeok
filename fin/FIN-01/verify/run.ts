@@ -75,7 +75,9 @@ async function main(): Promise<number> {
         throw new Error(`지원하지 않는 live 소스: ${t}. 가능: ${LIVE_SOURCES.join(', ')}`);
       const r = await runLive(t, date);
       results.push(r);
-      console.log(`[live] ${r.source.padEnd(14)} ${r.status.padEnd(24)} ${r.summary}`);
+      console.log(
+        `[live] ${r.source.padEnd(14)} ${r.status.padEnd(24)} impl=${r.implementation} parse=${r.parsingImplemented ? 'yes' : 'NO(조회 구현 미완료)'} ${r.summary}`,
+      );
     }
     const out = {
       mode: 'live',
@@ -95,6 +97,9 @@ async function main(): Promise<number> {
               .join(', ')
           : '없음'
       }`,
+    );
+    console.log(
+      '응답 파싱·정규화·대조 구현: 없음 → 모든 --live 소스는 자격정보가 있어도 "조회 구현 미완료" 상태',
     );
     return results.every((r) => r.status === 'OK') ? 0 : 2;
   }

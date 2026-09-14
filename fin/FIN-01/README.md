@@ -15,6 +15,8 @@
 | `samples/` | 비식별 **가상** 샘플(`_meta.synthetic: true`). 실제 원천 응답 아님 |
 | `results/` | 실행 결과 JSON(가상 데이터 검증 `fixture-run.json`, 실제 호출 시도 `live-run*.json`) |
 | `fin01.env.example` | 실제 호출용 환경변수 이름 예시(값 없음) |
+| `evidence/` | 검토용 증빙: 보고 커밋 파일 목록·통계·diff, 실행 로그(명령·종료 코드), 런타임 버전 |
+| `FIN-01_보완검토결과.md` | 2차 검토 지시 항목별 조치·증빙 위치 |
 
 ## 실행
 
@@ -38,7 +40,9 @@ pnpm tsx fin/FIN-01/verify/run.ts --live fx-exim --date 2026-09-12
 
 - 비밀값·개인정보를 저장소에 넣지 않는다. 실제 호출 결과도 본문을 저장하지 않고 상태·건수·해시만 남긴다.
 - 가상 데이터 검증은 항상 `synthetic: true` 로 표시되며 실제 연동 성공을 뜻하지 않는다.
-- 필드매핑의 근거 수준: `CONFIRMED`(원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `MISSING`(원천 미제공).
+- 필드매핑의 근거 수준: `CONFIRMED`(원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `UNVERIFIED`(제공 여부 자체를 확인하지 못함, "미지원" 아님) · `MISSING`(미제공을 공식 근거로 확인).
+- `--live` 는 요청 구성·전송까지만 구현했고 응답 파싱·정규화·대조는 미구현이다(`results/live-run.json` 의 `implementation`, `parsingImplemented`). 자격정보가 있어도 "조회 구현 미완료" 상태다.
+- 보완검토 결과: `FIN-01_보완검토결과.md`.
 - 금액은 문자열 + BigInt 고정 스케일로만 연산한다(`verify/decimal.ts`). 부동소수점 사용 금지.
 
 ## 구조

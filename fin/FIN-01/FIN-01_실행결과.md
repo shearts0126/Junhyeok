@@ -2,15 +2,15 @@
 
 - 실행 환경: 원격 컨테이너(Node v22.22.2, pnpm 10.33.0), 저장소 `shearts0126/Junhyeok` 브랜치 `claude/festive-dijkstra-i5llac`
 - 실행일: 2026-09-14 (UTC 기준 시각 아래 표기, KST = UTC+9)
-- **요약: 실제 원천 호출은 한 건도 성공하지 못했다.** 자격정보가 제공되지 않았고(전 출처), 실행 환경의 egress 정책이 외부 호스트를 모두 차단했다. 아래 건수·금액 대조는 전부 **가상 데이터(synthetic)** 기반이며 실제 연동 성공을 뜻하지 않는다.
+- **요약: 실제 원천 호출은 한 건도 성공하지 못했다.** 자격정보가 제공되지 않았고(전 출처), 실행 환경의 egress 정책이 **시도한 공식 문서·API 호스트 29개 전부**를 차단했다(§5 목록. 시도하지 않은 호스트는 판단하지 않음. GitHub·npm 레지스트리는 허용되어 의존성 설치·푸시는 성공). 아래 건수·금액 대조는 전부 **가상 데이터(synthetic)** 기반이며 실제 연동 성공을 뜻하지 않는다. `--live` 코드는 요청 구성·전송까지만 구현했고 응답 파싱·정규화·대조는 미구현이다(§8).
 
 ## 1. 실행 목록
 
 | # | 모드 | 시작(UTC) | 종료(UTC) | 대상 기간(가상) | 결과 파일 | 결과 |
 |---|---|---|---|---|---|---|
 | R1 | 가상 샘플 검증 | 2026-09-14T10:49:59.126Z | 2026-09-14T10:49:59.159Z | 2026-09-12 ~ 2026-09-13 | `results/fixture-run.json` | 49건 통과 / 실패 0 (synthetic=true) |
-| R2 | 실제 호출(네트워크 탐침) `--live fx-exim --date 2026-09-12` | 2026-09-14T10:45:53.090Z | 2026-09-14T10:45:53.774Z | 2026-09-12 | `results/live-run-network-probe.json` | `BLOCKED_NETWORK`: HTTP 403, `x-deny-reason: host_not_allowed`(프록시 응답, 원천 응답 아님). 인증키는 자리표시자 문자열이며 프록시에서 차단되어 원천에 도달하지 않음 |
-| R3 | 실제 호출 `--live all --date 2026-09-12` | 2026-09-14T10:45:54.616Z | 2026-09-14T10:45:54.616Z | 2026-09-12 | `results/live-run.json` | 7개 소스 전부 `BLOCKED_NO_CREDENTIALS` |
+| R2 | 실제 호출(네트워크 탐침) `--live fx-exim --date 2026-09-12` | 2026-09-14T10:45:53.090Z | 2026-09-14T10:45:53.774Z | 2026-09-12 | `results/live-run-network-probe.json` | `BLOCKED_NETWORK`: HTTP 403, `x-deny-reason: host_not_allowed`(프록시 응답, 원천 응답 아님). 인증키는 자리표시자 문자열이며 프록시에서 차단되어 원천에 도달하지 않음. 구현 수준 `REQUEST_BUILT_SPEC_SNIPPET`, 파싱 미구현 |
+| R3 | 실제 호출 `--live all --date 2026-09-12` | 2026-09-14T10:45:54.616Z(1차) / 보완 후 재실행은 `evidence/run-live.log` | — | 2026-09-12 | `results/live-run.json` | 7개 소스 전부 `BLOCKED_NO_CREDENTIALS`. 전 소스 파싱 미구현(조회 구현 미완료) |
 | R0 | 환경 탐침(curl) | 2026-09-14 10:3x UTC | — | — | 본 문서 §5 | 20개 공식·공개 호스트 전부 `CONNECT tunnel failed, response 403` |
 
 ## 2. 계정 별칭(가상)
@@ -60,8 +60,9 @@
 
 | 시각(UTC) | 내용 | 조치 |
 |---|---|---|
-| 10:3x | curl 탐침: developers.facebook.com, developers.google.com, naver.github.io, developers.coupang.com, business-api.tiktok.com, developers.cafe24.com, sabangnet.co.kr, developers.wehago.com, wehago.com, developers.kftc.or.kr, developer.codef.io, webcash.co.kr, hyphen.im, koreaexim.go.kr, ecos.bok.or.kr, smbs.biz, oapi.koreaexim.go.kr, open.er-api.com, api.frankfurter.app, data.go.kr → 전부 프록시 403 | 공식 문서는 검색 결과 발췌로만 확인. 연동검증표에 근거 수준 표기 |
-| 10:3x | WebFetch 도구도 동일 도메인에서 `EGRESS_BLOCKED` | 동일 |
+| 10:3x | curl 탐침(20개 URL, 각 1회 GET, 최대 20초): developers.facebook.com, developers.google.com, naver.github.io, developers.coupang.com, business-api.tiktok.com, developers.cafe24.com, www.sabangnet.co.kr, developers.wehago.com, www.wehago.com, developers.kftc.or.kr, developer.codef.io, www.webcash.co.kr, hyphen.im, www.koreaexim.go.kr, ecos.bok.or.kr, www.smbs.biz, oapi.koreaexim.go.kr, open.er-api.com, api.frankfurter.app, www.data.go.kr → 전부 `CONNECT tunnel failed, response 403` | 공식 문서는 검색 결과 발췌로만 확인. 연동검증표에 근거 수준 표기 |
+| 10:3x | WebFetch 도구(9개 도메인): developers.cafe24.com, www.sabangnet.co.kr, qxguide.oopy.io, naver.github.io, developers.facebook.com, developers.wehago.com, developers.kftc.or.kr, developer.codef.io, www.koreaexim.go.kr → 전부 `EGRESS_BLOCKED` | 동일. 시도 범위 밖 호스트는 미판단 |
+| — | 허용 확인된 호스트: github.com(푸시 성공), registry.npmjs.org(설치 성공) | 저장소 운영용 허용 목록으로 추정. 허용 목록 변경 가능 여부는 미확인 |
 | 10:4x | 1차 실행에서 `accounting-wehago` 예외(7월 누적 행의 전월 누적 없음 → 전체 중단) | 전월 누적 없는 행을 예외가 아닌 "전환 불가 목록" 으로 반환하도록 수정(임의 산출 금지 규칙 유지). 재실행 통과 |
 | 10:45 | `--live fx-exim` HTTP 403 을 최초에 `FAILED` 로 분류 | `x-deny-reason` 헤더가 있으면 `BLOCKED_NETWORK` 로 분류하도록 수정(원천 응답과 프록시 차단 구분) |
 
@@ -78,4 +79,25 @@ pnpm tsx fin/FIN-01/verify/run.ts --live all --date 2026-09-12   # R3 (환경변
 
 ## 7. 저장소 품질 게이트
 
-`pnpm typecheck`, `pnpm exec eslint fin`, `pnpm format:check` 통과(2026-09-14). 기존 `src/`·`prisma/`·테스트 미변경.
+명령·종료 코드·요약 로그는 `evidence/` 에 있다(`run-fixtures.log`, `run-live.log`, `typecheck.log`, `lint.log`, `format-check.log`, `test-unit.log`, `versions.txt`). 기존 `src/`·`prisma/`·설정 파일 미변경(`evidence/commit-*-files.txt`).
+
+## 8. `--live` 구현 수준(출처별)
+
+`results/live-run.json` 의 `implementation` / `parsingImplemented` 와 동일하다. **어떤 소스도 응답을 파싱·정규화·대조하지 않는다.** 자격정보를 설정해도 "조회 구현 미완료" 상태이며, 요청 형식 중 추정 부분은 실제 응답을 확인하기 전까지 확정 스키마가 아니다.
+
+| 출처 | 공식 명세 확인 수준 | 실제 HTTP 요청 구현 | 인증 구현 | 응답 파싱 구현 | 실제 호출 결과 | 남은 작업 |
+|---|---|---|---|---|---|---|
+| 은행: 오픈뱅킹 | 발췌(응답 필드·페이징) | 있음. 경로 `/v2.0/account/transaction_list/fin_num` 과 파라미터명은 **추정** | Bearer 토큰 헤더만(토큰 발급·갱신 미구현) | 없음 | 자격 없음 → `BLOCKED_NO_CREDENTIALS` | 원문 명세 대조, 토큰 발급·갱신, 페이징 루프, `res_list` 파싱→`bank_transactions`, 대조. **조회 구현 미완료** |
+| 은행: 웹케시/CODEF/하이픈 | 발췌(제품 안내) | 없음 | 없음 | 없음(설정 기반 매핑만) | 미시도 | 명세·샘플 확보 후 전부 |
+| 사방넷 | 발췌(가입·연동키 안내) | 없음 | 없음 | 없음(자리표시자 매핑만) | 미시도 | 명세 확보 후 전부 |
+| 카페24 | 발췌(OAuth·제한·헤더) | 있음. `/api/v2/admin/orders` 경로·파라미터 **추정**, 헤더는 발췌 | Bearer 토큰 헤더만(OAuth 발급·2주 갱신 미구현) | 없음 | 자격 없음 | 토큰 발급·갱신, 원문 명세 대조, 파싱→`sales_events`, 대조. **조회 구현 미완료** |
+| 납품 엑셀 | 해당 없음 | 해당 없음(파일 읽기 미구현, 가상 행만) | 해당 없음 | 없음 | 미시도 | 샘플·위치 확보 후 파일 리더 |
+| 메타 | 발췌(fields·time_increment) | 있음. `act_{id}/insights` 발췌, 그래프 API 버전 v21.0 **추정** | 토큰 쿼리 파라미터만 | 없음 | 자격 없음 | 원문 대조, 파싱→`ad_daily_spend`, 28일 재조회. **조회 구현 미완료** |
+| 구글 | 발췌 + 개발자 토큰 페이지는 설계 담당자 원문 | 없음 | 없음(환경변수명만 예약, 개발자 토큰 불요) | 없음 | 미시도 | OAuth 리프레시→액세스, GAQL searchStream, 파싱 |
+| 네이버 | 발췌(경로·서명 헤더명) | 있음. `/billing/bizmoney` 발췌, 서명 문자열 형식 **추정** | HMAC-SHA256 서명 구현(형식 추정) | 없음 | 자격 없음 | 서명 형식 원문 대조, `/stats` 요청, 파싱. **조회 구현 미완료** |
+| 쿠팡 광고 | 발췌(광고센터 리포트) | 없음 | 없음 | 없음 | 미시도 | API 존재 확인 후 결정 |
+| 틱톡 | 발췌(경로·차원) | 있음. 경로 발췌, 파라미터 값 **추정** | Access-Token 헤더만 | 없음 | 자격 없음 | 원문 대조, 30일 분할, 파싱. **조회 구현 미완료** |
+| 위하고 | 확인하지 못함 | 없음 | 없음 | 없음(월간/누적 규칙만) | 미시도 | 읽기 경로 확인 후 전부 |
+| 환율: 수출입은행 | 발췌(경로·파라미터·필드) | 있음. 경로·`data=AP01` 발췌 | authkey 쿼리 | 없음 | R2 `BLOCKED_NETWORK`(프록시 403), 자격 없음 | 파싱→`fx_rates`, 휴일 규칙 연결. **조회 구현 미완료** |
+| 환율: ECOS | 발췌(통계표·항목) | 있음. `StatisticSearch` 경로 구조 **추정** | 키 경로 세그먼트 | 없음 | 자격 없음 | 원문 대조, 파싱. **조회 구현 미완료** |
+| 환율: 서울외국환중개 | 발췌(웹 공표) | 없음 | 없음 | 없음 | 미시도 | API 제공 여부 확인 |
