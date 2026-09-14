@@ -70,3 +70,58 @@ jobs:
 
       - name: Build (next build)
         run: pnpm build
+
+  # fin/fin02a (FIN-02A/02B 경영대시보드 공통 기반) 독립 검사.
+  # 루트 tsconfig/eslint 에서 fin/fin02a/** 를 제외한 대신 여기서 typecheck·lint·format·test 를 전부 실행한다.
+  # 루트 format:check(prettier)는 fin/fin02a 도 계속 포함한다(중복이지만 충돌 없음).
+  # 시험용 PostgreSQL 은 서비스 컨테이너이며 SCM/WMS DB·마이그레이션과 무관하다.
+  fin02a:
+    name: fin02a (independent checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: fin02a
+          POSTGRES_PASSWORD: fin02a-ci-only
+          POSTGRES_DB: postgres
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U fin02a"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: fin/fin02a
+    env:
+      FIN02A_DATABASE_URL: postgresql://fin02a:fin02a-ci-only@127.0.0.1:5433/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node (.nvmrc)
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          cache-dependency-path: fin/fin02a/pnpm-lock.yaml
+
+      - name: Install (frozen lockfile, independent package)
+        run: pnpm install --frozen-lockfile --ignore-workspace
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Tests (throwaway PostgreSQL)
+        run: pnpm test

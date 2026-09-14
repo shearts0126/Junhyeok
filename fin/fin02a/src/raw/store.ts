@@ -1,3 +1,4 @@
+import type { Dirent } from 'node:fs';
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
@@ -31,7 +32,7 @@ export class FsRawStore implements RawStore {
   async list(): Promise<string[]> {
     const out: string[] = [];
     const walk = async (dir: string): Promise<void> => {
-      let entries: import('node:fs').Dirent[];
+      let entries: Dirent[];
       try {
         entries = await readdir(dir, { withFileTypes: true });
       } catch {

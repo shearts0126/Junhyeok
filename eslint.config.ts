@@ -84,6 +84,9 @@ const eslintConfig = defineConfig([
     // 규칙 테스트용 위반 예제. 전체 lint 를 항상 실패시키지 않도록 제외하고,
     // tests/eslint-rules/*.test.ts 가 ESLint API 로 직접 검사한다.
     'eslint-rules/__fixtures__/**',
+    // fin/fin02a 는 독립 패키지(자체 eslint.config.mjs). CI 의 fin02a 잡이 별도로 lint 한다.
+    // fin/FIN-01/** 은 계속 루트 lint 대상이다.
+    'fin/fin02a/**',
   ]),
 ]);
 

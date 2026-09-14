@@ -9,18 +9,35 @@
     "pnpm": ">=10"
   },
   "scripts": {
+    "start:dev": "tsx src/app/main.ts",
+    "recovery": "tsx scripts/recovery.ts",
     "db:migrate": "tsx scripts/migrate.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "verify": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test"
   },
   "dependencies": {
-    "pg": "^8.22.0"
+    "@nestjs/common": "12.0.1",
+    "@nestjs/core": "12.0.1",
+    "@nestjs/platform-express": "12.0.1",
+    "pg": "^8.22.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@nestjs/testing": "12.0.1",
     "@types/node": "^20",
     "@types/pg": "^8.20.4",
+    "eslint": "^9.39.5",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "^3.9.6",
     "tsx": "^4.23.9",
     "typescript": "^5",
+    "typescript-eslint": "8.70.0",
     "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@10.33.0"

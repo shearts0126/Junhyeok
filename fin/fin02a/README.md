@@ -1,15 +1,15 @@
-# FIN-02A: 원천 데이터 추적 및 수집 실행 기반
+# FIN-02A/02B: 원천 데이터 추적·수집 실행 기반과 NestJS 실행 기반
 
 경영대시보드(딥포인트·디스트로바) 공통 기반의 첫 조각. 계획서 §5 의 `legal_entities` / `source_accounts` / `external_mappings` / `source_runs` / `raw_objects` / `source_records` 에 해당하며, 외부 API 형식과 무관한 부분만 구현한다.
 
-**이 범위는 FIN-02 전체가 아니다.** 로그인·작업 큐·실제 공급자 수집기·금액/손익 계산·화면·배포는 미착수다. FIN-01 최종 승인과도 별개다.
+**이 범위는 FIN-02 전체가 아니다.** FIN-02B 로 NestJS 실행 기반(설정 검증·DB 모듈·liveness/readiness·복구 CLI·독립 검사·CI)을 추가했다. 로그인·작업 큐·스케줄러·금융 데이터 조회 API·실제 공급자 수집기·금액/손익 계산·화면·배포는 미착수다. 앱은 루프백에만 바인딩한다. FIN-01 최종 승인과도 별개다. FIN-02B 상세는 `FIN-02B_제출.md`.
 
 ## 위치와 독립성
 
 - 위치: `fin/fin02a/` (SCM/WMS 저장소 안, 별도 패키지). 루트 `package.json`·잠금 파일·tsconfig·eslint·CI·`src/`·`prisma/` 는 변경하지 않았다.
-- 의존성: 자체 `package.json` + 자체 `pnpm-lock.yaml` + 자체 `node_modules` (`pnpm install --ignore-workspace`). 런타임 의존성은 `pg` 하나다. NestJS 는 이 조각(리포지토리·파이프라인 모듈)에 필요하지 않아 아직 추가하지 않았다(§"남은 제약").
+- 의존성: 자체 `package.json` + 자체 `pnpm-lock.yaml` + 자체 `node_modules` (`pnpm install --ignore-workspace`). 런타임 의존성은 `pg`, `@nestjs/common|core|platform-express`, `reflect-metadata`, `rxjs`. DI 는 명시적 `@Inject` 토큰만 사용한다(esbuild 가 `emitDecoratorMetadata` 를 지원하지 않음).
 - DB: FIN-02A 전용 PostgreSQL 16. 루트 `docker-compose.yml`(SCM/WMS, 5432)과 분리된 `docker-compose.fin.yml`(5433) 또는 로컬 바이너리(`scripts/dev-db.sh`). SCM/WMS 의 운영 DB·Prisma 마이그레이션은 사용·실행하지 않는다. 환경변수 이름도 `FIN02A_DATABASE_URL` 로 분리했다.
-- 루트 품질 게이트: 루트 `tsconfig.json` 의 `include: **/*.ts` 와 `eslint .` 범위 때문에 이 폴더의 TypeScript 도 루트 typecheck·lint·format:check 에 자동 포함된다. 전부 통과(`evidence/`). 루트 vitest 는 `src/**`·`tests/**` 만 수집하므로 이 폴더의 테스트는 여기서 따로 실행한다.
+- 검사 구성(FIN-02B): 루트 `tsconfig.json`·`eslint.config.ts` 는 `fin/fin02a/**` 를 제외하고(NestJS 데코레이터 옵션 충돌 회피), 대신 CI 의 `fin02a` 잡이 이 폴더의 `pnpm typecheck && pnpm lint && pnpm format:check && pnpm test` 를 별도로 실행한다. 루트 `format:check` 는 이 폴더도 계속 포함한다. `fin/FIN-01/**` 과 SCM/WMS 검사 범위는 그대로다. 대응표는 `FIN-02B_제출.md` §5.
 
 ## 실행
 
@@ -23,9 +23,11 @@ docker compose -f docker-compose.fin.yml up -d     # 5433
 scripts/dev-db.sh start                            # 출력된 FIN02A_DATABASE_URL 사용
 
 export FIN02A_DATABASE_URL=postgresql://fin02a@127.0.0.1:5433/postgres
-pnpm typecheck
-pnpm test            # 일회용 DB fin02a_test_<pid> 생성 → 마이그레이션 → 8개 완료 기준 → DB 삭제
-pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
+pnpm verify          # typecheck → lint → format:check → test(일회용 DB fin02a_test_<pid> 생성 → 마이그레이션 → 32건 → 삭제)
+pnpm db:migrate      # 개발 DB 에 마이그레이션 적용
+pnpm start:dev       # NestJS 앱, 127.0.0.1:3400 (루프백만). /health/live, /health/ready
+pnpm recovery preview                     # 수동 복구 미리보기(상태 불변)
+pnpm recovery close --run <id> --started-at <ISO> --actor <name> --reason <text> [--confirm]
 ```
 
 테스트는 DB 가 없으면 실패한다(조건부 skip 없음). 모든 테스트 데이터는 시험 전용이며 실제 계좌·판매자 계정이 아니다.
@@ -94,7 +96,7 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 
 ## 남은 제약·설계 결정 필요 사항
 
-- **NestJS 미도입**: 이 조각은 API 엔드포인트가 없어 NestJS 가 필요하지 않다. NestJS 앱(모듈·컨트롤러)을 붙이면 `experimentalDecorators`/`emitDecoratorMetadata` 가 필요한데, 루트 tsconfig 가 `fin/**/*.ts` 를 함께 컴파일하므로 **루트 `tsconfig.json`·`eslint.config.ts` 에 `fin/fin02a/**` 제외(각 1줄)** 가 필요하다. 이 루트 변경은 지시대로 먼저 보고하고 승인 후 적용한다. 대안은 저장소를 분리하는 것이다.
+- NestJS 앱은 루프백 전용이며 로그인·인가 전 배포 대상이 아니다. 수집 실행 HTTP API·스케줄러·큐·heartbeat·실행 잠금 미구현.
 - 원본 저장소는 파일 시스템 구현(`FsRawStore`)이며 운영은 비공개 객체 저장소로 교체한다(인터페이스 동일).
 - 로그인·작업 큐(BullMQ+Redis)·실제 공급자 수집기·표준 거래 정규화·금액 정밀도 라이브러리 선택은 미착수.
 - 실행 이력의 동시 실행 잠금(계획서 §10)은 미구현.

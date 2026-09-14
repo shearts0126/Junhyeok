@@ -54,5 +54,12 @@
    * 타입 검사 대상이 아니다. 규칙 검증은
    * tests/eslint-rules/inventory-boundary.test.ts 가 담당한다.
    */
-  "exclude": ["node_modules", "eslint-rules/__fixtures__/inventory-boundary/**"]
+  "exclude": [
+    "node_modules",
+    "eslint-rules/__fixtures__/inventory-boundary/**",
+    /* fin/fin02a 는 NestJS 데코레이터 옵션이 필요한 독립 패키지다. 루트 검사에서 제외하는 대신
+     * 자체 tsconfig·eslint·prettier·vitest 로 CI(.github/workflows/ci.yml 의 fin02a 잡)에서 별도 검사한다.
+     * fin/FIN-01/** 은 계속 루트 검사 대상이다. */
+    "fin/fin02a/**"
+  ]
 }

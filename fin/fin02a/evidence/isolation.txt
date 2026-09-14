@@ -1,23 +1,36 @@
-# 격리 확인 (2026-09-14T11:56:46.685984Z, 보완 커밋 전 작업트리)
+# 격리·루트 영향 확인 (2026-09-14T12:40:01.444852Z, FIN-02B 커밋 전 작업트리)
 ## fin/fin02a 자체 의존성 (pnpm list --depth 0 --ignore-workspace)
 Legend: production dependency, optional only, dev only
 
 fin-dashboard-core@0.0.1 /home/user/Junhyeok/fin/fin02a (PRIVATE)
 │
 │   dependencies:
+├── @nestjs/common@12.0.1
+├── @nestjs/core@12.0.1
+├── @nestjs/platform-express@12.0.1
 ├── pg@8.23.0
+├── reflect-metadata@0.2.2
+├── rxjs@7.8.2
 │
 │   devDependencies:
+├── @eslint/js@9.39.5
+├── @nestjs/testing@12.0.1
 ├── @types/node@20.19.43
 ├── @types/pg@8.23.1
+├── eslint@9.39.5
+├── eslint-config-prettier@10.1.8
+├── prettier@3.9.6
 ├── tsx@4.23.13
 ├── typescript@5.9.3
+├── typescript-eslint@8.70.0
 └── vitest@3.2.7
 
-6 packages
-## 루트 package.json / pnpm-lock.yaml / 설정 / src / prisma / CI 대상 git diff --stat main (비어 있으면 변경 없음)
+17 packages
+## 루트 미변경 대상(package.json / pnpm-lock.yaml / vitest / docker-compose / prisma / src / tests / .env.example / prettier 설정) diff --stat main (비어 있으면 변경 없음)
 
-## fin/ 이외 변경·신규 파일 (비어 있으면 없음)
- M "fin/FIN-01/FIN-01_\354\213\244\355\226\211\352\262\260\352\263\274.md"
-?? "fin/fin02a/FIN-02A_\353\263\264\354\231\204\352\262\260\352\263\274.md"
+## FIN-02B 에서 허용된 루트 변경(tsconfig exclude, eslint ignore, CI fin02a 잡) diff --stat main
+.github/workflows/ci.yml | 55 ++++++++++++++++++++++++++++++++++++++++++++++++
+ eslint.config.ts         |  3 +++
+ tsconfig.json            |  9 +++++++-
+ 3 files changed, 66 insertions(+), 1 deletion(-)
 ## PostgreSQL: 별도 인스턴스 127.0.0.1:5433 (scripts/dev-db.sh), 시험용 DB 는 테스트 종료 시 삭제

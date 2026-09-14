@@ -1,4 +1,21 @@
 # cwd: /home/user/Junhyeok
-# command: pnpm exec eslint fin/fin02a fin/FIN-01
-# started: 2026-09-14T12:32:05Z
+# command: pnpm lint
+# started: 2026-09-14T12:39:07Z
+
+> deeppoint-scm-os@0.1.0 lint /home/user/Junhyeok
+> eslint .
+
+
+/home/user/Junhyeok/src/modules/bom/application/activation.ts
+  9:1  warning  There should be no empty line within import group                   import/order
+  9:1  warning  `./cycle-graph` import should occur after import of `./create-bom`  import/order
+
+/home/user/Junhyeok/src/modules/bom/application/workflow.ts
+  8:1  warning  There should be at least one empty line between import groups       import/order
+  8:1  warning  `./cycle-graph` import should occur after import of `./create-bom`  import/order
+
+✖ 4 problems (0 errors, 4 warnings)
+  0 errors and 4 warnings potentially fixable with the `--fix` option.
+
 # exit code: 0
+# finished: 2026-09-14T12:39:38Z
