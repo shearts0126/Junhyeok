@@ -15,6 +15,7 @@ import {
   type SourceAccount,
 } from '../src/identity/repo';
 import type { ObservationInput } from '../src/records/observe';
+import type { StageName } from '../src/runs/repo';
 
 export function testPool(): pg.Pool {
   const url = process.env['FIN02A_TEST_DATABASE_URL'];
@@ -61,6 +62,10 @@ export interface FixtureOptions {
   /** 수집기가 선언하는 템플릿 상수 목록(기본: 'GET /api/list/{date}') */
   declaredTemplates?: string[];
   requestFails?: boolean;
+  /** 인증 서버 일시 장애를 흉내낸다(FAILED/TRANSIENT) */
+  authTransient?: boolean;
+  /** 인증 중 예외(자유 문자열)를 던진다 */
+  authThrows?: string;
   requestNotImplemented?: boolean;
   validateNotImplemented?: boolean;
   normalizeNotImplemented?: boolean;
@@ -78,15 +83,25 @@ export const secretsWith = (map: Record<string, string>) => ({ get: (n: string) 
 export class FixtureCollector implements Collector<{ token: string }, FixtureItem[]> {
   readonly sourceSystem: string;
   readonly endpointTemplates: readonly string[];
+  readonly implementedStages: readonly StageName[];
   constructor(
     private readonly opt: FixtureOptions,
     sourceSystem = 'TEST_SYSTEM',
   ) {
     this.sourceSystem = sourceSystem;
     this.endpointTemplates = opt.declaredTemplates ?? ['GET /api/list/{date}'];
+    // 선언은 옵션에 따라 정직하게: 미구현 옵션이 켜진 단계는 선언에서 뺀다.
+    const st: StageName[] = ['authenticate'];
+    if (!opt.requestNotImplemented) st.push('request');
+    if (!opt.validateNotImplemented) st.push('validate');
+    if (!opt.normalizeNotImplemented) st.push('normalize');
+    if (!opt.reconcileNotImplemented) st.push('reconcile');
+    this.implementedStages = st;
   }
 
   async authenticate(ctx: CollectorContext): Promise<StageResult<{ token: string }>> {
+    if (this.opt.authThrows) throw new Error(this.opt.authThrows);
+    if (this.opt.authTransient) return failed('AUTH_SERVER_TIMEOUT', 'TRANSIENT');
     const token = ctx.secrets.get('FIN02A_TEST_TOKEN');
     if (!token) return failed('NO_CREDENTIALS', 'CREDENTIALS');
     return ok({ token });

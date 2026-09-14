@@ -75,6 +75,13 @@ export interface Collector<Auth = unknown, Parsed = unknown> {
    * 요청 시점에 문자열을 조립하면(값 삽입) 목록과 달라져 거부되므로, 인증키·계정 ID 가 요약에 들어갈 수 없다(구조적 경계).
    */
   readonly endpointTemplates: readonly string[];
+  /**
+   * 구현된 단계 선언. 정기 자동 수집(SCHEDULED)은 다섯 단계가 전부 선언된 수집기만 허용하며,
+   * 미구현 수집기가 지정되면 외부 요청 전에 거부한다. 검증 모드(VERIFICATION, 명시적 지정)에서만 부분 구현 실행을 허용한다.
+   */
+  readonly implementedStages: readonly (
+    'authenticate' | 'request' | 'validate' | 'normalize' | 'reconcile'
+  )[];
   authenticate(ctx: CollectorContext): Promise<StageResult<Auth>>;
   request(ctx: CollectorContext, auth: Auth): Promise<StageResult<RawResponse>>;
   validate(

@@ -3,6 +3,8 @@ import type { Queryable } from '../db/client';
 import { isCode, redactText } from '../redact';
 
 export type RunStatus = 'RUNNING' | 'SUCCEEDED' | 'PARTIAL' | 'FAILED' | 'BLOCKED';
+/** SCHEDULED: 정기 자동 수집(완전 구현 수집기만). VERIFICATION: FIN-01 검증 목적의 수동 실행(부분 구현 허용, 집계 미반영). */
+export type RunMode = 'SCHEDULED' | 'VERIFICATION';
 export type StageName = 'authenticate' | 'request' | 'validate' | 'normalize' | 'reconcile';
 export type StageOutcome = 'OK' | 'NOT_IMPLEMENTED' | 'FAILED' | 'SKIPPED';
 export interface StageRecord {
@@ -20,6 +22,7 @@ export interface SourceRun {
   startedAt: Date;
   finishedAt: Date | null;
   status: RunStatus;
+  mode: RunMode;
   stages: Stages;
   errorCode: string | null;
   /** 오류 코드별 고정 설명(카탈로그). 외부 예외 메시지가 아니다 */
@@ -30,6 +33,8 @@ export interface SourceRun {
   sourceAsOf: Date | null;
   receivedCount: number | null;
   note: string | null;
+  closedBy: string | null;
+  closeReason: string | null;
 }
 
 /** 오류 코드 → 고정 설명. 여기 없는 코드는 코드 자체만 설명으로 쓴다. 외부 문자열은 절대 섞지 않는다. */
@@ -49,7 +54,9 @@ const ERROR_CATALOG: Record<string, string> = {
   RAW_STORE_FAILED: '원본 바이트 저장 실패',
   RAW_META_FAILED: '원본 메타데이터 저장 실패(고아 원본 가능)',
   OBSERVE_STORE_FAILED: '관측 저장 트랜잭션 실패',
-  RECOVERY_STALE_RUNNING: '복구 절차가 미종료 실행을 실패로 마감',
+  RECOVERY_MANUAL_CLOSE: '담당자가 복구 절차로 미종료 실행을 실패로 마감',
+  SCHEDULED_REQUIRES_COMPLETE_COLLECTOR:
+    '정기 실행에는 다섯 단계가 전부 구현된 수집기만 허용(외부 요청 전 거부)',
 };
 
 export function catalogMessage(code: string): string {
@@ -58,12 +65,12 @@ export function catalogMessage(code: string): string {
 
 export async function startRun(
   db: Queryable,
-  input: { sourceAccountId: string; periodFrom: string; periodTo: string },
+  input: { sourceAccountId: string; periodFrom: string; periodTo: string; mode?: RunMode },
 ): Promise<SourceRun> {
   const r = await db.query<RunRow>(
-    `INSERT INTO fin_source_runs (source_account_id, period_from, period_to, status)
-     VALUES ($1, $2, $3, 'RUNNING') RETURNING ${RUN_COLS}`,
-    [input.sourceAccountId, input.periodFrom, input.periodTo],
+    `INSERT INTO fin_source_runs (source_account_id, period_from, period_to, status, mode)
+     VALUES ($1, $2, $3, 'RUNNING', $4) RETURNING ${RUN_COLS}`,
+    [input.sourceAccountId, input.periodFrom, input.periodTo, input.mode ?? 'SCHEDULED'],
   );
   const row = r.rows[0];
   if (!row) throw new Error('실행 이력 생성 실패');
@@ -138,10 +145,10 @@ export async function getRun(db: Queryable, runId: string): Promise<SourceRun | 
   return row ? toRun(row) : null;
 }
 
-const RUN_COLS =
-  'id, source_account_id, period_from::text, period_to::text, started_at, finished_at, status, stages, error_code, error_message, failure_kind, error_class, source_as_of, received_count, note';
+export const RUN_COLS =
+  'id, source_account_id, period_from::text, period_to::text, started_at, finished_at, status, mode, stages, error_code, error_message, failure_kind, error_class, source_as_of, received_count, note, closed_by, close_reason';
 
-interface RunRow {
+export interface RunRow {
   id: string;
   source_account_id: string;
   period_from: string;
@@ -149,6 +156,7 @@ interface RunRow {
   started_at: Date;
   finished_at: Date | null;
   status: RunStatus;
+  mode: RunMode;
   stages: Stages;
   error_code: string | null;
   error_message: string | null;
@@ -157,9 +165,11 @@ interface RunRow {
   source_as_of: Date | null;
   received_count: number | null;
   note: string | null;
+  closed_by: string | null;
+  close_reason: string | null;
 }
 
-function toRun(row: RunRow): SourceRun {
+export function toRun(row: RunRow): SourceRun {
   return {
     id: row.id,
     sourceAccountId: row.source_account_id,
@@ -168,6 +178,7 @@ function toRun(row: RunRow): SourceRun {
     startedAt: row.started_at,
     finishedAt: row.finished_at,
     status: row.status,
+    mode: row.mode,
     stages: row.stages,
     errorCode: row.error_code,
     errorMessage: row.error_message,
@@ -176,5 +187,7 @@ function toRun(row: RunRow): SourceRun {
     sourceAsOf: row.source_as_of,
     receivedCount: row.received_count,
     note: row.note,
+    closedBy: row.closed_by,
+    closeReason: row.close_reason,
   };
 }

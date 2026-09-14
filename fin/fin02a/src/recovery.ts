@@ -1,84 +1,94 @@
 import type { Queryable } from './db/client';
 import type { RawStore } from './raw/store';
-import { finishRun, type SourceRun } from './runs/repo';
+import { redactText } from './redact';
+import { RUN_COLS, toRun, type RunRow, type SourceRun } from './runs/repo';
 
 /**
- * 최소 복구 경계.
- * try/catch 는 프로세스 강제 종료·DB 장애로 종료 상태를 못 남기는 경우를 해결하지 못한다. 그런 실행은 RUNNING 으로 남으며,
- * 아래 절차가 이를 식별하고 실패로 마감한다. 원본 파일이 있는데 메타데이터 행이 없는 고아 원본도 식별한다.
- * 재처리(재수집)는 새 실행으로 수행하며, 원본 키에 실행 ID 가 포함되고 관측 저장이 (계정,키,해시) 기준으로 멱등이므로
- * 이전 실패 실행의 잔여물이 중복 부작용을 만들지 않는다.
+ * 수동 복구 경계(확정 정책).
+ * - 자동 실패 마감은 하지 않는다. started_at 만 보고 정상 장기 실행을 종료하지 않는다.
+ * - 60분 이상 RUNNING 인 실행은 "확인 후보" 로만 조회한다(조사 기준이지 장애 확정 기준이 아니다).
+ * - 담당자가 프로세스 종료·활성 작업 부재를 확인한 뒤 실행 ID 를 지정해 마감한다. 주체·사유를 남긴다.
+ * - 적용 직전에 후보 조회 시점의 상태(RUNNING, started_at)를 재확인하고, 바뀌었으면 마감하지 않는다.
+ * - 고아 원본·바이트 유실은 목록만 제시하고 자동 삭제하지 않는다.
+ * try/catch 로 해결되지 않는 강제 종료·DB 장애의 잔여물은 이 절차로만 정리한다.
  */
 
-export async function listUnfinishedRuns(
-  db: Queryable,
-  olderThanMs: number,
-  now = new Date(),
-): Promise<SourceRun[]> {
-  const cutoff = new Date(now.getTime() - olderThanMs);
-  const r = await db.query<{ id: string }>(
-    `SELECT id FROM fin_source_runs WHERE status = 'RUNNING' AND started_at < $1 ORDER BY started_at`,
-    [cutoff],
-  );
-  const out: SourceRun[] = [];
-  for (const row of r.rows) {
-    const run = await db.query<{
-      id: string;
-      source_account_id: string;
-      period_from: string;
-      period_to: string;
-      started_at: Date;
-      finished_at: Date | null;
-      status: SourceRun['status'];
-      stages: SourceRun['stages'];
-      error_code: string | null;
-      error_message: string | null;
-      failure_kind: SourceRun['failureKind'];
-      error_class: string | null;
-      source_as_of: Date | null;
-      received_count: number | null;
-      note: string | null;
-    }>(
-      'SELECT id, source_account_id, period_from::text, period_to::text, started_at, finished_at, status, stages, error_code, error_message, failure_kind, error_class, source_as_of, received_count, note FROM fin_source_runs WHERE id = $1',
-      [row.id],
-    );
-    const x = run.rows[0];
-    if (x)
-      out.push({
-        id: x.id,
-        sourceAccountId: x.source_account_id,
-        periodFrom: x.period_from,
-        periodTo: x.period_to,
-        startedAt: x.started_at,
-        finishedAt: x.finished_at,
-        status: x.status,
-        stages: x.stages,
-        errorCode: x.error_code,
-        errorMessage: x.error_message,
-        failureKind: x.failure_kind,
-        errorClass: x.error_class,
-        sourceAsOf: x.source_as_of,
-        receivedCount: x.received_count,
-        note: x.note,
-      });
-  }
-  return out;
+export const DEFAULT_CANDIDATE_AGE_MS = 60 * 60 * 1000;
+
+export interface StaleRunCandidate {
+  run: SourceRun;
+  ageMinutes: number;
 }
 
-/** 미종료 실행을 FAILED/STORAGE 로 마감한다. 관측이 커밋됐다면 실행 종료도 같은 트랜잭션이었으므로 RUNNING 은 관측 없음을 뜻한다. */
-export async function markUnfinishedRunFailed(db: Queryable, runId: string): Promise<SourceRun> {
-  return finishRun(db, runId, {
-    status: 'FAILED',
-    stages: {},
-    errorCode: 'RECOVERY_STALE_RUNNING',
-    failureKind: 'STORAGE',
-    sourceAsOf: null,
-    receivedCount: null,
-    note: '복구 절차: 종료 기록 없이 남은 실행을 실패로 마감',
+/** 확인 후보: 임계 시간(기본 60분) 이상 RUNNING 인 실행. 상태를 바꾸지 않는다. */
+export async function listStaleRunCandidates(
+  db: Queryable,
+  olderThanMs = DEFAULT_CANDIDATE_AGE_MS,
+  now = new Date(),
+): Promise<StaleRunCandidate[]> {
+  const cutoff = new Date(now.getTime() - olderThanMs);
+  const r = await db.query<RunRow>(
+    `SELECT ${RUN_COLS} FROM fin_source_runs WHERE status = 'RUNNING' AND started_at < $1 ORDER BY started_at`,
+    [cutoff],
+  );
+  return r.rows.map((row) => {
+    const run = toRun(row);
+    return { run, ageMinutes: Math.floor((now.getTime() - run.startedAt.getTime()) / 60_000) };
   });
 }
 
-/** 저장소에는 있으나 fin_raw_objects 행이 없는 키(메타데이터 저장 실패·강제 종료의 잔여물). */
+export interface ManualCloseInput {
+  runId: string;
+  /** 후보 조회 시점의 started_at. 적용 직전 재확인에 사용 */
+  expectedStartedAt: Date;
+  /** 담당자 식별자 */
+  actor: string;
+  /** 확인 내용(프로세스 종료·활성 작업 부재 확인 등) */
+  reason: string;
+}
+
+export type ManualCloseResult =
+  | { applied: true; run: SourceRun }
+  | {
+      applied: false;
+      reason: 'NOT_RUNNING' | 'STARTED_AT_CHANGED' | 'NOT_FOUND' | 'INVALID_INPUT';
+    };
+
+/**
+ * 담당자 확인 후 수동 마감. FAILED/STORAGE, RECOVERY_MANUAL_CLOSE. 관측 저장과 SUCCEEDED 는 같은 트랜잭션이므로
+ * RUNNING 잔존은 관측이 커밋되지 않았음을 뜻한다. 적용 직전 상태·시작 시각을 재확인한다.
+ */
+export async function closeStaleRunManually(
+  db: Queryable,
+  input: ManualCloseInput,
+): Promise<ManualCloseResult> {
+  const actor = input.actor.trim().slice(0, 64);
+  const reason = redactText(input.reason.trim()).slice(0, 500);
+  if (!actor || !reason) return { applied: false, reason: 'INVALID_INPUT' };
+  const cur = await db.query<{ status: string; started_at: Date }>(
+    'SELECT status, started_at FROM fin_source_runs WHERE id = $1',
+    [input.runId],
+  );
+  const row = cur.rows[0];
+  if (!row) return { applied: false, reason: 'NOT_FOUND' };
+  if (row.status !== 'RUNNING') return { applied: false, reason: 'NOT_RUNNING' };
+  if (row.started_at.getTime() !== input.expectedStartedAt.getTime())
+    return { applied: false, reason: 'STARTED_AT_CHANGED' };
+  const r = await db.query<RunRow>(
+    `UPDATE fin_source_runs
+     SET finished_at = now(), status = 'FAILED', error_code = 'RECOVERY_MANUAL_CLOSE',
+         error_message = '담당자가 복구 절차로 미종료 실행을 실패로 마감', failure_kind = 'STORAGE',
+         note = '수동 복구 마감(담당자 확인 후)', closed_by = $2, close_reason = $3
+     WHERE id = $1 AND status = 'RUNNING' AND date_trunc('milliseconds', started_at) = date_trunc('milliseconds', $4::timestamptz)
+     RETURNING ${RUN_COLS}`,
+    [input.runId, actor, reason, input.expectedStartedAt],
+  );
+  const updated = r.rows[0];
+  if (!updated) return { applied: false, reason: 'STARTED_AT_CHANGED' };
+  return { applied: true, run: toRun(updated) };
+}
+
+/** 저장소에는 있으나 fin_raw_objects 행이 없는 키(메타데이터 저장 실패·강제 종료의 잔여물). 목록만, 삭제 없음. */
 export async function findOrphanRawKeys(db: Queryable, store: RawStore): Promise<string[]> {
   const keys = await store.list();
   if (keys.length === 0) return [];
@@ -90,9 +100,47 @@ export async function findOrphanRawKeys(db: Queryable, store: RawStore): Promise
   return keys.filter((k) => !known.has(k));
 }
 
-/** fin_raw_objects 행은 있으나 저장소에 바이트가 없는 키(저장소 유실). */
+/** fin_raw_objects 행은 있으나 저장소에 바이트가 없는 키(저장소 유실). 목록만. */
 export async function findRawRowsMissingBytes(db: Queryable, store: RawStore): Promise<string[]> {
   const keys = new Set(await store.list());
   const r = await db.query<{ storage_key: string }>('SELECT storage_key FROM fin_raw_objects');
   return r.rows.map((x) => x.storage_key).filter((k) => !keys.has(k));
+}
+
+export interface RecoveryPreview {
+  generatedAt: string;
+  candidateAgeMinutes: number;
+  staleRunCandidates: {
+    runId: string;
+    accountId: string;
+    startedAt: string;
+    ageMinutes: number;
+    mode: string;
+    stages: unknown;
+  }[];
+  orphanRawKeys: string[];
+  rawRowsMissingBytes: string[];
+}
+
+/** 미리보기: 상태를 바꾸지 않는다. */
+export async function previewRecovery(
+  db: Queryable,
+  store: RawStore,
+  olderThanMs = DEFAULT_CANDIDATE_AGE_MS,
+): Promise<RecoveryPreview> {
+  const candidates = await listStaleRunCandidates(db, olderThanMs);
+  return {
+    generatedAt: new Date().toISOString(),
+    candidateAgeMinutes: Math.floor(olderThanMs / 60_000),
+    staleRunCandidates: candidates.map((c) => ({
+      runId: c.run.id,
+      accountId: c.run.sourceAccountId,
+      startedAt: c.run.startedAt.toISOString(),
+      ageMinutes: c.ageMinutes,
+      mode: c.run.mode,
+      stages: c.run.stages,
+    })),
+    orphanRawKeys: await findOrphanRawKeys(db, store),
+    rawRowsMissingBytes: await findRawRowsMissingBytes(db, store),
+  };
 }

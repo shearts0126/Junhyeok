@@ -1,6 +1,6 @@
 # cwd: /home/user/Junhyeok/fin/fin02a
 # command: pnpm test
-# started: 2026-09-14T11:58:00Z
+# started: 2026-09-14T12:31:02Z
 
 > fin-dashboard-core@0.0.1 test /home/user/Junhyeok/fin/fin02a
 > vitest run
@@ -8,13 +8,14 @@
 
  RUN  v3.2.7 /home/user/Junhyeok/fin/fin02a
 
- ✓ test/remediation.test.ts (12 tests) 860ms
- ✓ test/completion-cases.test.ts (8 tests) 599ms
+ ✓ test/remediation.test.ts (12 tests) 1089ms
+ ✓ test/completion-cases.test.ts (8 tests) 730ms
+ ✓ test/final-fixes.test.ts (7 tests) 518ms
 
- Test Files  2 passed (2)
-      Tests  20 passed (20)
-   Start at  11:58:01
-   Duration  2.30s (transform 290ms, setup 0ms, collect 231ms, tests 1.46s, environment 0ms, prepare 70ms)
+ Test Files  3 passed (3)
+      Tests  27 passed (27)
+   Start at  12:31:03
+   Duration  3.32s (transform 325ms, setup 0ms, collect 256ms, tests 2.34s, environment 0ms, prepare 80ms)
 
 # exit code: 0
-# finished: 2026-09-14T11:58:04Z
+# finished: 2026-09-14T12:31:07Z

@@ -13,10 +13,8 @@ import { runsForRecord, traceRun } from '../src/records/trace';
 import {
   findOrphanRawKeys,
   findRawRowsMissingBytes,
-  listUnfinishedRuns,
-  markUnfinishedRunFailed,
+  listStaleRunCandidates,
 } from '../src/recovery';
-import { startRun } from '../src/runs/repo';
 
 import {
   dumpAll,
@@ -215,7 +213,7 @@ describe('3. 저장 실패와 미종료 실행', () => {
     ).toBe(0);
   });
 
-  it('종료 기록 실패 → finalized=false 로 반환, RUNNING 잔존이 복구 절차로 마감된다', async () => {
+  it('종료 기록 실패 → finalized=false 로 반환, RUNNING 잔존이 복구 확인 후보로 조회된다(자동 마감 없음)', async () => {
     const acc = await seedAccount(pool);
     const r = await runCollection(
       deps({ pool: faultyPool(pool, /UPDATE fin_source_runs/) }),
@@ -231,18 +229,16 @@ describe('3. 저장 실패와 미종료 실행', () => {
       (await pool.query('SELECT status FROM fin_source_runs WHERE id = $1', [r.runId])).rows[0]
         .status,
     ).toBe('RUNNING');
-    // 강제 종료를 흉내낸 실행(시작만 하고 종료 기록 없음)도 같은 절차로 식별
-    const killed = await startRun(pool, { sourceAccountId: acc.id, ...period });
     await pool.query(
-      "UPDATE fin_source_runs SET started_at = now() - interval '2 hours' WHERE id = ANY($1::uuid[])",
-      [[r.runId, killed.id]],
+      "UPDATE fin_source_runs SET started_at = now() - interval '2 hours' WHERE id = $1",
+      [r.runId],
     );
-    const stale = await listUnfinishedRuns(pool, 60 * 60 * 1000);
-    expect(stale.map((s) => s.id).sort()).toEqual([r.runId, killed.id].sort());
-    const fixed = await markUnfinishedRunFailed(pool, killed.id);
-    expect(fixed.status).toBe('FAILED');
-    expect(fixed.errorCode).toBe('RECOVERY_STALE_RUNNING');
-    expect(fixed.failureKind).toBe('STORAGE');
+    const stale = await listStaleRunCandidates(pool);
+    expect(stale.map((s) => s.run.id)).toEqual([r.runId]);
+    expect(
+      (await pool.query('SELECT status FROM fin_source_runs WHERE id = $1', [r.runId])).rows[0]
+        .status,
+    ).toBe('RUNNING'); // 조회는 상태를 바꾸지 않는다
   });
 });
 
@@ -280,7 +276,7 @@ describe('4. 대조를 통과한 데이터만 최신 관측', () => {
     const ni = await runCollection(
       deps(),
       new FixtureCollector({ items: changed, reconcileNotImplemented: true }),
-      { sourceAccountId: acc.id, ...period },
+      { sourceAccountId: acc.id, ...period, mode: 'VERIFICATION' },
     );
     expect(ni.run.status).toBe('PARTIAL');
     expect((await listVersions(pool, rec.rows[0]!.id)).length).toBe(1);
@@ -492,6 +488,7 @@ describe('7. 상태 정의', () => {
       const r = await runCollection(deps('secrets' in k ? { secrets: k.secrets } : {}), k.c, {
         sourceAccountId: acc.id,
         ...period,
+        mode: 'VERIFICATION',
       });
       expect(r.run.status).toBe(k.status);
       expect(r.run.failureKind).toBe(k.kind);

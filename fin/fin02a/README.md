@@ -30,7 +30,7 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 
 테스트는 DB 가 없으면 실패한다(조건부 skip 없음). 모든 테스트 데이터는 시험 전용이며 실제 계좌·판매자 계정이 아니다.
 
-## 데이터 구조 (`db/migrations/0001_fin02a_core.sql`, `0002_fin02a_integrity.sql`)
+## 데이터 구조 (`db/migrations/0001_fin02a_core.sql`, `0002_fin02a_integrity.sql`, `0003_fin02a_run_mode_recovery.sql`)
 
 | 테이블 | 역할 | 핵심 규칙 |
 |---|---|---|
@@ -38,7 +38,7 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 | `fin_source_systems` | 원천 시스템 | 종류 BANK/SALES/DELIVERY/ADS/ACCOUNTING/FX |
 | `fin_source_accounts` | 원천 계정과 소속 법인 | `(법인, 원천 시스템, 외부 계정 ID)` 유일. 다른 법인의 같은 외부 ID 는 충돌하지 않음. 별칭 유일 |
 | `fin_external_mappings` | 외부 코드 → 내부 ID | 원천 시스템(+계정) 범위, 유효기간. **같은 범위의 기간 중복은 EXCLUDE 제약으로 거부**(btree_gist). 계정 범위가 시스템 범위보다 우선하며 서로 다른 범위는 공존. 매핑의 시스템은 연결 계정의 시스템과 일치(복합 FK). 미매핑은 `null`(임의 생성 없음) |
-| `fin_source_runs` | 수집 실행 이력 | 실행 ID, 계정, 대상 기간, 시작·종료, 상태(RUNNING/SUCCEEDED/PARTIAL/FAILED/BLOCKED), 단계별 결과·코드(`stages`), 오류 코드·카탈로그 설명·`failure_kind`·예외 클래스명, `source_as_of`(미제공 null), `received_count`(확인 못 하면 null, 실제 0건은 0) |
+| `fin_source_runs` | 수집 실행 이력 | 실행 ID, 계정, 대상 기간, 시작·종료, 상태(RUNNING/SUCCEEDED/PARTIAL/FAILED/BLOCKED), 모드(SCHEDULED/VERIFICATION), 수동 마감 주체·사유, 단계별 결과·코드(`stages`), 오류 코드·카탈로그 설명·`failure_kind`·예외 클래스명, `source_as_of`(미제공 null), `received_count`(확인 못 하면 null, 실제 0건은 0) |
 | `fin_raw_objects` | 원본 보관 | 바이트 무변경 저장(`storage_key`=실행ID/sha256), sha256, 실행 ID, 수집 시각, 콘텐츠 유형, 요청 요약(원천·메서드·선언된 템플릿만). 같은 해시 재수신도 실행마다 행 유지 |
 | `fin_source_records` | 업무 관측 단위 | `source_key` 있으면 `(계정, 키)` 유일. `null` 이면 미식별로 매번 보존(자동 확정 중복 제거 없음). **미식별 자료는 후속 업무 집계에 바로 사용할 수 없다** |
 | `fin_source_record_versions` | 관측 버전 | 동일 키·변경 내용은 새 버전. 이전 payload 보존. 계정·실행·원본과 복합 FK 로 정합 |
@@ -56,22 +56,27 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 
 | 상황 | 상태 | `failure_kind` | 관측 저장 |
 |---|---|---|---|
-| 인증 FAILED(자격·권한 부족) | BLOCKED | CREDENTIALS | 없음 |
-| 어떤 단계든 NOT_IMPLEMENTED | PARTIAL | NOT_IMPLEMENTED (+`stages` 에 단계·코드) | 없음 |
+| 인증 FAILED 이고 kind=CREDENTIALS(자격 없음·무효·권한 부족) | BLOCKED | CREDENTIALS | 없음 |
+| 인증 FAILED 이고 kind≠CREDENTIALS(인증 서버 타임아웃·일시 장애 등) 또는 인증 중 예외 | FAILED | TRANSIENT / PERMANENT / STORAGE / UNKNOWN (수집기 반환값 유지, 예외는 UNKNOWN) | 없음 |
+| 정기(SCHEDULED) 실행에 미구현 수집기 지정 | PARTIAL | NOT_IMPLEMENTED (`SCHEDULED_REQUIRES_COMPLETE_COLLECTOR`, 외부 요청 전 거부) | 없음 |
+| 어떤 단계든 NOT_IMPLEMENTED (검증 모드) | PARTIAL | NOT_IMPLEMENTED (+`stages` 에 단계·코드) | 없음 |
 | 요청·검증·정규화·대조·저장 실패 | FAILED | TRANSIENT / PERMANENT / STORAGE / UNKNOWN | 없음(수신된 원본은 보관) |
 | 다섯 단계 OK + 관측 저장 커밋 | SUCCEEDED | null | 있음 |
 
 - 순서는 **정규화 → 대조 → 관측 저장** 이다. 대조 실패·미구현이면 원본·실행 이력은 보존하되 최신 관측은 갱신하지 않는다.
 - 대조 성공 후 관측 저장과 SUCCEEDED 기록은 **하나의 트랜잭션**이다. 데이터가 저장되지 않았는데 SUCCEEDED 가 되거나, 실패 데이터가 최신 관측이 되는 상태가 없다.
-- 네트워크 요청 성공만으로 SUCCEEDED 가 되지 않는다. `failure_kind` 로 재시도 로직이 영구 미구현·자격 부족을 반복 실행하지 않도록 원인을 구분한다.
+- 네트워크 요청 성공만으로 SUCCEEDED 가 되지 않는다. `failure_kind` 로 재시도 로직이 영구 미구현·자격 부족을 반복 실행하지 않도록 원인을 구분한다. 실패 원인은 오류가 난 단계가 아니라 수집기가 반환한 `kind` 로만 판정한다.
+- 실행 모드: `SCHEDULED`(기본, 정기 자동 수집)는 `implementedStages` 에 다섯 단계가 전부 선언된 수집기만 허용하며(`isSchedulable`), 미구현 수집기는 외부 요청 전에 PARTIAL 로 거부한다. `VERIFICATION` 은 FIN-01 검증 목적의 수동 실행에서만 명시적으로 지정하며, 결과는 PARTIAL/NOT_IMPLEMENTED 이고 최신 관측·손익·현금 집계에 반영되지 않는다. 기본값으로 활성화되지 않는다.
 - `normalize` 의 결과 `payload` 는 공급자 원본 구조를 담는 `unknown` 이다. 공급자별 추정 필드를 공통 모델의 필수 사실로 고정하지 않는다.
 
 ## 오류 경계와 복구 (`src/collector/pipeline.ts`, `src/recovery.ts`)
 
 - 실행 생성 이후 전체를 오류 경계로 감싼다. 원본 바이트 저장 실패 `RAW_STORE_FAILED`, 메타데이터 저장 실패 `RAW_META_FAILED`(고아 원본 후보), 관측 트랜잭션 실패 `OBSERVE_STORE_FAILED`(롤백)를 구분해 FAILED/STORAGE 로 기록한다.
-- 종료 기록 자체가 실패하면 `finalized=false` 와 원래 실패 코드를 호출자에게 돌려주고, 실행은 RUNNING 으로 남아 복구 대상이 된다.
-- 복구 절차: `listUnfinishedRuns`(일정 시간 지난 RUNNING), `markUnfinishedRunFailed`(FAILED/STORAGE, `RECOVERY_STALE_RUNNING`), `findOrphanRawKeys`(저장소에만 있는 원본), `findRawRowsMissingBytes`(행만 있는 원본).
-- 프로세스 강제 종료·DB 장애는 try/catch 로 해결되지 않는다. 그 경우 RUNNING 잔존을 위 절차가 식별한다. 재처리는 새 실행으로 하며, 원본 키에 실행 ID 가 포함되고(`wx` 쓰기) 관측 저장이 (계정, 키, 해시) 기준 멱등이라 중복 부작용이 없다.
+- 종료 기록 자체가 실패하면 `finalized=false` 와 원래 실패 코드를 호출자에게 돌려주고, 실행은 RUNNING 으로 남아 복구 확인 후보가 된다.
+- 로그 경계: 로그 콜백 예외는 `safeLog` 가 흡수하고 `logFailed=true` 로만 알린다. 로그 실패로 DB 의 성공·실패 상태를 다시 바꾸지 않으며, 종료 기록이 성공했다면 `finalized=true` 를 유지한다. 로그 오류를 같은 로그 함수로 다시 출력하지 않는다. 로그 장애(`logFailed`)와 DB 종료 기록 장애(`finalized=false`)는 별도 신호다.
+- 수동 복구 정책(확정): 자동 실패 마감은 하지 않는다. 60분 이상 RUNNING 인 실행은 **확인 후보**로만 조회한다(`listStaleRunCandidates`, `previewRecovery`). 60분은 조사 기준이지 장애 확정 기준이 아니며, 정상 장기 실행을 시간 경과만으로 종료하지 않는다. 담당자가 프로세스 종료·활성 작업 부재를 확인한 뒤 실행 ID 를 지정해 마감한다(`closeStaleRunManually`: 주체·사유 기록, 적용 직전에 상태·시작 시각 재확인, 바뀌었으면 마감하지 않음). 고아 원본·바이트 유실은 목록만 제시하고 삭제하지 않는다. 미리보기·적용을 분리한 CLI 는 FIN-02B(`scripts/recovery.ts`).
+- 후속(worker 단계): 10분 주기 후보 점검을 설계하되, 자동 마감은 작업 소유권·heartbeat·실행 잠금 구현 이후 별도 작업으로 한다.
+- 프로세스 강제 종료·DB 장애는 try/catch 로 해결되지 않는다. 재처리는 새 실행으로 하며, 원본 키에 실행 ID 가 포함되고(`wx` 쓰기) 관측 저장이 (계정, 키, 해시) 기준 멱등이라 중복 부작용이 없다.
 
 ## 비밀값 취급 경계 (`src/redact.ts`)
 
@@ -85,7 +90,7 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 
 ## 검증 (`test/completion-cases.test.ts`, `test/remediation.test.ts`)
 
-시험용 일회용 PostgreSQL + 가상 데이터로 완료 기준 8건과 2차 검토 회귀 12건을 검증한다. **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`. DB 장애는 SQL 패턴에 따라 예외를 던지는 풀 래퍼(`test/helpers.ts` `faultyPool`)로 주입한다.
+시험용 일회용 PostgreSQL + 가상 데이터로 완료 기준 8건, 2차 검토 회귀 12건, 3차 검토·정책 회귀 7건(`test/final-fixes.test.ts`)을 검증한다. **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`. DB 장애는 SQL 패턴에 따라 예외를 던지는 풀 래퍼(`test/helpers.ts` `faultyPool`)로 주입한다.
 
 ## 남은 제약·설계 결정 필요 사항
 

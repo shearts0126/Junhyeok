@@ -1,9 +1,7 @@
 # cwd: /home/user/Junhyeok/fin/fin02a
 # command: pnpm typecheck
-# started: 2026-09-14T11:56:12Z
 
 > fin-dashboard-core@0.0.1 typecheck /home/user/Junhyeok/fin/fin02a
 > tsc --noEmit -p tsconfig.json
 
 # exit code: 0
-# finished: 2026-09-14T11:56:14Z

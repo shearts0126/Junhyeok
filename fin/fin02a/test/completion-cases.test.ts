@@ -239,7 +239,7 @@ describe('완료 기준', () => {
     const unparsed = await runCollection(
       deps(),
       new FixtureCollector({ items, validateNotImplemented: true }),
-      { sourceAccountId: acc.id, ...period },
+      { sourceAccountId: acc.id, ...period, mode: 'VERIFICATION' },
     );
     expect(unparsed.run.status).toBe('PARTIAL');
     expect(unparsed.run.receivedCount).toBeNull(); // 파싱 전 종료는 건수를 모른다(0 아님)
@@ -290,7 +290,7 @@ describe('완료 기준', () => {
     const reqNi = await runCollection(
       deps(),
       new FixtureCollector({ items, requestNotImplemented: true }),
-      { sourceAccountId: acc.id, ...period },
+      { sourceAccountId: acc.id, ...period, mode: 'VERIFICATION' },
     );
     expect(reqNi.run.status).toBe('PARTIAL'); // 미구현은 BLOCKED 가 아니다
     expect(reqNi.run.failureKind).toBe('NOT_IMPLEMENTED');
@@ -301,7 +301,7 @@ describe('완료 기준', () => {
     const partial = await runCollection(
       deps(),
       new FixtureCollector({ items, normalizeNotImplemented: true }),
-      { sourceAccountId: acc.id, ...period },
+      { sourceAccountId: acc.id, ...period, mode: 'VERIFICATION' },
     );
     expect(partial.run.status).toBe('PARTIAL');
     expect(partial.run.stages.normalize).toEqual({
@@ -312,7 +312,7 @@ describe('완료 기준', () => {
     const noRecon = await runCollection(
       deps(),
       new FixtureCollector({ items, reconcileNotImplemented: true }),
-      { sourceAccountId: acc.id, ...period },
+      { sourceAccountId: acc.id, ...period, mode: 'VERIFICATION' },
     );
     expect(noRecon.run.status).toBe('PARTIAL'); // 대조 미구현: 원본·실행 보존, 최신 관측 미갱신
     expect(noRecon.observations).toBeNull();

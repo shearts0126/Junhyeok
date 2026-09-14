@@ -1,7 +1,7 @@
 # FIN-02A 보완결과
 
 - 대상: 2차 코드 검토에서 확인된 결함 5건과 상태 정의 정리. 커밋 `591ad87` 이후의 보완이며 새 커밋은 대화 보고에 명시.
-- 상태: **FIN-02A READY_FOR_REVIEW**(재검토 대상). **FIN-01 READY_FOR_REVIEW**(비밀값 노출 경로만 수정, 연동 구현 확대 없음). FIN-02B·NestJS·로그인·큐·실제 공급자 수집기 미착수.
+- 상태: **FIN-02A READY_FOR_REVIEW**(3차 검토 지적 2건과 확정 정책 반영 후 최종 검토 대상, §7). **FIN-01 READY_FOR_REVIEW**(비밀값 노출 경로만 수정, 연동 구현 확대 없음). FIN-02B·NestJS·로그인·큐·실제 공급자 수집기 미착수.
 - 검증은 시험용 일회용 PostgreSQL 과 가상 데이터 기준이며 외부 연동 성공을 뜻하지 않는다. 실제 인증정보는 사용하지 않았다.
 
 ## 1. 지적 항목별 변경·검증·남은 제한
@@ -54,3 +54,14 @@
 2. 복구 절차의 실행 주체·주기(수동 CLI vs 스케줄러)는 FIN-02B 이후.
 3. 미종료 실행 판정 임계 시간(현재 호출자가 지정).
 4. 요청 요약 템플릿 형태 규칙(`?`, `=`, `&` 금지)이 실제 공급자 경로 표현에 충분한지는 첫 실제 수집기 구현 시 확인.
+
+## 7. 3차 검토 반영(최종 보완, 커밋은 대화 보고에 명시)
+
+| # | 지적/정책 | 변경 | 검증(`test/final-fixes.test.ts`) |
+|---|---|---|---|
+| 2 | 인증 중 네트워크 오류도 BLOCKED | 인증 FAILED 의 상태를 수집기가 반환한 `kind` 로만 결정: CREDENTIALS → BLOCKED/CREDENTIALS, 그 외(TRANSIENT/PERMANENT/STORAGE/UNKNOWN) → FAILED + 해당 kind 유지. 인증 중 예외 → FAILED/UNKNOWN(`UNHANDLED_AUTHENTICATE`). 미구현은 PARTIAL/NOT_IMPLEMENTED 유지. 단계만으로 원인을 추정하지 않음 | 자격 부족·인증 서버 일시 장애·인증 중 예외 각각 검증. BLOCKED 는 자격 부족 1건뿐 |
+| 3 | 성공 커밋 후 로그 예외가 반환 결과를 바꿈 | `safeLog` 경계: 로그 콜백 예외를 흡수하고 `CollectionOutcome.logFailed` 로만 보고. 성공·실패 종료 모두 종료 기록 성공 시 `finalized=true` 유지. 로그 오류를 같은 로그 함수로 재출력하지 않음. 로그 장애와 DB 종료 기록 장애(`finalized=false`) 구분 | 성공 종료 후 로그 예외(DB SUCCEEDED·관측 포함·finalized=true), 실패 종료 후 로그 예외(호출 1회, finalized=true), 로그 장애+종료 기록 장애 동시(구분) |
+| 4 | 복구 정책 확정 | 자동 마감 제거. `listStaleRunCandidates`(기본 60분, 조회만)·`previewRecovery`(상태 불변)·`closeStaleRunManually`(주체·사유 기록, 적용 직전 status/started_at 재확인, 불일치 시 미적용). 0003 마이그레이션에 `closed_by`, `close_reason`. 고아 원본·유실은 목록만 | 정상 장기 실행이 후보로만 조회되고 종료되지 않음. 입력 검증, 다른 경로로 종료된 실행 미적용, 시작 시각 변경 미적용, 정상 적용 시 주체·사유(비밀값 마스킹) 기록, 재적용 거부, 미존재 |
+| 5 | 대조 미구현 소스 정책 확정 | 실행 모드 `SCHEDULED`(기본)/`VERIFICATION`. `Collector.implementedStages` 선언과 `isSchedulable` 로 정기 실행은 완전 구현 수집기만 허용, 미구현 수집기는 외부 요청 전 `SCHEDULED_REQUIRES_COMPLETE_COLLECTOR` 로 거부. 검증 모드는 명시적 지정이며 PARTIAL/NOT_IMPLEMENTED, 관측·집계 미반영. 0003 마이그레이션에 `mode` 컬럼 | 기본 모드 거부(요청 단계 SKIPPED, 원본 없음), 검증 모드 원본 수집·관측 0건, 완전 구현 수집기 정기 실행 성공 |
+
+기존 시험 수정: 미구현 옵션을 쓰는 시험은 `mode: 'VERIFICATION'` 을 명시(정책 반영). 이전 `listUnfinishedRuns`/`markUnfinishedRunFailed`(자동 마감) 는 제거하고 후보 조회·수동 마감으로 대체. 총 27건 통과(`evidence/test.log`).
