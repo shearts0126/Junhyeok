@@ -1,9 +1,9 @@
 # cwd: /home/user/Junhyeok/fin/fin02a
 # command: pnpm lint
-# started: 2026-09-14T12:38:57Z
+# started: 2026-09-14T13:08:20Z
 
 > fin-dashboard-core@0.0.1 lint /home/user/Junhyeok/fin/fin02a
 > eslint .
 
 # exit code: 0
-# finished: 2026-09-14T12:38:59Z
+# finished: 2026-09-14T13:08:22Z

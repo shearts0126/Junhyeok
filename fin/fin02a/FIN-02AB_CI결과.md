@@ -1,0 +1,14 @@
+# FIN-02A/B GitHub Actions 실행 결과 (설계 담당자 요청 증빙)
+
+조회 수단: GitHub API(Actions 목록·잡·로그). 조회 시각 2026-09-14 13:1x UTC. 로컬 검사 결과와 분리해 기록한다.
+
+| 커밋 | 내용 | 워크플로 실행 | 결과 | 비고 |
+|---|---|---|---|---|
+| `db2e9cc` | FIN-01 1차 | https://github.com/shearts0126/Junhyeok/actions/runs/34835426457 | success | — |
+| `70ebb4d` | FIN-01 2차 보완 | https://github.com/shearts0126/Junhyeok/actions/runs/34837455563 | **failure** | 루트 `verify` 잡의 `DB integration tests` 단계에서 기존 SCM/WMS 시험 `tests/db/supplier-api.test.ts` 95번(동시 versioning) 실패. `fin/` 변경과 무관한 기존 코드의 간헐 실패 |
+| `591ad87` | FIN-02A 1차 | https://github.com/shearts0126/Junhyeok/actions/runs/34838763866 | success | — |
+| `ee3a30a` | FIN-02A 보완 | https://github.com/shearts0126/Junhyeok/actions/runs/34840880583 | success | — |
+| `b068ce8` | FIN-02A 최종 보완 | https://github.com/shearts0126/Junhyeok/actions/runs/34843960068 | **failure** | 위와 동일한 SCM/WMS 시험(95번) 간헐 실패. typecheck·lint·format·unit 은 통과, DB 통합 단계에서 실패해 이후 단계(drift·build)는 skipped |
+| `1079d66` | FIN-02B | https://github.com/shearts0126/Junhyeok/actions/runs/34844674866 | success | `verify` 잡 성공 + 신규 `fin02a (independent checks)` 잡 성공(typecheck·lint·format·test 전부 success) |
+
+판단: 실패 2건은 모두 제 변경 범위 밖의 기존 SCM/WMS DB 시험(같은 시험이 동일 SCM 코드로 `591ad87`·`ee3a30a`·`1079d66` 에서는 통과)이며, 지시(기존 SCM/WMS 업무 코드·DB 미변경)에 따라 수정하지 않았다. 설계 담당자 확인 대상으로 남긴다. FIN-02C·환율 커밋의 Actions 결과는 푸시 후 별도 조회해 보고한다.
