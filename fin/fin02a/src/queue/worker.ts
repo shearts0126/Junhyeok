@@ -12,11 +12,12 @@ import {
   finishAttempt,
   getJob,
   markQueued,
+  remainingUntilDue,
   requeueJob,
   setJobStatusFenced,
 } from './jobs';
 import { acquireLease, bindLeaseRun, heartbeat, releaseLease } from './lease';
-import { enqueueDelayed, QUEUE_NAME, type CollectionJobData } from './queue';
+import { enqueueDelayed, ensureScheduledEntry, QUEUE_NAME, type CollectionJobData } from './queue';
 import type { CollectorRegistry } from './registry';
 import { DEFAULT_RETRY_POLICY, decide, type RetryPolicy } from './retry';
 import type { Queue } from 'bullmq';
@@ -49,11 +50,14 @@ export type ProcessResult =
       retryScheduled: boolean;
       logFailed: boolean;
     }
+  /** LOCK_HELD: 계정 잠금 대기. NOT_DUE: 재시도 예정 시각 이전 조기 전달(예약 보존·재예약, 시도 수 불변) */
   | { kind: 'DEFERRED'; jobId: string; reason: 'LOCK_HELD' }
+  | { kind: 'DEFERRED'; jobId: string; reason: 'NOT_DUE'; nextAttemptAt: Date; preserved: boolean }
   | {
       kind: 'SKIPPED';
       jobId: string;
-      reason: 'JOB_NOT_FOUND' | 'JOB_NOT_STARTABLE' | 'COLLECTOR_NOT_REGISTERED';
+      reason:
+        'JOB_NOT_FOUND' | 'JOB_NOT_STARTABLE' | 'COLLECTOR_NOT_REGISTERED' | 'INVALID_SCHEDULE';
     };
 
 /**
@@ -83,6 +87,12 @@ export async function processCollectionJob(
   if (!job) return { kind: 'SKIPPED', jobId: data.jobId, reason: 'JOB_NOT_FOUND' };
   if (job.status !== 'QUEUED' && job.status !== 'RETRY_SCHEDULED')
     return { kind: 'SKIPPED', jobId: job.id, reason: 'JOB_NOT_STARTABLE' };
+  if (job.status === 'RETRY_SCHEDULED' && job.nextAttemptAt === null)
+    return { kind: 'SKIPPED', jobId: job.id, reason: 'INVALID_SCHEDULE' }; // 즉시 실행으로 해석하지 않는다
+  // 사전 확인(DB 시각 기준): 예정 시각 전이면 잠금·외부 요청 없이 예약을 보존하고 끝낸다. 최종 방어는 beginAttempt.
+  const due = await remainingUntilDue(deps.pool, job.id);
+  if (due && due.remainingMs > 0 && due.nextAttemptAt)
+    return await deferNotDue(deps, job, data, due.nextAttemptAt, due.remainingMs);
   const collector = deps.registry.get(job.collectorKey);
   if (!collector) {
     // 외부 요청 없이 거부. 실행 ID 없이 시도 이력만 남긴다.
@@ -98,6 +108,7 @@ export async function processCollectionJob(
         workerId: deps.workerId,
         generation: lease0.generation,
       });
+      if (!a.ok) return await afterStartRefused(deps, job, data, a.reason, a.nextAttemptAt, lease0);
       await finishAttempt(deps.pool, a.attemptId, {
         outcome: 'COLLECTOR_NOT_REGISTERED',
         failureKind: 'PERMANENT',
@@ -120,17 +131,15 @@ export async function processCollectionJob(
   });
   if (!lease) return await defer(deps, job.id, data);
 
-  let attempt: { attemptNo: number; attemptId: string };
-  try {
-    attempt = await beginAttempt(deps.pool, {
-      jobId: job.id,
-      workerId: deps.workerId,
-      generation: lease.generation,
-    });
-  } catch {
-    await releaseLease(deps.pool, lease, 'not-startable');
-    return { kind: 'SKIPPED', jobId: job.id, reason: 'JOB_NOT_STARTABLE' };
-  }
+  // 시작 확정(최종 방어): 조건부 UPDATE. 거부되면 자기 잠금만 해제하고 외부 요청 없이 끝낸다. DB 오류는 전파된다.
+  const started = await beginAttempt(deps.pool, {
+    jobId: job.id,
+    workerId: deps.workerId,
+    generation: lease.generation,
+  });
+  if (!started.ok)
+    return await afterStartRefused(deps, job, data, started.reason, started.nextAttemptAt, lease);
+  const attempt = { attemptNo: started.attemptNo, attemptId: started.attemptId };
 
   const hb = setInterval(() => {
     heartbeat(deps.pool, lease).then(
@@ -241,6 +250,55 @@ export async function processCollectionJob(
     jobStatus,
     retryScheduled,
     logFailed: outcome.logFailed || !logOk,
+  };
+}
+
+/** 잠금 획득 후 시작 확정이 거부된 경우: 자기 worker_id·generation 잠금만 해제하고 사유별로 처리한다. */
+async function afterStartRefused(
+  deps: WorkerDeps,
+  job: { id: string; requestId: string; attemptCount: number },
+  data: CollectionJobData,
+  reason: 'NOT_STARTABLE' | 'NOT_DUE' | 'INVALID_SCHEDULE',
+  nextAttemptAt: Date | null,
+  lease: Parameters<typeof releaseLease>[1],
+): Promise<ProcessResult> {
+  await releaseLease(deps.pool, lease, reason === 'NOT_DUE' ? 'not-due' : 'not-startable');
+  if (reason === 'NOT_DUE' && nextAttemptAt) {
+    const due = await remainingUntilDue(deps.pool, job.id);
+    return await deferNotDue(deps, job, data, nextAttemptAt, due?.remainingMs ?? 0);
+  }
+  return {
+    kind: 'SKIPPED',
+    jobId: job.id,
+    reason: reason === 'INVALID_SCHEDULE' ? 'INVALID_SCHEDULE' : 'JOB_NOT_STARTABLE',
+  };
+}
+
+/**
+ * 조기 전달: 예정 시각 전에 도착한 전달은 시도·외부 요청 없이 끝내고, 예정 시각에 실행될 큐 항목을 보존하거나 남은
+ * 대기시간으로 다시 예약한다. next_attempt_at 은 덮어쓰지 않는다(대기시간 재계산·연장 없음). worker 안에서 기다리지 않는다.
+ */
+async function deferNotDue(
+  deps: WorkerDeps,
+  job: { id: string; requestId: string; attemptCount: number },
+  data: CollectionJobData,
+  nextAttemptAt: Date,
+  remainingMs: number,
+): Promise<ProcessResult> {
+  const r = await ensureScheduledEntry(
+    deps.queue,
+    { jobId: job.id, requestId: job.requestId },
+    nextAttemptAt,
+    remainingMs,
+    job.attemptCount + 1,
+  );
+  await markQueued(deps.pool, job.id);
+  return {
+    kind: 'DEFERRED',
+    jobId: job.id,
+    reason: 'NOT_DUE',
+    nextAttemptAt,
+    preserved: r.preserved,
   };
 }
 

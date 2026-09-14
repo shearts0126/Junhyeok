@@ -9,13 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { CollectorContext, RawResponse, StageResult } from '../src/collector/types';
 import { FsRawStore } from '../src/raw/store';
-import {
-  beginAttempt,
-  bindAttemptRun,
-  getJob,
-  listAttempts,
-  listUnqueuedJobs,
-} from '../src/queue/jobs';
+import { bindAttemptRun, getJob, listAttempts, listUnqueuedJobs } from '../src/queue/jobs';
 import {
   acquireLease,
   bindLeaseRun,
@@ -36,7 +30,14 @@ import { processCollectionJob, type WorkerDeps } from '../src/queue/worker';
 import { closeStaleRunManually, previewRecovery } from '../src/recovery';
 import { startRun } from '../src/runs/repo';
 
-import { FixtureCollector, secretsWith, seedAccount, testPool, truncateAll } from './helpers';
+import {
+  FixtureCollector,
+  mustBegin,
+  secretsWith,
+  seedAccount,
+  testPool,
+  truncateAll,
+} from './helpers';
 
 /**
  * 큐 전달 ↔ DB 작업 기록의 실패 경계(FIN-02C 보완). 시험용 DB + 전용 Redis. 큐의 "정확히 한 번" 을 전제하지 않고
@@ -212,7 +213,7 @@ describe('큐 전달과 DB 작업 기록의 실패 경계', () => {
       workerId: 'worker-dead',
       jobId,
     }))!;
-    const attempt = await beginAttempt(pool, {
+    const attempt = await mustBegin(pool, {
       jobId,
       workerId: 'worker-dead',
       generation: lease.generation,
@@ -288,11 +289,18 @@ describe('큐 전달과 DB 작업 기록의 실패 경계', () => {
       workerId: 'worker-other',
       jobId,
     }))!;
-    for (let i = 0; i < 3; i += 1) {
-      expect(await processCollectionJob(deps(registry), { jobId, requestId: 'req-5' })).toEqual({
+    // 1회차: 잠금 보유 → LOCK_HELD(다음 시도 시각 = 잠금 대기). 2·3회차: 그 시각 전 조기 전달 → NOT_DUE. 모두 시도 없음.
+    expect(await processCollectionJob(deps(registry), { jobId, requestId: 'req-5' })).toEqual({
+      kind: 'DEFERRED',
+      jobId,
+      reason: 'LOCK_HELD',
+    });
+    for (let i = 0; i < 2; i += 1) {
+      expect(
+        await processCollectionJob(deps(registry), { jobId, requestId: 'req-5' }),
+      ).toMatchObject({
         kind: 'DEFERRED',
-        jobId,
-        reason: 'LOCK_HELD',
+        reason: 'NOT_DUE',
       });
     }
     const j = (await getJob(pool, jobId))!;
@@ -301,6 +309,16 @@ describe('큐 전달과 DB 작업 기록의 실패 경계', () => {
     expect(await listAttempts(pool, jobId)).toEqual([]);
     expect(c.requests).toBe(0);
     expect(await releaseLease(pool, other, 'done')).toBe(true);
+    // 잠금 대기로 설정된 미래 next_attempt_at 은 잠금이 풀려도 존중된다. 시험은 DB 시각을 도래시켜 진행한다.
+    expect(await processCollectionJob(deps(registry), { jobId, requestId: 'req-5' })).toMatchObject(
+      {
+        kind: 'DEFERRED',
+        reason: 'NOT_DUE',
+      },
+    );
+    await pool.query('UPDATE fin_collection_jobs SET next_attempt_at = now() WHERE id = $1', [
+      jobId,
+    ]);
     expect(await processCollectionJob(deps(registry), { jobId, requestId: 'req-5' })).toMatchObject(
       {
         kind: 'DONE',

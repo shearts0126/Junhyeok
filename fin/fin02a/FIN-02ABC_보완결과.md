@@ -68,3 +68,11 @@
   - A. 같은 작업 동시 전달: B 가 QUEUED 로 읽고 대기 → A 가 RUNNING 전환·요청 중 → B 재개 → DEFERRED, 작업 RUNNING·attempt_count 1 유지, 요청 1회, 실행 1건.
   - B. 오래된 defer 와 정상 완료: B 가 QUEUED 로 읽고 대기 → A 완료(SUCCEEDED) → 다른 작업이 잠금 보유 상태에서 B 재개 → DEFERRED, 상태·queued_at 불변. B2: 잠금이 비어 있으면 B 는 잠금(세대 3)을 얻지만 조건부 시작 실패 → 자기 잠금만 `not-startable` 로 해제, 외부 요청 없음.
 - 관찰 사항(수정하지 않음, 범위 밖): 큐가 이미 처리된 항목을 다시 전달(stalled 복귀)하면 RETRY_SCHEDULED 작업은 `next_attempt_at` 이전에도 시작 가능 상태로 취급된다. 시도 횟수 상한은 유지되지만 대기 시간 정책이 앞당겨질 수 있다.
+
+## 7. 6차 보완: 재시도 예정 시각 준수(조기 전달)
+
+- 문제: 큐가 예정 시각 전에 같은 항목을 다시 전달하면(stalled 복귀 등) RETRY_SCHEDULED 작업이 `next_attempt_at` 이전에도 시작될 수 있어 1분·5분 대기와 공급자 Retry-After 를 위반할 수 있었다.
+- 최종 방어(`beginAttempt`): 조건부 UPDATE 에 `AND (next_attempt_at IS NULL OR next_attempt_at <= now())` 와 `AND NOT (status = 'RETRY_SCHEDULED' AND next_attempt_at IS NULL)` 를 추가. DB 시각 기준, 같은 시각은 실행 가능. 0행이면 사유를 `NOT_STARTABLE | NOT_DUE | INVALID_SCHEDULE` 로 구분해 반환하고 DB 오류는 전파한다(예외로 숨기지 않음).
+- 사전 확인(`remainingUntilDue`): 작업을 읽은 직후 DB 시각 기준 남은 ms 를 조회해 예정 전이면 잠금·외부 요청 없이 조기 전달 처리로 간다. RETRY_SCHEDULED 인데 예정 시각이 없으면 `SKIPPED/INVALID_SCHEDULE`(즉시 실행으로 해석하지 않음). QUEUED 의 잠금 대기 시각도 같은 규칙으로 존중한다.
+- 조기 전달 처리(`deferNotDue` → `ensureScheduledEntry`): 시도 횟수·`fin_job_attempts`·`next_attempt_at` 을 바꾸지 않는다. 원래 예약 항목(`__a<n>`)이나 같은 예정 시각의 재예약 항목(`__t<예정시각 ms>`)이 살아 있으면 추가하지 않고, 없으면 남은 대기시간으로 `__t<예정시각 ms>` 를 추가한다(반복 조기 전달은 같은 jobId 로 하나만). 잠금을 이미 얻은 뒤 거부되면 자기 worker_id·generation 잠금만 `not-due` 로 해제한다. worker 안에서 기다리지 않는다. 기존 backoff·Retry-After 계산은 다시 적용하지 않는다(`retry.ts` 변경 없음).
+- 시험 `test/retry-schedule.test.ts` 3건(시간은 DB 값 설정으로 제어): A 예정 전 재전달(사전 확인·최종 방어·예약 유실 시 재예약·반복 조기 전달·INVALID_SCHEDULE), B 예정 시각 도래(같은 시각 포함 1회 시작, 동시 전달 시 실제 시도 1회, 완료 후 재전달 거부), C Retry-After 10분 보존·반복 조기 전달로 앞당김 없음·예약 유실 없음. 기존 시험 `queue-boundary 5` 는 잠금 대기 시각이 존중되도록 갱신했다.

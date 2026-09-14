@@ -116,23 +116,74 @@ export async function getJob(db: Queryable, id: string): Promise<CollectionJob |
   return r.rows[0] ? toJob(r.rows[0]) : null;
 }
 
-/** 시도 시작: 작업을 RUNNING 으로, 시도 번호 증가, 시도 행 생성. 반환 attemptNo. */
+export type BeginAttemptResult =
+  | { ok: true; attemptNo: number; attemptId: string }
+  /** NOT_STARTABLE: 이미 시작·완료·검토 상태. NOT_DUE: 재시도 예정 시각(DB now() 기준) 이전. INVALID_SCHEDULE: RETRY_SCHEDULED 인데 예정 시각 없음 */
+  | {
+      ok: false;
+      reason: 'NOT_STARTABLE' | 'NOT_DUE' | 'INVALID_SCHEDULE';
+      nextAttemptAt: Date | null;
+    };
+
+/**
+ * 시도 시작(최종 방어): 한 문장의 조건부 UPDATE 로 확인과 전환을 동시에 한다.
+ * - 상태가 QUEUED/RETRY_SCHEDULED 이고
+ * - 예정 시각(next_attempt_at)이 없거나 DB 시각 기준으로 도래(같은 시각 포함)했을 때만 RUNNING 으로 바꾼다.
+ * - RETRY_SCHEDULED 인데 예정 시각이 없으면 즉시 실행이 아니라 잘못된 상태(INVALID_SCHEDULE)다.
+ * 0행이면 사유를 다시 읽어 구분한다. DB 오류는 그대로 전파한다(NOT_STARTABLE 로 숨기지 않음).
+ */
 export async function beginAttempt(
   db: Queryable,
   input: { jobId: string; workerId: string; generation: number },
-): Promise<{ attemptNo: number; attemptId: string }> {
+): Promise<BeginAttemptResult> {
   const j = await db.query<{ attempt_count: number }>(
     `UPDATE fin_collection_jobs SET status = 'RUNNING', attempt_count = attempt_count + 1, updated_at = now()
-     WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED') RETURNING attempt_count`,
+     WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED')
+       AND (next_attempt_at IS NULL OR next_attempt_at <= now())
+       AND NOT (status = 'RETRY_SCHEDULED' AND next_attempt_at IS NULL)
+     RETURNING attempt_count`,
     [input.jobId],
   );
   const row = j.rows[0];
-  if (!row) throw new Error('JOB_NOT_STARTABLE');
+  if (!row) {
+    const cur = await db.query<{ status: JobStatus; next_attempt_at: Date | null; due: boolean }>(
+      `SELECT status, next_attempt_at, (next_attempt_at IS NULL OR next_attempt_at <= now()) AS due
+       FROM fin_collection_jobs WHERE id = $1`,
+      [input.jobId],
+    );
+    const c = cur.rows[0];
+    if (!c || (c.status !== 'QUEUED' && c.status !== 'RETRY_SCHEDULED'))
+      return { ok: false, reason: 'NOT_STARTABLE', nextAttemptAt: c?.next_attempt_at ?? null };
+    if (c.status === 'RETRY_SCHEDULED' && c.next_attempt_at === null)
+      return { ok: false, reason: 'INVALID_SCHEDULE', nextAttemptAt: null };
+    if (!c.due) return { ok: false, reason: 'NOT_DUE', nextAttemptAt: c.next_attempt_at };
+    return { ok: false, reason: 'NOT_STARTABLE', nextAttemptAt: c.next_attempt_at }; // 조회 직후 다시 바뀜
+  }
   const a = await db.query<{ id: string }>(
     `INSERT INTO fin_job_attempts (job_id, attempt_no, worker_id, generation) VALUES ($1, $2, $3, $4) RETURNING id`,
     [input.jobId, row.attempt_count, input.workerId, input.generation],
   );
-  return { attemptNo: row.attempt_count, attemptId: a.rows[0]!.id };
+  return { ok: true, attemptNo: row.attempt_count, attemptId: a.rows[0]!.id };
+}
+
+/**
+ * 사전 확인(잠금 획득 전): DB 시각 기준으로 예정 시각까지 남은 ms. 0 이면 실행 가능. 예정 시각이 없으면 0.
+ * 최종 방어는 beginAttempt 의 조건부 UPDATE 이며, 이 값은 불필요한 잠금 획득·외부 요청을 피하기 위한 것이다.
+ */
+export async function remainingUntilDue(
+  db: Queryable,
+  jobId: string,
+): Promise<{ remainingMs: number; nextAttemptAt: Date | null } | null> {
+  const r = await db.query<{ ms: string; next_attempt_at: Date | null }>(
+    `SELECT next_attempt_at,
+            CASE WHEN next_attempt_at IS NULL THEN 0
+                 ELSE GREATEST(0, EXTRACT(EPOCH FROM (next_attempt_at - now())) * 1000) END::text AS ms
+     FROM fin_collection_jobs WHERE id = $1`,
+    [jobId],
+  );
+  const row = r.rows[0];
+  if (!row) return null;
+  return { remainingMs: Math.ceil(Number(row.ms)), nextAttemptAt: row.next_attempt_at };
 }
 
 /** 시도에 실행 ID 를 연결하고 작업의 current_run_id 를 설정(펜스 기준). */

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { runCollection } from '../src/collector/pipeline';
 import type { CollectorContext, RawResponse, StageResult } from '../src/collector/types';
 import { FsRawStore } from '../src/raw/store';
-import { beginAttempt, bindAttemptRun, getJob, listAttempts } from '../src/queue/jobs';
+import { bindAttemptRun, getJob, listAttempts } from '../src/queue/jobs';
 import {
   acquireLease,
   bindLeaseRun,
@@ -19,7 +19,14 @@ import {
 import { closeStaleRunManually, previewRecovery } from '../src/recovery';
 import { finishRun, startRun } from '../src/runs/repo';
 
-import { FixtureCollector, secretsWith, seedAccount, testPool, truncateAll } from './helpers';
+import {
+  FixtureCollector,
+  mustBegin,
+  secretsWith,
+  seedAccount,
+  testPool,
+  truncateAll,
+} from './helpers';
 
 /**
  * 수동 복구 ↔ 실행 소유권 경합(FIN-02C 보완). 시험용 DB 만 사용한다(Redis 불필요).
@@ -77,7 +84,7 @@ async function ownedRun(opts: { workerId: string; staleHeartbeat?: boolean; oldS
     workerId: opts.workerId,
     jobId,
   }))!;
-  const attempt = await beginAttempt(pool, {
+  const attempt = await mustBegin(pool, {
     jobId,
     workerId: opts.workerId,
     generation: lease.generation,
@@ -232,7 +239,7 @@ describe('수동 복구와 실행 소유권 경합', () => {
       workerId: 'w-paused',
       jobId,
     }))!;
-    const attempt = await beginAttempt(pool, {
+    const attempt = await mustBegin(pool, {
       jobId,
       workerId: 'w-paused',
       generation: lease.generation,

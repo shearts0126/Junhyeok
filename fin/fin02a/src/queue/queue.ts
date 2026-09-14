@@ -138,6 +138,39 @@ export async function resyncUnqueuedJobs(
   return out;
 }
 
+const LIVE_STATES = new Set(['delayed', 'waiting', 'prioritized', 'active', 'waiting-children']);
+
+/**
+ * 조기 전달 처리: 예정 시각(nextAttemptAt)에 실행될 큐 항목을 보존하거나 안전하게 다시 예약한다.
+ * - 원래 예약 항목(__a<attemptHint>) 이나 같은 예정 시각의 재예약 항목(__t<예정시각 ms>) 이 살아 있으면 아무것도 추가하지 않는다.
+ * - 없으면 남은 대기시간(remainingMs, DB 시각 기준)으로 __t<예정시각 ms> 를 추가한다. 예정 시각이 같은 반복 조기 전달은
+ *   같은 jobId 로 모여 하나만 남는다. 그 항목이 이미 소비됐으면(시계 차이로 다시 조기 도착) 시각 접미사를 붙여 한 번 더 예약한다.
+ * - next_attempt_at·attempt_count·시도 이력은 건드리지 않는다(대기시간 재계산 없음).
+ */
+export async function ensureScheduledEntry(
+  queue: Queue<CollectionJobData>,
+  data: CollectionJobData,
+  nextAttemptAt: Date,
+  remainingMs: number,
+  attemptHint: number,
+): Promise<{ preserved: boolean; entryId: string }> {
+  const base = initialJobId(data.requestId);
+  const candidates = [`${base}__a${attemptHint}`, `${base}__t${nextAttemptAt.getTime()}`];
+  for (const id of candidates) {
+    const existing = await queue.getJob(id);
+    if (existing && LIVE_STATES.has(await existing.getState()))
+      return { preserved: true, entryId: id };
+  }
+  let id = candidates[1]!;
+  if (await queue.getJob(id)) id = `${id}_${Date.now()}`; // 같은 예정 시각 항목이 이미 소비됨
+  await queue.add(
+    'collect',
+    { ...data, attemptHint },
+    { jobId: id, delay: Math.max(0, remainingMs), removeOnComplete: 1000, removeOnFail: 1000 },
+  );
+  return { preserved: false, entryId: id };
+}
+
 /** 재시도·잠금 대기 재투입(지연). jobId 에 접미사를 붙여 이전 큐 항목과 충돌하지 않게 한다. 등록 성공 후 호출자가 markQueued 한다. */
 export async function enqueueDelayed(
   queue: Queue<CollectionJobData>,

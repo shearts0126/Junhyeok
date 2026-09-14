@@ -15,6 +15,7 @@ import {
   ensureSourceSystem,
   type SourceAccount,
 } from '../src/identity/repo';
+import { beginAttempt } from '../src/queue/jobs';
 import type { ObservationInput } from '../src/records/observe';
 import type { StageName } from '../src/runs/repo';
 
@@ -208,4 +209,14 @@ export function faultyPool(pool: pg.Pool, failOn: RegExp): pg.Pool {
     end: () => pool.end(),
   };
   return proxy as unknown as pg.Pool;
+}
+
+/** 시험 편의: 시도 시작이 확정돼야 하는 곳에서 결과를 좁힌다. */
+export async function mustBegin(
+  db: pg.Pool,
+  input: { jobId: string; workerId: string; generation: number },
+): Promise<{ attemptNo: number; attemptId: string }> {
+  const r = await beginAttempt(db, input);
+  if (!r.ok) throw new Error(`시도 시작 거부: ${r.reason}`);
+  return { attemptNo: r.attemptNo, attemptId: r.attemptId };
 }
