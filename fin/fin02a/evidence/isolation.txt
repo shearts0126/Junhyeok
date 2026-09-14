@@ -1,0 +1,25 @@
+# 격리 확인 (2026-09-14T11:32:24Z)
+## fin/fin02a 자체 의존성 (pnpm list --depth 0 --ignore-workspace)
+Legend: production dependency, optional only, dev only
+
+fin-dashboard-core@0.0.1 /home/user/Junhyeok/fin/fin02a (PRIVATE)
+│
+│   dependencies:
+├── pg@8.23.0
+│
+│   devDependencies:
+├── @types/node@20.19.43
+├── @types/pg@8.23.1
+├── tsx@4.23.13
+├── typescript@5.9.3
+└── vitest@3.2.7
+
+6 packages
+## 루트 package.json / pnpm-lock.yaml 변경 여부 (git diff --stat main..HEAD 및 작업트리)
+(비어 있으면 변경 없음)
+## fin/ 이외 변경·신규 파일
+(비어 있으면 없음)
+## PostgreSQL 서버: 별도 인스턴스 127.0.0.1:5433 (scripts/dev-db.sh, 데이터 fin/fin02a/.pgdata, gitignore)
+PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+## 시험용 DB 는 테스트 종료 시 삭제됨
+0

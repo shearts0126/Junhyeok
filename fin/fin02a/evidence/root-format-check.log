@@ -1,0 +1,11 @@
+# cwd: /home/user/Junhyeok
+# command: pnpm format:check
+# started: 2026-09-14T11:32:04Z
+
+> deeppoint-scm-os@0.1.0 format:check /home/user/Junhyeok
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+# exit code: 0
+# finished: 2026-09-14T11:32:24Z

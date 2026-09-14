@@ -1,0 +1,6 @@
+node_modules
+.env*
+.pgdata
+.raw-store
+coverage
+*.tsbuildinfo
