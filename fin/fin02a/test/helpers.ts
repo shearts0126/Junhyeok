@@ -24,7 +24,7 @@ export function testPool(): pg.Pool {
 
 export async function truncateAll(pool: pg.Pool): Promise<void> {
   await pool.query(
-    'TRUNCATE fin_source_record_versions, fin_source_records, fin_raw_objects, fin_source_runs, fin_external_mappings, fin_source_accounts, fin_source_systems, fin_legal_entities RESTART IDENTITY CASCADE',
+    'TRUNCATE fin_source_record_observations, fin_source_record_versions, fin_source_records, fin_raw_objects, fin_source_runs, fin_external_mappings, fin_source_accounts, fin_source_systems, fin_legal_entities RESTART IDENTITY CASCADE',
   );
 }
 
@@ -54,47 +54,56 @@ export interface FixtureItem {
 export interface FixtureOptions {
   items: FixtureItem[];
   sourceAsOf?: Date | null;
+  /** 응답 바이트를 직접 지정(파싱 실패·반사 시험용) */
   bytes?: Uint8Array;
+  contentType?: string;
+  endpoint?: string;
+  /** 수집기가 선언하는 템플릿 상수 목록(기본: 'GET /api/list/{date}') */
+  declaredTemplates?: string[];
   requestFails?: boolean;
-  authFails?: boolean;
+  requestNotImplemented?: boolean;
   validateNotImplemented?: boolean;
   normalizeNotImplemented?: boolean;
   reconcileNotImplemented?: boolean;
-  /** 시험용 가짜 비밀값을 요청 헤더·URL 에 넣어 저장 데이터·로그 누출 여부를 검사한다 */
-  leakSecret?: string;
+  /** 대조를 강제로 실패시킨다(변경 응답이 대조를 통과하지 못한 상황) */
+  reconcileFails?: boolean;
+  /** 자유 문자열 예외를 던진다(외부 예외 메시지가 영속화되지 않는지 시험) */
+  throwInValidate?: string;
 }
 
-/** 시험용 수집기. 실제 공급자 응답을 흉내내지 않으며 내부 규칙 검증에만 쓴다. */
+/** 시험용 비밀값 제공자. 값은 테스트 코드 안의 가짜 값이다. */
+export const secretsWith = (map: Record<string, string>) => ({ get: (n: string) => map[n] });
+
+/** 시험용 수집기. 실제 공급자 응답을 흉내내지 않으며 내부 규칙 검증에만 쓴다. 토큰은 ctx.secrets 에서만 읽는다. */
 export class FixtureCollector implements Collector<{ token: string }, FixtureItem[]> {
   readonly sourceSystem: string;
+  readonly endpointTemplates: readonly string[];
   constructor(
     private readonly opt: FixtureOptions,
     sourceSystem = 'TEST_SYSTEM',
   ) {
     this.sourceSystem = sourceSystem;
+    this.endpointTemplates = opt.declaredTemplates ?? ['GET /api/list/{date}'];
   }
 
-  async authenticate(): Promise<StageResult<{ token: string }>> {
-    if (this.opt.authFails) return failed('NO_CREDENTIALS', 'FIN02A_TEST_TOKEN 미설정');
-    return ok({ token: this.opt.leakSecret ?? 'test-token' });
+  async authenticate(ctx: CollectorContext): Promise<StageResult<{ token: string }>> {
+    const token = ctx.secrets.get('FIN02A_TEST_TOKEN');
+    if (!token) return failed('NO_CREDENTIALS', 'CREDENTIALS');
+    return ok({ token });
   }
 
   async request(
     _ctx: CollectorContext,
-    auth: { token: string },
+    _auth: { token: string },
   ): Promise<StageResult<RawResponse>> {
-    if (this.opt.requestFails)
-      return failed('NETWORK', `fetch failed: connect ECONNREFUSED (token=${auth.token})`);
+    if (this.opt.requestNotImplemented) return notImplemented('REQUEST_NOT_IMPLEMENTED');
+    if (this.opt.requestFails) return failed('NETWORK', 'TRANSIENT');
     const bytes =
       this.opt.bytes ?? new TextEncoder().encode(JSON.stringify({ items: this.opt.items }));
     return ok({
       bytes,
-      contentType: 'application/json',
-      request: {
-        method: 'GET',
-        url: `https://example.invalid/api/list?from=2026-09-12&access_token=${auth.token}`,
-        headers: { Authorization: `Bearer ${auth.token}`, Accept: 'application/json' },
-      },
+      contentType: this.opt.contentType ?? 'application/json',
+      endpoint: this.opt.endpoint ?? 'GET /api/list/{date}',
       sourceAsOf: this.opt.sourceAsOf ?? null,
     });
   }
@@ -103,13 +112,14 @@ export class FixtureCollector implements Collector<{ token: string }, FixtureIte
     _ctx: CollectorContext,
     raw: RawResponse,
   ): Promise<StageResult<ValidatedResponse<FixtureItem[]>>> {
-    if (this.opt.validateNotImplemented) return notImplemented('응답 검증 미구현(시험)');
+    if (this.opt.throwInValidate) throw new Error(this.opt.throwInValidate);
+    if (this.opt.validateNotImplemented) return notImplemented('VALIDATE_NOT_IMPLEMENTED');
     try {
       const parsed = JSON.parse(new TextDecoder().decode(raw.bytes)) as { items?: unknown };
-      if (!Array.isArray(parsed.items)) return failed('PARSE_FAILED', '응답에 items 배열 없음');
+      if (!Array.isArray(parsed.items)) return failed('PARSE_FAILED', 'PERMANENT');
       return ok({ parsed: parsed.items as FixtureItem[], receivedCount: parsed.items.length });
-    } catch (e) {
-      return failed('PARSE_FAILED', e instanceof Error ? e.message : String(e));
+    } catch {
+      return failed('PARSE_FAILED', 'PERMANENT');
     }
   }
 
@@ -117,7 +127,7 @@ export class FixtureCollector implements Collector<{ token: string }, FixtureIte
     _ctx: CollectorContext,
     v: ValidatedResponse<FixtureItem[]>,
   ): Promise<StageResult<ObservationInput[]>> {
-    if (this.opt.normalizeNotImplemented) return notImplemented('정규화 미구현(시험)');
+    if (this.opt.normalizeNotImplemented) return notImplemented('NORMALIZE_NOT_IMPLEMENTED');
     return ok(v.parsed.map((i) => ({ sourceKey: i.key, payload: i.data })));
   }
 
@@ -125,15 +135,11 @@ export class FixtureCollector implements Collector<{ token: string }, FixtureIte
     _ctx: CollectorContext,
     v: ValidatedResponse<FixtureItem[]>,
     obs: ObservationInput[],
-  ): Promise<StageResult<{ rawCount: number | null; normalizedCount: number; detail: string }>> {
-    if (this.opt.reconcileNotImplemented) return notImplemented('대조 미구현(시험)');
-    if (v.receivedCount !== obs.length)
-      return failed('RECONCILE_MISMATCH', `원본 ${v.receivedCount} ≠ 정규화 ${obs.length}`);
-    return ok({
-      rawCount: v.receivedCount,
-      normalizedCount: obs.length,
-      detail: `건수 일치 ${obs.length}`,
-    });
+  ): Promise<StageResult<{ rawCount: number | null; normalizedCount: number }>> {
+    if (this.opt.reconcileNotImplemented) return notImplemented('RECONCILE_NOT_IMPLEMENTED');
+    if (this.opt.reconcileFails || v.receivedCount !== obs.length)
+      return failed('RECONCILE_MISMATCH', 'PERMANENT');
+    return ok({ rawCount: v.receivedCount, normalizedCount: obs.length });
   }
 }
 
@@ -148,6 +154,7 @@ export async function dumpAll(pool: pg.Pool): Promise<string> {
     'fin_raw_objects',
     'fin_source_records',
     'fin_source_record_versions',
+    'fin_source_record_observations',
   ];
   const parts: string[] = [];
   for (const t of tables) {
@@ -155,4 +162,30 @@ export async function dumpAll(pool: pg.Pool): Promise<string> {
     parts.push(...r.rows.map((row: { j: string }) => row.j));
   }
   return parts.join('\n');
+}
+
+/**
+ * DB 장애 주입: SQL 이 패턴에 맞으면 예외를 던지는 풀 래퍼. pool.query 와 pool.connect() 로 얻은 클라이언트 둘 다 감싼다.
+ * 실제 pg.Pool 을 대체하는 시험용 객체이며 필요한 메서드만 구현한다.
+ */
+export function faultyPool(pool: pg.Pool, failOn: RegExp): pg.Pool {
+  const wrapQuery =
+    (target: { query: (...a: unknown[]) => unknown }) =>
+    (...args: unknown[]): unknown => {
+      const text =
+        typeof args[0] === 'string' ? args[0] : ((args[0] as { text?: string })?.text ?? '');
+      if (failOn.test(text))
+        return Promise.reject(new Error(`injected db failure: ${text.slice(0, 40)}`));
+      return target.query(...args);
+    };
+  const proxy = {
+    query: wrapQuery(pool as unknown as { query: (...a: unknown[]) => unknown }),
+    connect: async () => {
+      const client = await pool.connect();
+      const q = wrapQuery(client as unknown as { query: (...a: unknown[]) => unknown });
+      return new Proxy(client, { get: (t, p, r) => (p === 'query' ? q : Reflect.get(t, p, r)) });
+    },
+    end: () => pool.end(),
+  };
+  return proxy as unknown as pg.Pool;
 }

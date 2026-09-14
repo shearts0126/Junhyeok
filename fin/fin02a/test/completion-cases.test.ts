@@ -12,20 +12,28 @@ import { FsRawStore } from '../src/raw/store';
 import { listVersions } from '../src/records/observe';
 import { traceVersion } from '../src/records/trace';
 
-import { dumpAll, FixtureCollector, seedAccount, testPool, truncateAll } from './helpers';
+import {
+  dumpAll,
+  FixtureCollector,
+  secretsWith,
+  seedAccount,
+  testPool,
+  truncateAll,
+} from './helpers';
 
 /**
  * FIN-02A 완료 기준 1~8. 시험용 일회용 PostgreSQL + 가상 데이터로 검증한다.
- * 외부 공급자 연동 성공을 뜻하지 않는다.
+ * 외부 공급자 연동 성공을 뜻하지 않는다. 2차 검토(대조 후 관측 저장, 상태 정의, 비밀값 경계)에 맞춰 6·8 을 수정했다.
  */
 
 let pool: pg.Pool;
 let rawDir: string;
 const logs: string[] = [];
-const deps = () => ({
+const TOKEN = 'test-token-not-real-0001';
+const deps = (secrets: Record<string, string> = { FIN02A_TEST_TOKEN: TOKEN }) => ({
   pool,
   rawStore: new FsRawStore(rawDir),
-  secrets: { get: (n: string) => process.env[n] },
+  secrets: secretsWith(secrets),
   log: (l: string) => logs.push(l),
 });
 const period = { periodFrom: '2026-09-12', periodTo: '2026-09-12' };
@@ -67,10 +75,12 @@ describe('완료 기준', () => {
       [acc.id],
     );
     const vers = await pool.query('SELECT count(*)::int AS n FROM fin_source_record_versions');
+    const links = await pool.query('SELECT count(*)::int AS n FROM fin_source_record_observations');
     expect(runs.rows[0].n).toBe(2); // 실행 이력 2회
     expect(raws.rows[0]).toEqual({ n: 2, d: 1 }); // 원본 2건 보관(같은 해시), 이력 삭제 없음
-    expect(recs.rows[0].n).toBe(2); // 업무 관측 중복 없음
+    expect(recs.rows[0].n).toBe(2); // 원거래 2건 → 업무 관측 2건(중복 없음)
     expect(vers.rows[0].n).toBe(2); // 버전도 늘지 않음
+    expect(links.rows[0].n).toBe(4); // 실행별 연결은 2회 × 2건
     expect(r2.observations).toMatchObject({ inserted: 0, unchanged: 2, versioned: 0 });
   });
 
@@ -127,7 +137,6 @@ describe('완료 기준', () => {
       ['TX-1'],
     );
     expect(recs.rows.map((r) => r.source_account_id).sort()).toEqual([a.id, b.id].sort()); // 계정 범위로 분리
-    // 같은 법인·같은 원천의 같은 외부 계정 ID 는 중복 생성 불가
     await expect(
       seedAccount(pool, {
         entity: 'TEST_ENTITY_A',
@@ -135,7 +144,6 @@ describe('완료 기준', () => {
         alias: 'A-acct-dup',
       }),
     ).rejects.toThrow(/fin_source_accounts_scope_uq/);
-    // 외부 코드 매핑도 계정 범위가 시스템 범위보다 우선
     await addExternalMapping(pool, {
       sourceSystem: 'TEST_SYSTEM',
       entityType: 'COUNTERPARTY',
@@ -177,7 +185,7 @@ describe('완료 기준', () => {
         externalCode: 'CP-UNKNOWN',
         onDate: '2026-09-12',
       }),
-    ).toBeNull(); // 미매핑은 null(임의 생성 없음)
+    ).toBeNull();
   });
 
   it('4. 고유키 없는 동일 금액 거래 두 건이 임의로 합쳐지지 않는다', async () => {
@@ -191,19 +199,24 @@ describe('완료 기준', () => {
       ...period,
     });
     expect(r.observations).toMatchObject({ unidentified: 2, inserted: 0, unchanged: 0 });
-    const recs = await pool.query(
-      'SELECT count(*)::int AS n FROM fin_source_records WHERE source_key IS NULL',
-    );
-    expect(recs.rows[0].n).toBe(2);
-    // 재수집해도 자동 확정 중복 제거를 하지 않고 미식별로 다시 보존한다(중복 후보 검토는 사람/후속 규칙 몫)
+    expect(
+      (
+        await pool.query(
+          'SELECT count(*)::int AS n FROM fin_source_records WHERE source_key IS NULL',
+        )
+      ).rows[0].n,
+    ).toBe(2);
     await runCollection(deps(), new FixtureCollector({ items: twins }), {
       sourceAccountId: acc.id,
       ...period,
     });
-    const again = await pool.query(
-      'SELECT count(*)::int AS n FROM fin_source_records WHERE source_key IS NULL',
-    );
-    expect(again.rows[0].n).toBe(4);
+    expect(
+      (
+        await pool.query(
+          'SELECT count(*)::int AS n FROM fin_source_records WHERE source_key IS NULL',
+        )
+      ).rows[0].n,
+    ).toBe(4); // 미식별 자료로 재보존
   });
 
   it('5. 원천 기준 시각 미제공과 실제 0건 응답을 구분한다', async () => {
@@ -214,8 +227,8 @@ describe('완료 기준', () => {
       { sourceAccountId: acc.id, ...period },
     );
     expect(zero.run.status).toBe('SUCCEEDED');
-    expect(zero.run.receivedCount).toBe(0); // 실제 0건
-    expect(zero.run.sourceAsOf).toBeNull(); // 기준 시각 미제공
+    expect(zero.run.receivedCount).toBe(0);
+    expect(zero.run.sourceAsOf).toBeNull();
     const withAsOf = await runCollection(
       deps(),
       new FixtureCollector({ items, sourceAsOf: new Date('2026-09-12T15:00:00Z') }),
@@ -223,14 +236,13 @@ describe('완료 기준', () => {
     );
     expect(withAsOf.run.sourceAsOf?.toISOString()).toBe('2026-09-12T15:00:00.000Z');
     expect(withAsOf.run.receivedCount).toBe(2);
-    // 파싱 전에 끝난 실행은 건수를 모른다 → null(0 아님)
     const unparsed = await runCollection(
       deps(),
       new FixtureCollector({ items, validateNotImplemented: true }),
       { sourceAccountId: acc.id, ...period },
     );
     expect(unparsed.run.status).toBe('PARTIAL');
-    expect(unparsed.run.receivedCount).toBeNull();
+    expect(unparsed.run.receivedCount).toBeNull(); // 파싱 전 종료는 건수를 모른다(0 아님)
   });
 
   it('6. 네트워크·파싱 실패와 미구현 단계는 수집 완료로 표시되지 않는다', async () => {
@@ -241,54 +253,80 @@ describe('완료 기준', () => {
     });
     expect(net.run.status).toBe('FAILED');
     expect(net.run.errorCode).toBe('NETWORK');
+    expect(net.run.failureKind).toBe('TRANSIENT');
     expect(net.run.receivedCount).toBeNull();
     expect(net.rawObjectId).toBeNull();
     expect(net.run.stages).toEqual({
-      authenticate: 'OK',
-      request: 'FAILED',
-      validate: 'SKIPPED',
-      normalize: 'SKIPPED',
-      reconcile: 'SKIPPED',
+      authenticate: { outcome: 'OK' },
+      request: { outcome: 'FAILED', code: 'NETWORK' },
+      validate: { outcome: 'SKIPPED' },
+      normalize: { outcome: 'SKIPPED' },
+      reconcile: { outcome: 'SKIPPED' },
     });
 
     const bad = await runCollection(
       deps(),
-      new FixtureCollector({ items, bytes: new TextEncoder().encode('<html>not json</html>') }),
+      new FixtureCollector({
+        items,
+        bytes: new TextEncoder().encode('<html>not json</html>'),
+        contentType: 'text/html',
+      }),
       { sourceAccountId: acc.id, ...period },
     );
     expect(bad.run.status).toBe('FAILED');
     expect(bad.run.errorCode).toBe('PARSE_FAILED');
+    expect(bad.run.failureKind).toBe('PERMANENT');
     expect(bad.rawObjectId).not.toBeNull(); // 실패해도 원문은 보관
     expect(bad.run.receivedCount).toBeNull();
 
-    const auth = await runCollection(deps(), new FixtureCollector({ items, authFails: true }), {
+    const auth = await runCollection(deps({}), new FixtureCollector({ items }), {
       sourceAccountId: acc.id,
       ...period,
     });
     expect(auth.run.status).toBe('BLOCKED');
     expect(auth.run.errorCode).toBe('NO_CREDENTIALS');
+    expect(auth.run.failureKind).toBe('CREDENTIALS');
 
-    // 요청 성공 + 정규화 미구현 → PARTIAL (네트워크 성공 ≠ 수집 완료)
+    const reqNi = await runCollection(
+      deps(),
+      new FixtureCollector({ items, requestNotImplemented: true }),
+      { sourceAccountId: acc.id, ...period },
+    );
+    expect(reqNi.run.status).toBe('PARTIAL'); // 미구현은 BLOCKED 가 아니다
+    expect(reqNi.run.failureKind).toBe('NOT_IMPLEMENTED');
+    expect(reqNi.run.stages.request).toEqual({
+      outcome: 'NOT_IMPLEMENTED',
+      code: 'REQUEST_NOT_IMPLEMENTED',
+    });
     const partial = await runCollection(
       deps(),
       new FixtureCollector({ items, normalizeNotImplemented: true }),
       { sourceAccountId: acc.id, ...period },
     );
     expect(partial.run.status).toBe('PARTIAL');
-    expect(partial.run.stages.normalize).toBe('NOT_IMPLEMENTED');
+    expect(partial.run.stages.normalize).toEqual({
+      outcome: 'NOT_IMPLEMENTED',
+      code: 'NORMALIZE_NOT_IMPLEMENTED',
+    });
     expect(partial.observations).toBeNull();
-    // 대조 미구현도 SUCCEEDED 가 아니다
     const noRecon = await runCollection(
       deps(),
       new FixtureCollector({ items, reconcileNotImplemented: true }),
       { sourceAccountId: acc.id, ...period },
     );
-    expect(noRecon.run.status).toBe('PARTIAL');
-    expect(noRecon.observations).not.toBeNull();
-    const succeeded = await pool.query(
-      "SELECT count(*)::int AS n FROM fin_source_runs WHERE status = 'SUCCEEDED'",
+    expect(noRecon.run.status).toBe('PARTIAL'); // 대조 미구현: 원본·실행 보존, 최신 관측 미갱신
+    expect(noRecon.observations).toBeNull();
+    expect(noRecon.rawObjectId).not.toBeNull();
+    expect((await pool.query('SELECT count(*)::int AS n FROM fin_source_records')).rows[0].n).toBe(
+      0,
     );
-    expect(succeeded.rows[0].n).toBe(0);
+    expect(
+      (
+        await pool.query(
+          "SELECT count(*)::int AS n FROM fin_source_runs WHERE status = 'SUCCEEDED'",
+        )
+      ).rows[0].n,
+    ).toBe(0);
   });
 
   it('7. 처리 결과에서 수집 실행과 원본까지 추적할 수 있다', async () => {
@@ -304,7 +342,7 @@ describe('완료 기준', () => {
     const trace = await traceVersion(pool, v.rows[0]!.id);
     expect(trace).toMatchObject({
       sourceKey: 'TX-1',
-      runId: r.run.id,
+      runId: r.runId,
       rawObjectId: r.rawObjectId,
       sourceAccountAlias: acc.alias,
       legalEntityCode: 'TEST_ENTITY_A',
@@ -316,28 +354,41 @@ describe('완료 기준', () => {
     expect(JSON.parse(bytes.toString('utf8')).items).toHaveLength(2);
   });
 
-  it('8. 토큰·인증 헤더가 저장 데이터·원본 저장소·로그에 남지 않는다', async () => {
+  it('8. 토큰·인증 헤더가 저장 데이터·원본 저장소·로그·결과에 남지 않는다', async () => {
     const acc = await seedAccount(pool);
     const secret = 'SECRET-TOKEN-XYZ-123';
-    await runCollection(deps(), new FixtureCollector({ items, leakSecret: secret }), {
+    const d = deps({ FIN02A_TEST_TOKEN: secret });
+    const r1 = await runCollection(d, new FixtureCollector({ items }), {
       sourceAccountId: acc.id,
       ...period,
     });
-    await runCollection(
-      deps(),
-      new FixtureCollector({ items, leakSecret: secret, requestFails: true }),
+    const r2 = await runCollection(d, new FixtureCollector({ items, requestFails: true }), {
+      sourceAccountId: acc.id,
+      ...period,
+    });
+    const r3 = await runCollection(
+      d,
+      new FixtureCollector({
+        items,
+        throwInValidate: `boom access_token=${secret} path/${secret}`,
+      }),
       { sourceAccountId: acc.id, ...period },
-    ); // 오류 메시지 경로
+    );
+    expect(r3.run.status).toBe('FAILED');
+    expect(r3.run.errorCode).toBe('UNHANDLED_VALIDATE');
+    expect(r3.run.errorClass).toBe('Error');
     const dump = await dumpAll(pool);
     expect(dump).not.toContain(secret);
-    expect(dump).toContain('[REDACTED]'); // URL 쿼리·오류 메시지가 마스킹됨
-    const raw = await pool.query<{ request_summary: { headerNames: string[]; url: string } }>(
-      'SELECT request_summary FROM fin_raw_objects LIMIT 1',
-    );
-    expect(raw.rows[0]!.request_summary.headerNames).toEqual(['accept', 'authorization']); // 이름만, 값 없음
-    expect(raw.rows[0]!.request_summary.url).toContain('access_token=%5BREDACTED%5D');
+    const raw = await pool.query<{
+      request_summary: { sourceSystem: string; method: string; endpoint: string };
+    }>('SELECT request_summary FROM fin_raw_objects LIMIT 1');
+    expect(raw.rows[0]!.request_summary).toEqual({
+      sourceSystem: 'TEST_SYSTEM',
+      method: 'GET',
+      endpoint: '/api/list/{date}',
+    }); // 템플릿만, URL·헤더 없음
     for (const line of logs) expect(line).not.toContain(secret);
-    // 원본 저장소 파일(응답 본문)에도 없어야 한다(이 시험의 응답 본문은 토큰을 포함하지 않는다)
+    for (const out of [r1, r2, r3]) expect(JSON.stringify(out)).not.toContain(secret); // 반환값(CLI 결과)에도 없음
     for (const f of walk(rawDir)) expect(readFileSync(f, 'utf8')).not.toContain(secret);
   });
 });

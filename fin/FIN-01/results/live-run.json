@@ -1,16 +1,17 @@
 {
   "mode": "live",
   "targetDate": "2026-09-12",
-  "startedAtUtc": "2026-09-14T11:15:20.898Z",
-  "finishedAtUtc": "2026-09-14T11:15:20.900Z",
+  "startedAtUtc": "2026-09-14T11:56:46.147Z",
+  "finishedAtUtc": "2026-09-14T11:56:46.148Z",
   "results": [
     {
       "source": "fx-exim",
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_SNIPPET",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.147Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.147Z",
+      "endpoint": "GET oapi.koreaexim.go.kr/site/program/financial/exchangeJSON?authkey={authkey}&searchdate={date}&data=AP01",
       "summary": "환경변수 미설정: FIN01_KOREAEXIM_AUTHKEY → 실제 수집 미검증",
       "verified": false
     },
@@ -19,8 +20,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_ASSUMED",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.147Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.147Z",
+      "endpoint": "GET ecos.bok.or.kr/api/StatisticSearch/{authkey}/json/kr/1/100/731Y001/D/{date}/{date}/0000001",
       "summary": "환경변수 미설정: FIN01_ECOS_API_KEY → 실제 수집 미검증",
       "verified": false
     },
@@ -29,8 +31,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_ASSUMED",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.147Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.147Z",
+      "endpoint": "GET {kftc_base}/v2.0/account/transaction_list/fin_num?fintech_use_num={fintech_use_num}&from_date={date}&to_date={date}",
       "summary": "환경변수 미설정: FIN01_KFTC_ACCESS_TOKEN, FIN01_KFTC_FINTECH_USE_NUM, FIN01_KFTC_BASE_URL → 실제 수집 미검증",
       "verified": false
     },
@@ -39,8 +42,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_SNIPPET",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.148Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.148Z",
+      "endpoint": "GET graph.facebook.com/v21.0/{ad_account_id}/insights?time_increment=1&time_range={date}&access_token={access_token}",
       "summary": "환경변수 미설정: FIN01_META_ACCESS_TOKEN, FIN01_META_AD_ACCOUNT_ID → 실제 수집 미검증",
       "verified": false
     },
@@ -49,8 +53,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_ASSUMED",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.148Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.148Z",
+      "endpoint": "GET business-api.tiktok.com/open_api/v1.3/report/integrated/get/?advertiser_id={advertiser_id}&start_date={date}&end_date={date}",
       "summary": "환경변수 미설정: FIN01_TIKTOK_ACCESS_TOKEN, FIN01_TIKTOK_ADVERTISER_ID → 실제 수집 미검증",
       "verified": false
     },
@@ -59,8 +64,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_ASSUMED",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.148Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.148Z",
+      "endpoint": "GET api.searchad.naver.com/billing/bizmoney",
       "summary": "환경변수 미설정: FIN01_NAVER_API_KEY, FIN01_NAVER_SECRET_KEY, FIN01_NAVER_CUSTOMER_ID → 실제 수집 미검증",
       "verified": false
     },
@@ -69,8 +75,9 @@
       "status": "BLOCKED_NO_CREDENTIALS",
       "implementation": "REQUEST_BUILT_SPEC_ASSUMED",
       "parsingImplemented": false,
-      "startedAtUtc": "2026-09-14T11:15:20.899Z",
-      "finishedAtUtc": "2026-09-14T11:15:20.899Z",
+      "startedAtUtc": "2026-09-14T11:56:46.148Z",
+      "finishedAtUtc": "2026-09-14T11:56:46.148Z",
+      "endpoint": "GET {mall_id}.cafe24api.com/api/v2/admin/orders?start_date={date}&end_date={date}&limit=100",
       "summary": "환경변수 미설정: FIN01_CAFE24_MALL_ID, FIN01_CAFE24_ACCESS_TOKEN → 실제 수집 미검증",
       "verified": false
     }

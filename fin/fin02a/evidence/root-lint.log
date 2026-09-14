@@ -1,5 +1,5 @@
 # cwd: /home/user/Junhyeok
-# command: pnpm exec eslint fin/fin02a
-# started: 2026-09-14T11:32:01Z
+# command: pnpm exec eslint fin/fin02a fin/FIN-01
+# started: 2026-09-14T11:57:38Z
 # exit code: 0
-# finished: 2026-09-14T11:32:04Z
+# finished: 2026-09-14T11:57:42Z

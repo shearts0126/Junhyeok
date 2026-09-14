@@ -76,7 +76,7 @@ async function main(): Promise<number> {
       const r = await runLive(t, date);
       results.push(r);
       console.log(
-        `[live] ${r.source.padEnd(14)} ${r.status.padEnd(24)} impl=${r.implementation} parse=${r.parsingImplemented ? 'yes' : 'NO(조회 구현 미완료)'} ${r.summary}`,
+        `[live] ${r.source.padEnd(14)} ${r.status.padEnd(24)} impl=${r.implementation} parse=${r.parsingImplemented ? 'yes' : 'NO(조회 구현 미완료)'} ${r.endpoint} → ${r.summary}`,
       );
     }
     const out = {

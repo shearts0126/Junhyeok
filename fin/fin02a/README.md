@@ -30,47 +30,62 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 
 테스트는 DB 가 없으면 실패한다(조건부 skip 없음). 모든 테스트 데이터는 시험 전용이며 실제 계좌·판매자 계정이 아니다.
 
-## 데이터 구조 (`db/migrations/0001_fin02a_core.sql`)
+## 데이터 구조 (`db/migrations/0001_fin02a_core.sql`, `0002_fin02a_integrity.sql`)
 
 | 테이블 | 역할 | 핵심 규칙 |
 |---|---|---|
 | `fin_legal_entities` | 법인 | 코드 유일 |
 | `fin_source_systems` | 원천 시스템 | 종류 BANK/SALES/DELIVERY/ADS/ACCOUNTING/FX |
 | `fin_source_accounts` | 원천 계정과 소속 법인 | `(법인, 원천 시스템, 외부 계정 ID)` 유일. 다른 법인의 같은 외부 ID 는 충돌하지 않음. 별칭 유일 |
-| `fin_external_mappings` | 외부 코드 → 내부 ID | 원천 시스템(+계정) 범위, 유효기간. 계정 범위가 시스템 범위보다 우선. 미매핑은 `null`(임의 생성 없음) |
-| `fin_source_runs` | 수집 실행 이력 | 실행 ID, 계정, 대상 기간, 시작·종료, 상태(RUNNING/SUCCEEDED/PARTIAL/FAILED/BLOCKED), 단계별 결과(`stages`), 오류 코드·비식별 메시지, `source_as_of`(미제공 null), `received_count`(확인 못 하면 null, 실제 0건은 0) |
-| `fin_raw_objects` | 원본 보관 | 바이트 무변경 저장(`storage_key`), sha256, 실행 ID, 수집 시각, 콘텐츠 유형, 요청 요약(메서드·비밀값 제거 URL·헤더 이름만). 같은 해시 재수신도 실행마다 행 유지 |
-| `fin_source_records` | 업무 관측 단위 | `source_key` 있으면 `(계정, 키)` 유일. `null` 이면 미식별로 매번 보존(자동 확정 중복 제거 없음) |
-| `fin_source_record_versions` | 관측 버전 | 동일 키·변경 내용은 새 버전. 이전 payload 보존. 원본 객체·실행으로 추적 |
+| `fin_external_mappings` | 외부 코드 → 내부 ID | 원천 시스템(+계정) 범위, 유효기간. **같은 범위의 기간 중복은 EXCLUDE 제약으로 거부**(btree_gist). 계정 범위가 시스템 범위보다 우선하며 서로 다른 범위는 공존. 매핑의 시스템은 연결 계정의 시스템과 일치(복합 FK). 미매핑은 `null`(임의 생성 없음) |
+| `fin_source_runs` | 수집 실행 이력 | 실행 ID, 계정, 대상 기간, 시작·종료, 상태(RUNNING/SUCCEEDED/PARTIAL/FAILED/BLOCKED), 단계별 결과·코드(`stages`), 오류 코드·카탈로그 설명·`failure_kind`·예외 클래스명, `source_as_of`(미제공 null), `received_count`(확인 못 하면 null, 실제 0건은 0) |
+| `fin_raw_objects` | 원본 보관 | 바이트 무변경 저장(`storage_key`=실행ID/sha256), sha256, 실행 ID, 수집 시각, 콘텐츠 유형, 요청 요약(원천·메서드·선언된 템플릿만). 같은 해시 재수신도 실행마다 행 유지 |
+| `fin_source_records` | 업무 관측 단위 | `source_key` 있으면 `(계정, 키)` 유일. `null` 이면 미식별로 매번 보존(자동 확정 중복 제거 없음). **미식별 자료는 후속 업무 집계에 바로 사용할 수 없다** |
+| `fin_source_record_versions` | 관측 버전 | 동일 키·변경 내용은 새 버전. 이전 payload 보존. 계정·실행·원본과 복합 FK 로 정합 |
+| `fin_source_record_observations` | 실행별 관측 연결 | 내용이 같아 업무 버전이 늘지 않아도 (실행, 레코드, 관측한 버전, 원본) 연결을 매 실행 남김. 중복 제거(버전)와 추적 이력(연결)을 분리 |
+
+복합 FK: 레코드의 계정 = 실행의 계정, 버전의 (레코드, 실행, 원본) 이 같은 계정·실행에 속함, 관측 연결도 동일. 각각 존재하는 ID 라는 이유만으로 잘못된 조합을 만들 수 없다.
 
 금액 컬럼·손익 계산은 없다. FIN-01 의 자체 십진수 도구(`fin/FIN-01/verify/decimal.ts`)는 채택하지 않았다.
 
 ## 수집기 공통 인터페이스 (`src/collector/`)
 
-`authenticate → request → validate → normalize → reconcile` 다섯 단계. 각 단계는 `OK | NOT_IMPLEMENTED | FAILED` 를 명시적으로 반환한다.
+`authenticate → request → validate → normalize → reconcile` 다섯 단계. 각 단계는 `OK | NOT_IMPLEMENTED(code) | FAILED(errorCode, kind)` 를 식별자만으로 반환한다(자유 문장 없음).
 
-실행 상태 규칙(`runCollection`):
+실행 순서와 상태 규칙(`runCollection`):
 
-| 상황 | 상태 | `received_count` |
-|---|---|---|
-| 다섯 단계 전부 OK | SUCCEEDED | 관측 건수(0건이면 0) |
-| 어떤 단계든 NOT_IMPLEMENTED(예: 원문 수신만) | PARTIAL | 검증 단계가 건수를 명시했으면 그 값, 아니면 null |
-| 요청·검증·정규화·대조 실패 | FAILED | null(원문은 수신된 경우 보관) |
-| 인증 실패·미구현 | BLOCKED | null |
+| 상황 | 상태 | `failure_kind` | 관측 저장 |
+|---|---|---|---|
+| 인증 FAILED(자격·권한 부족) | BLOCKED | CREDENTIALS | 없음 |
+| 어떤 단계든 NOT_IMPLEMENTED | PARTIAL | NOT_IMPLEMENTED (+`stages` 에 단계·코드) | 없음 |
+| 요청·검증·정규화·대조·저장 실패 | FAILED | TRANSIENT / PERMANENT / STORAGE / UNKNOWN | 없음(수신된 원본은 보관) |
+| 다섯 단계 OK + 관측 저장 커밋 | SUCCEEDED | null | 있음 |
 
-네트워크 요청 성공만으로 SUCCEEDED 가 되지 않는다. `stages` 에 단계별 결과와 SKIPPED 가 남는다.
+- 순서는 **정규화 → 대조 → 관측 저장** 이다. 대조 실패·미구현이면 원본·실행 이력은 보존하되 최신 관측은 갱신하지 않는다.
+- 대조 성공 후 관측 저장과 SUCCEEDED 기록은 **하나의 트랜잭션**이다. 데이터가 저장되지 않았는데 SUCCEEDED 가 되거나, 실패 데이터가 최신 관측이 되는 상태가 없다.
+- 네트워크 요청 성공만으로 SUCCEEDED 가 되지 않는다. `failure_kind` 로 재시도 로직이 영구 미구현·자격 부족을 반복 실행하지 않도록 원인을 구분한다.
+- `normalize` 의 결과 `payload` 는 공급자 원본 구조를 담는 `unknown` 이다. 공급자별 추정 필드를 공통 모델의 필수 사실로 고정하지 않는다.
 
-`normalize` 의 결과 `payload` 는 공급자 원본 구조를 담는 `unknown` 이다. 공급자별 추정 필드를 공통 모델의 필수 사실로 고정하지 않는다. 표준 거래(`sales_events` 등)로의 변환은 이 범위에 없다.
+## 오류 경계와 복구 (`src/collector/pipeline.ts`, `src/recovery.ts`)
 
-## 비밀값 처리 (`src/redact.ts`)
+- 실행 생성 이후 전체를 오류 경계로 감싼다. 원본 바이트 저장 실패 `RAW_STORE_FAILED`, 메타데이터 저장 실패 `RAW_META_FAILED`(고아 원본 후보), 관측 트랜잭션 실패 `OBSERVE_STORE_FAILED`(롤백)를 구분해 FAILED/STORAGE 로 기록한다.
+- 종료 기록 자체가 실패하면 `finalized=false` 와 원래 실패 코드를 호출자에게 돌려주고, 실행은 RUNNING 으로 남아 복구 대상이 된다.
+- 복구 절차: `listUnfinishedRuns`(일정 시간 지난 RUNNING), `markUnfinishedRunFailed`(FAILED/STORAGE, `RECOVERY_STALE_RUNNING`), `findOrphanRawKeys`(저장소에만 있는 원본), `findRawRowsMissingBytes`(행만 있는 원본).
+- 프로세스 강제 종료·DB 장애는 try/catch 로 해결되지 않는다. 그 경우 RUNNING 잔존을 위 절차가 식별한다. 재처리는 새 실행으로 하며, 원본 키에 실행 ID 가 포함되고(`wx` 쓰기) 관측 저장이 (계정, 키, 해시) 기준 멱등이라 중복 부작용이 없다.
 
-- 요청 헤더는 값 없이 이름만 저장. URL 쿼리의 토큰류 파라미터 값과 `Bearer …`, `key=…` 형태 문자열은 `[REDACTED]`.
-- 실행 이력 오류 메시지와 파이프라인 로그는 저장·출력 전에 `redactText` 를 거친다.
-- 완료 기준 8 이 저장 데이터 전체 덤프·원본 저장소·로그에서 시험용 토큰 부재를 검사한다.
+## 비밀값 취급 경계 (`src/redact.ts`)
 
-## 완료 기준 검증 (`test/completion-cases.test.ts`)
+"정규식으로 모든 비밀값을 탐지한다" 는 보장 대신 영속화·로그에 허용되는 메타데이터를 제한한다.
 
-시험용 일회용 PostgreSQL + 가상 데이터로 8개 사례를 검증한다. **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`.
+- 요청 요약은 `{원천 시스템, 메서드, 엔드포인트 템플릿}` 만 저장한다. 템플릿은 수집기가 **상수로 선언한 목록**(`endpointTemplates`)의 원소와 정확히 일치해야 하고, 형태 규칙(`?`, `=`, `&` 금지)을 만족해야 하며, 이번 실행에서 읽은 비밀값을 포함하면 안 된다. 위반 시 원본을 저장하지 않고 `REQUEST_SUMMARY_INVALID` 로 실패한다. 실제 URL·헤더 값은 받지도 저장하지도 않는다.
+- 오류는 내부 코드와 코드별 고정 설명(카탈로그), 예외 클래스명만 저장한다. 외부 예외 메시지는 영속화·로그하지 않는다. `note` 는 파이프라인이 만든 고정 문장만 담는다.
+- 인증 응답은 원본 저장 경로로 보내지 않는다. 업무 응답이 이번 실행에서 사용한 인증값을 반사하거나(`RAW_CONTAINS_CREDENTIAL`) 토큰 성격 필드를 포함하면(`RAW_TOKEN_FIELD`) 원본 저장을 중단하고 실패로 기록한다.
+- 정상 업무 응답은 바이트를 변경하지 않고 보존한다. 마스킹한 파일을 원본으로 저장하지 않는다.
+- `redactText` 는 로그 한 줄 조립 시의 보조 방어선이며 정책의 근거가 아니다.
+
+## 검증 (`test/completion-cases.test.ts`, `test/remediation.test.ts`)
+
+시험용 일회용 PostgreSQL + 가상 데이터로 완료 기준 8건과 2차 검토 회귀 12건을 검증한다. **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`. DB 장애는 SQL 패턴에 따라 예외를 던지는 풀 래퍼(`test/helpers.ts` `faultyPool`)로 주입한다.
 
 ## 남은 제약·설계 결정 필요 사항
 
@@ -78,3 +93,4 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용(선택)
 - 원본 저장소는 파일 시스템 구현(`FsRawStore`)이며 운영은 비공개 객체 저장소로 교체한다(인터페이스 동일).
 - 로그인·작업 큐(BullMQ+Redis)·실제 공급자 수집기·표준 거래 정규화·금액 정밀도 라이브러리 선택은 미착수.
 - 실행 이력의 동시 실행 잠금(계획서 §10)은 미구현.
+- 미식별 레코드의 중복 후보 검토 규칙·매칭 UI 는 미구현(이 범위 밖).

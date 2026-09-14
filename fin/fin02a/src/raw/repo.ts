@@ -15,33 +15,48 @@ export interface RawObject {
   requestSummary: RequestSummary;
 }
 
-/**
- * 원본 보관: 바이트를 변경하지 않고 저장소에 두고, 해시·실행 ID·수집 시각·콘텐츠 유형·요청 요약을 기록한다.
- * 같은 해시가 다시 수신돼도 실행마다 새 행을 만든다(실행 이력과 원본의 1:N 추적 유지).
- */
-export async function storeRawObject(
-  db: Queryable,
+export function rawStorageKey(sourceRunId: string, sha256: string): string {
+  return `${sourceRunId}/${sha256}`;
+}
+
+/** 원본 바이트를 변경 없이 저장소에 둔다(1단계). 실패는 호출자가 RAW_STORE_FAILED 로 분류한다. */
+export async function putRawBytes(
   store: RawStore,
+  sourceRunId: string,
+  bytes: Uint8Array,
+): Promise<{ sha256: string; storageKey: string }> {
+  const sha256 = sha256Hex(bytes);
+  const storageKey = rawStorageKey(sourceRunId, sha256);
+  await store.put(storageKey, bytes);
+  return { sha256, storageKey };
+}
+
+/**
+ * 원본 메타데이터 행(2단계). 해시·실행 ID·수집 시각·콘텐츠 유형·요청 요약(원천·메서드·템플릿만).
+ * 같은 해시가 다시 수신돼도 실행마다 새 행을 만든다(실행 이력과 원본의 추적 유지).
+ * 실패는 호출자가 RAW_META_FAILED 로 분류하며 이미 저장된 바이트는 고아 원본 후보가 된다(recovery.findOrphanRawKeys).
+ */
+export async function insertRawObject(
+  db: Queryable,
   input: {
     sourceRunId: string;
-    bytes: Uint8Array;
+    sha256: string;
+    storageKey: string;
+    byteSize: number;
     contentType: string;
     requestSummary: RequestSummary;
   },
 ): Promise<RawObject> {
-  const sha256 = sha256Hex(input.bytes);
-  const storageKey = `${input.sourceRunId}/${sha256}`;
-  await store.put(storageKey, input.bytes);
   const r = await db.query<RawRow>(
     `INSERT INTO fin_raw_objects (source_run_id, sha256, byte_size, content_type, storage_key, request_summary)
      VALUES ($1, $2, $3, $4, $5, $6::jsonb)
      RETURNING id, source_run_id, sha256, byte_size, content_type, storage_key, collected_at, request_summary`,
     [
       input.sourceRunId,
-      sha256,
-      input.bytes.byteLength,
+      input.sha256,
+      input.byteSize,
       input.contentType,
-      storageKey,
+      input.storageKey,
       JSON.stringify(input.requestSummary),
     ],
   );

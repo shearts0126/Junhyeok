@@ -83,7 +83,7 @@ pnpm tsx fin/FIN-01/verify/run.ts --live all --date 2026-09-12   # R3 (환경변
 
 ## 8. `--live` 구현 수준(출처별)
 
-`results/live-run.json` 의 `implementation` / `parsingImplemented` 와 동일하다. **어떤 소스도 응답을 파싱·정규화·대조하지 않는다.** 자격정보를 설정해도 "조회 구현 미완료" 상태이며, 요청 형식 중 추정 부분은 실제 응답을 확인하기 전까지 확정 스키마가 아니다.
+`results/live-run.json` 의 `implementation` / `parsingImplemented` 와 동일하다. 2차 검토 후 수정: 결과·로그에 실제 URL 을 기록하지 않고 소스별 선언 템플릿(`endpoint`, ECOS 는 `{authkey}` 자리표시자)만 남기며, 외부 예외 메시지 대신 내부 오류 코드를 기록한다(`verify/live/http.ts`). 가짜 키로 재현해 `live-run.json` 에 키가 남지 않음을 확인했다(`evidence/live-secret-check.log`). **어떤 소스도 응답을 파싱·정규화·대조하지 않는다.** 자격정보를 설정해도 "조회 구현 미완료" 상태이며, 요청 형식 중 추정 부분은 실제 응답을 확인하기 전까지 확정 스키마가 아니다.
 
 | 출처 | 공식 명세 확인 수준 | 실제 HTTP 요청 구현 | 인증 구현 | 응답 파싱 구현 | 실제 호출 결과 | 남은 작업 |
 |---|---|---|---|---|---|---|

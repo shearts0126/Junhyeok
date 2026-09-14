@@ -41,6 +41,7 @@ pnpm tsx fin/FIN-01/verify/run.ts --live fx-exim --date 2026-09-12
 - 비밀값·개인정보를 저장소에 넣지 않는다. 실제 호출 결과도 본문을 저장하지 않고 상태·건수·해시만 남긴다.
 - 가상 데이터 검증은 항상 `synthetic: true` 로 표시되며 실제 연동 성공을 뜻하지 않는다.
 - 필드매핑의 근거 수준: `CONFIRMED`(원문/실제 응답) · `SNIPPET`(공식 문서 검색 발췌, 원문 미열람) · `ASSUMED`(문서 미확인, 자리표시자) · `UNVERIFIED`(제공 여부 자체를 확인하지 못함, "미지원" 아님) · `MISSING`(미제공을 공식 근거로 확인).
+- `--live` 결과·로그에는 실제 URL 이 아니라 선언된 엔드포인트 템플릿만 남는다(인증키가 경로에 들어가는 ECOS 도 `{authkey}` 로만 표기). 외부 예외 메시지는 내부 코드로 분류해 기록한다.
 - `--live` 는 요청 구성·전송까지만 구현했고 응답 파싱·정규화·대조는 미구현이다(`results/live-run.json` 의 `implementation`, `parsingImplemented`). 자격정보가 있어도 "조회 구현 미완료" 상태다.
 - 보완검토 결과: `FIN-01_보완검토결과.md`.
 - 금액은 문자열 + BigInt 고정 스케일로만 연산한다(`verify/decimal.ts`). 부동소수점 사용 금지.

@@ -1,4 +1,4 @@
-# 격리 확인 (2026-09-14T11:32:24Z)
+# 격리 확인 (2026-09-14T11:56:46.685984Z, 보완 커밋 전 작업트리)
 ## fin/fin02a 자체 의존성 (pnpm list --depth 0 --ignore-workspace)
 Legend: production dependency, optional only, dev only
 
@@ -15,11 +15,9 @@ fin-dashboard-core@0.0.1 /home/user/Junhyeok/fin/fin02a (PRIVATE)
 └── vitest@3.2.7
 
 6 packages
-## 루트 package.json / pnpm-lock.yaml 변경 여부 (git diff --stat main..HEAD 및 작업트리)
-(비어 있으면 변경 없음)
-## fin/ 이외 변경·신규 파일
-(비어 있으면 없음)
-## PostgreSQL 서버: 별도 인스턴스 127.0.0.1:5433 (scripts/dev-db.sh, 데이터 fin/fin02a/.pgdata, gitignore)
-PostgreSQL 16.13 (Ubuntu 16.13-0ubuntu0.24.04.1) on x86_64-pc-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
-## 시험용 DB 는 테스트 종료 시 삭제됨
-0
+## 루트 package.json / pnpm-lock.yaml / 설정 / src / prisma / CI 대상 git diff --stat main (비어 있으면 변경 없음)
+
+## fin/ 이외 변경·신규 파일 (비어 있으면 없음)
+ M "fin/FIN-01/FIN-01_\354\213\244\355\226\211\352\262\260\352\263\274.md"
+?? "fin/fin02a/FIN-02A_\353\263\264\354\231\204\352\262\260\352\263\274.md"
+## PostgreSQL: 별도 인스턴스 127.0.0.1:5433 (scripts/dev-db.sh), 시험용 DB 는 테스트 종료 시 삭제
