@@ -28,15 +28,19 @@ pnpm db:migrate      # 개발 DB 에 마이그레이션 적용
 pnpm start:dev       # NestJS 앱, 127.0.0.1:3400 (루프백만). /health/live, /health/ready
 scripts/dev-redis.sh start                # 전용 Redis 6380 (FIN-02C)
 export FIN02A_REDIS_URL=redis://127.0.0.1:6380
-pnpm enqueue --account <uuid> --collector koreaexim-fx --from 2026-09-11 --to 2026-09-11 --request-id fx-1 [--mode VERIFICATION]
+pnpm enqueue --account <uuid> --collector koreaexim-fx --from 2026-09-11 --to 2026-09-11 --request-id fx-1 --mode VERIFICATION
+                                          # koreaexim-fx 는 명세 미확인(SNIPPET_ONLY) → SCHEDULED 는 종료 코드 7 로 거부
+pnpm enqueue --resync                     # DB 에만 남은 작업(큐 등록 실패·응답 유실)을 같은 jobId 로 재등록
 pnpm worker                               # 별도 worker 프로세스(스케줄러 비활성)
-pnpm recovery preview                     # 수동 복구 미리보기(상태 불변, heartbeat 이상 후보 포함)
-pnpm recovery close --run <id> --started-at <ISO> --actor <name> --reason <text> [--confirm]
+pnpm recovery preview                     # 수동 복구 미리보기(상태 불변). 후보마다 소유자·세대값·heartbeat 와 closeArgs 제시
+pnpm recovery close --run <id> --started-at <ISO> --generation <n> --actor <name> --reason <text> \
+                    --verified OWNER_TERMINATED|NO_ACTIVE_WORK [--confirm]
+pnpm recovery release-lease --account <id> --generation <n> --actor <name> --reason <text> --verified <kind> [--confirm]
 ```
 
 테스트는 DB 가 없으면 실패한다(조건부 skip 없음). 모든 테스트 데이터는 시험 전용이며 실제 계좌·판매자 계정이 아니다.
 
-## 데이터 구조 (`db/migrations/0001_fin02a_core.sql`, `0002_fin02a_integrity.sql`, `0003_fin02a_run_mode_recovery.sql`)
+## 데이터 구조 (`db/migrations/0001` ~ `0005`; 0004 큐·잠금, 0005 큐 등록 경계·복구 확인 근거)
 
 | 테이블 | 역할 | 핵심 규칙 |
 |---|---|---|
@@ -80,8 +84,9 @@ pnpm recovery close --run <id> --started-at <ISO> --actor <name> --reason <text>
 - 실행 생성 이후 전체를 오류 경계로 감싼다. 원본 바이트 저장 실패 `RAW_STORE_FAILED`, 메타데이터 저장 실패 `RAW_META_FAILED`(고아 원본 후보), 관측 트랜잭션 실패 `OBSERVE_STORE_FAILED`(롤백)를 구분해 FAILED/STORAGE 로 기록한다.
 - 종료 기록 자체가 실패하면 `finalized=false` 와 원래 실패 코드를 호출자에게 돌려주고, 실행은 RUNNING 으로 남아 복구 확인 후보가 된다.
 - 로그 경계: 로그 콜백 예외는 `safeLog` 가 흡수하고 `logFailed=true` 로만 알린다. 로그 실패로 DB 의 성공·실패 상태를 다시 바꾸지 않으며, 종료 기록이 성공했다면 `finalized=true` 를 유지한다. 로그 오류를 같은 로그 함수로 다시 출력하지 않는다. 로그 장애(`logFailed`)와 DB 종료 기록 장애(`finalized=false`)는 별도 신호다.
-- 수동 복구 정책(확정): 자동 실패 마감은 하지 않는다. 60분 이상 RUNNING 인 실행은 **확인 후보**로만 조회한다(`listStaleRunCandidates`, `previewRecovery`). 60분은 조사 기준이지 장애 확정 기준이 아니며, 정상 장기 실행을 시간 경과만으로 종료하지 않는다. 담당자가 프로세스 종료·활성 작업 부재를 확인한 뒤 실행 ID 를 지정해 마감한다(`closeStaleRunManually`: 주체·사유 기록, 적용 직전에 상태·시작 시각 재확인, 바뀌었으면 마감하지 않음). 고아 원본·바이트 유실은 목록만 제시하고 삭제하지 않는다. 미리보기·적용을 분리한 CLI 는 FIN-02B(`scripts/recovery.ts`).
-- 후속(worker 단계): 10분 주기 후보 점검을 설계하되, 자동 마감은 작업 소유권·heartbeat·실행 잠금 구현 이후 별도 작업으로 한다.
+- 수동 복구 정책(확정): 자동 실패 마감·잠금 탈취는 없다. 60분 이상 RUNNING 인 실행과 heartbeat 2분 초과 잠금은 **확인 후보**로만 조회한다(`listStaleRunCandidates`, `previewRecovery`; 실행 ID·시작 시각·소유자 worker_id·세대값·heartbeat 상태·`closeArgs` 를 함께 제시). 마감에는 담당자의 명시적 확인 입력(`verified: OWNER_TERMINATED | NO_ACTIVE_WORK`)과 사유가 필요하며, heartbeat 노후는 이를 대체하지 않는다(없으면 `CONFIRMATION_REQUIRED`). 적용(`closeStaleRunManually`)은 한 트랜잭션에서 **잠금 행 → 실행 행** 순서로 `FOR UPDATE` 한 뒤 상태 RUNNING·시작 시각·세대값을 재확인한다. worker 커밋(`assertLeaseHeld` → `finishRun`)도 같은 순서라 둘은 직렬화된다: 정상 완료가 먼저면 `NOT_RUNNING`, 소유권이 바뀌었으면 `OWNERSHIP_CHANGED`, heartbeat 가 최근이면 `OWNER_ALIVE` 로 거부. 복구가 먼저 확정되면 실행은 FAILED, 같은 세대 잠금은 해제, 작업은 NEEDS_REVIEW, 시도는 MANUAL_CLOSE 로 닫히고 이전 worker 의 관측 커밋·종료 갱신·heartbeat 는 모두 0행이다. 고아 원본·바이트 유실은 목록만 제시하고 삭제하지 않는다. 시험: `test/recovery-contention.test.ts`.
+- 큐 등록 경계(FIN-02C 보완): `enqueueCollection` 은 DB 작업 생성 → 큐 등록 → `queued_at` 기록 순서다. 등록 실패는 `QUEUE_REGISTRATION_FAILED`(작업은 DB 에 남음), 응답 유실 후 같은 요청 재전송은 `DUPLICATE_REQUEST_ID`(+ `queued_at` 이 비어 있으면 같은 jobId 로 재등록), 같은 요청 ID 를 다른 내용으로 쓰면 `REQUEST_ID_CONFLICT`. `resyncUnqueuedJobs`(`pnpm enqueue --resync`)가 `queued_at IS NULL` 인 QUEUED/RETRY_SCHEDULED 작업을 재등록한다. 완료된 작업의 재전달은 worker 가 상태 검사에서 SKIPPED 로 끝내며 외부 요청을 시작하지 않는다. 잠금 대기(DEFERRED)는 시도를 시작하지 않아 재시도 횟수를 소진하지 않는다. 시험: `test/queue-boundary.test.ts`.
+- readiness(`/health/ready`)는 마이그레이션 "개수" 가 아니라 `src/db/migrations.ts` 의 `REQUIRED_MIGRATIONS` 집합이 전부 적용됐는지 확인한다. 이전 단계 스키마는 `SCHEMA_OUTDATED` + 누락 개수로 503 이며 연결 문자열·DB 이름·파일명은 응답에 없다.
 - 프로세스 강제 종료·DB 장애는 try/catch 로 해결되지 않는다. 재처리는 새 실행으로 하며, 원본 키에 실행 ID 가 포함되고(`wx` 쓰기) 관측 저장이 (계정, 키, 해시) 기준 멱등이라 중복 부작용이 없다.
 
 ## 비밀값 취급 경계 (`src/redact.ts`)
@@ -96,7 +101,7 @@ pnpm recovery close --run <id> --started-at <ISO> --actor <name> --reason <text>
 
 ## 검증 (`test/completion-cases.test.ts`, `test/remediation.test.ts`)
 
-시험용 일회용 PostgreSQL + 가상 데이터로 완료 기준 8건, 2차 검토 회귀 12건, 3차 검토·정책 회귀 7건(`test/final-fixes.test.ts`)을 검증한다. **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`. DB 장애는 SQL 패턴에 따라 예외를 던지는 풀 래퍼(`test/helpers.ts` `faultyPool`)로 주입한다.
+시험용 일회용 PostgreSQL + 가상 데이터로 완료 기준 8건, 2차 검토 회귀 12건, 3차 검토·정책 회귀 7건(`test/final-fixes.test.ts`), FIN-02B 7건, FIN-02C 10건 + 복구 경합 5건 + 큐 경계 7건 + 잠금 1건, 환율 수집기 내부 시험 5건을 검증한다(총 62건). **외부 공급자 연동 성공을 뜻하지 않는다.** 결과 로그는 `evidence/test.log`. DB 장애는 SQL 패턴에 따라 예외를 던지는 풀 래퍼(`test/helpers.ts` `faultyPool`)로 주입한다.
 
 ## 남은 제약·설계 결정 필요 사항
 

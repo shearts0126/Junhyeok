@@ -197,8 +197,18 @@ describe('4. 수동 복구 정책', () => {
         expectedStartedAt: cand!.run.startedAt,
         actor: ' ',
         reason: 'x',
+        verified: 'OWNER_TERMINATED',
       }),
     ).toEqual({ applied: false, reason: 'INVALID_INPUT' });
+    // 담당자의 명시적 확인 입력이 없으면 거부(heartbeat 노후·경과 시간은 대체 근거가 아니다)
+    expect(
+      await closeStaleRunManually(pool, {
+        runId: stale.id,
+        expectedStartedAt: cand!.run.startedAt,
+        actor: 'ops-a',
+        reason: '오래됨',
+      }),
+    ).toEqual({ applied: false, reason: 'CONFIRMATION_REQUIRED' });
     // 후보 조회 후 상태가 바뀐 경우(다른 경로로 종료됨): 마감하지 않음
     const finishedElsewhere = await startRun(pool, { sourceAccountId: acc.id, ...period });
     await pool.query(
@@ -218,6 +228,7 @@ describe('4. 수동 복구 정책', () => {
         expectedStartedAt: c2!.run.startedAt,
         actor: 'ops-a',
         reason: '확인',
+        verified: 'OWNER_TERMINATED',
       }),
     ).toEqual({ applied: false, reason: 'NOT_RUNNING' });
     // started_at 이 바뀐 경우(재시작 등): 마감하지 않음
@@ -227,6 +238,7 @@ describe('4. 수동 복구 정책', () => {
         expectedStartedAt: new Date(cand!.run.startedAt.getTime() + 1000),
         actor: 'ops-a',
         reason: '확인',
+        verified: 'OWNER_TERMINATED',
       }),
     ).toEqual({ applied: false, reason: 'STARTED_AT_CHANGED' });
     // 정상 적용
@@ -235,6 +247,7 @@ describe('4. 수동 복구 정책', () => {
       expectedStartedAt: cand!.run.startedAt,
       actor: 'ops-a',
       reason: '프로세스 종료·활성 작업 부재 확인 (token=FAKE-REASON-SECRET-123)',
+      verified: 'OWNER_TERMINATED',
     });
     expect(applied.applied).toBe(true);
     if (applied.applied) {
@@ -251,6 +264,7 @@ describe('4. 수동 복구 정책', () => {
         expectedStartedAt: cand!.run.startedAt,
         actor: 'ops-a',
         reason: '재시도',
+        verified: 'OWNER_TERMINATED',
       }),
     ).toEqual({ applied: false, reason: 'NOT_RUNNING' });
     expect(
@@ -259,6 +273,7 @@ describe('4. 수동 복구 정책', () => {
         expectedStartedAt: new Date(),
         actor: 'ops-a',
         reason: 'x',
+        verified: 'OWNER_TERMINATED',
       }),
     ).toEqual({ applied: false, reason: 'NOT_FOUND' });
   });

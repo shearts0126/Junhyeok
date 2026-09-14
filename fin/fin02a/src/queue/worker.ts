@@ -11,6 +11,7 @@ import {
   bindAttemptRun,
   finishAttempt,
   getJob,
+  markQueued,
   requeueJob,
   setJobStatusFenced,
 } from './jobs';
@@ -62,6 +63,9 @@ export type ProcessResult =
  *      → 시도 시작 → runCollection(실행 ID 생기면 시도·잠금에 연결) → 결과에 따른 작업 상태(펜스) → 잠금 해제.
  * 큐 전달 보장은 "정확히 한 번" 이 아니다. 중복 전달은 (a) 작업 상태(QUEUED/RETRY_SCHEDULED 만 시작), (b) 계정 잠금,
  * (c) 관측 커밋 펜스(잠금 세대), (d) 작업 상태 펜스(current_run_id) 네 겹으로 막는다.
+ * 완료된(또는 RUNNING 으로 남은) 작업이 다시 전달되면 (a) 에서 SKIPPED 로 끝나며 외부 요청은 시작되지 않는다.
+ * worker 가 시도 저장 후 중단되면 작업은 RUNNING, 잠금은 미해제로 남는다. 자동 정리는 없고 recovery close(담당자 확인)가
+ * 실행·잠금·작업·시도를 한 트랜잭션으로 닫는다.
  */
 export async function processCollectionJob(
   deps: WorkerDeps,
@@ -203,13 +207,16 @@ export async function processCollectionJob(
           status: 'RETRY_SCHEDULED',
           nextAttemptAt: nextAt,
         });
-        if (fenced)
+        if (fenced) {
+          // 지연 재투입 등록이 실패하면 RETRY_SCHEDULED/queued_at NULL 로 남아 enqueue --resync 대상이 된다(예외는 호출자에게 전파).
           await enqueueDelayed(
             deps.queue,
             { jobId: job.id, requestId: job.requestId, attemptHint: attempt.attemptNo + 1 },
             `a${attempt.attemptNo + 1}`,
             d.delayMs,
           );
+          await markQueued(deps.pool, job.id);
+        }
         retryScheduled = fenced;
         jobStatus = 'RETRY_SCHEDULED';
       } else {
@@ -242,9 +249,11 @@ async function defer(
   jobId: string,
   data: CollectionJobData,
 ): Promise<ProcessResult> {
+  // 잠금 대기: 시도를 시작하지 않았으므로 attempt_count 와 시도 이력은 그대로다(재시도 횟수를 소진하지 않는다).
   const wait = deps.lockWaitMs ?? 15_000;
   await requeueJob(deps.pool, jobId, new Date(Date.now() + wait));
   await enqueueDelayed(deps.queue, data, `w${Date.now()}`, wait);
+  await markQueued(deps.pool, jobId);
   return { kind: 'DEFERRED', jobId, reason: 'LOCK_HELD' };
 }
 

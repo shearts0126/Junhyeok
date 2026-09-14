@@ -1,10 +1,12 @@
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';
 
+import { isSchedulable } from '../collector/pipeline';
 import type { Queryable } from '../db/client';
 import type { RunMode } from '../runs/repo';
 
-import { createJob, type CollectionJob } from './jobs';
+import { createJob, listUnqueuedJobs, markQueued, type CollectionJob } from './jobs';
+import type { CollectorRegistry } from './registry';
 
 export const QUEUE_NAME = 'fin02a-collection';
 
@@ -41,29 +43,102 @@ export interface EnqueueInput {
 
 export type EnqueueResult =
   | { enqueued: true; job: CollectionJob }
-  | { enqueued: false; reason: 'DUPLICATE_REQUEST_ID'; job: CollectionJob };
+  /** 같은 요청 ID·같은 내용의 재전송. 큐 등록 기록이 없던 경우(응답 유실)에는 같은 jobId 로 다시 등록했음을 requeued 로 알린다 */
+  | { enqueued: false; reason: 'DUPLICATE_REQUEST_ID'; job: CollectionJob; requeued: boolean }
+  /** 같은 요청 ID 를 다른 계정·기간·모드·수집기로 재사용: 명시적 충돌. 새 작업도, 큐 등록도 없다 */
+  | { enqueued: false; reason: 'REQUEST_ID_CONFLICT'; job: CollectionJob }
+  /** DB 작업은 만들어졌으나 큐 등록이 실패함. 작업은 QUEUED/queued_at=NULL 로 남고 resyncUnqueuedJobs 가 재등록한다 */
+  | { enqueued: false; reason: 'QUEUE_REGISTRATION_FAILED'; job: CollectionJob; errorClass: string }
+  /** 정기(SCHEDULED) 모드에 등록할 수 없는 수집기(미구현 단계 또는 명세 미확인). DB 작업을 만들지 않는다 */
+  | { enqueued: false; reason: 'NOT_SCHEDULABLE' };
+
+const initialJobId = (requestId: string): string => `req__${safeId(requestId)}`;
+
+async function addInitial(queue: Queue<CollectionJobData>, job: CollectionJob): Promise<void> {
+  // BullMQ 는 같은 jobId 가 이미 있으면(대기·지연·완료 보관 중) 새로 추가하지 않는다. 그래서 재등록은 안전하다.
+  await queue.add(
+    'collect',
+    { jobId: job.id, requestId: job.requestId },
+    { jobId: initialJobId(job.requestId), removeOnComplete: 1000, removeOnFail: 1000 },
+  );
+}
+
+const sameRequest = (a: CollectionJob, b: EnqueueInput): boolean =>
+  a.sourceAccountId === b.sourceAccountId &&
+  a.collectorKey === b.collectorKey &&
+  a.periodFrom === b.periodFrom &&
+  a.periodTo === b.periodTo &&
+  a.mode === b.mode;
 
 /**
- * 수동·정기 공통 enqueue. 요청 ID 로 DB 에 멱등 생성한 뒤에만 큐에 넣는다.
- * 같은 요청 ID 재전송: DB UNIQUE 로 거부(중복 작업 없음). BullMQ jobId 도 요청 ID 라 큐 단계에서도 중복되지 않는다.
- * 의도한 재수집은 새 요청 ID 로 허용된다.
+ * 수동·정기 공통 enqueue. 순서: (정기 게이트) → DB 작업 생성(요청 ID 멱등) → 큐 등록 → queued_at 기록.
+ * 실패 경계:
+ * - DB 생성 성공 후 큐 등록 실패 → QUEUE_REGISTRATION_FAILED. 작업은 DB 에 남고(queued_at NULL) resyncUnqueuedJobs 로 재등록한다.
+ * - 큐 등록 성공 후 응답 유실로 같은 요청이 다시 오면 → DUPLICATE_REQUEST_ID. queued_at 이 비어 있으면 같은 jobId 로 재등록(중복 없음).
+ * - 같은 요청 ID 를 다른 내용으로 재사용 → REQUEST_ID_CONFLICT (거부).
+ * 큐 자체의 "정확히 한 번" 은 전제하지 않는다. 중복 전달은 worker 의 작업 상태·계정 잠금·커밋 펜스가 막는다.
  */
 export async function enqueueCollection(
   db: Queryable,
   queue: Queue<CollectionJobData>,
   input: EnqueueInput,
+  registry?: CollectorRegistry,
 ): Promise<EnqueueResult> {
+  if (registry && input.mode === 'SCHEDULED') {
+    const c = registry.get(input.collectorKey);
+    if (!c || !isSchedulable(c)) return { enqueued: false, reason: 'NOT_SCHEDULABLE' };
+  }
   const r = await createJob(db, input);
-  if (!r.created) return { enqueued: false, reason: 'DUPLICATE_REQUEST_ID', job: r.existing };
-  await queue.add(
-    'collect',
-    { jobId: r.job.id, requestId: input.requestId },
-    { jobId: `req__${safeId(input.requestId)}`, removeOnComplete: 1000, removeOnFail: 1000 },
-  );
+  if (!r.created) {
+    if (!sameRequest(r.existing, input))
+      return { enqueued: false, reason: 'REQUEST_ID_CONFLICT', job: r.existing };
+    let requeued = false;
+    if (r.existing.status === 'QUEUED' && r.existing.queuedAt === null) {
+      await addInitial(queue, r.existing);
+      await markQueued(db, r.existing.id);
+      requeued = true;
+    }
+    return { enqueued: false, reason: 'DUPLICATE_REQUEST_ID', job: r.existing, requeued };
+  }
+  try {
+    await addInitial(queue, r.job);
+  } catch (e) {
+    return {
+      enqueued: false,
+      reason: 'QUEUE_REGISTRATION_FAILED',
+      job: r.job,
+      errorClass: e instanceof Error ? e.constructor.name : typeof e,
+    };
+  }
+  await markQueued(db, r.job.id);
   return { enqueued: true, job: r.job };
 }
 
-/** 재시도·잠금 대기 재투입(지연). jobId 에 접미사를 붙여 이전 큐 항목과 충돌하지 않게 한다. */
+/**
+ * DB 에만 남은 작업 재등록(등록 실패·응답 유실·지연 재투입 실패). QUEUED 는 즉시, RETRY_SCHEDULED 는 next_attempt_at 까지 지연.
+ * 같은 jobId 규칙을 쓰므로 실제로는 등록돼 있던 작업이라도 중복되지 않는다. 상태 전이는 없다.
+ */
+export async function resyncUnqueuedJobs(
+  db: Queryable,
+  queue: Queue<CollectionJobData>,
+): Promise<{ jobId: string; requestId: string; status: string }[]> {
+  const out: { jobId: string; requestId: string; status: string }[] = [];
+  for (const job of await listUnqueuedJobs(db)) {
+    if (job.status === 'QUEUED') await addInitial(queue, job);
+    else
+      await enqueueDelayed(
+        queue,
+        { jobId: job.id, requestId: job.requestId, attemptHint: job.attemptCount + 1 },
+        `a${job.attemptCount + 1}`,
+        job.nextAttemptAt ? job.nextAttemptAt.getTime() - Date.now() : 0,
+      );
+    await markQueued(db, job.id);
+    out.push({ jobId: job.id, requestId: job.requestId, status: job.status });
+  }
+  return out;
+}
+
+/** 재시도·잠금 대기 재투입(지연). jobId 에 접미사를 붙여 이전 큐 항목과 충돌하지 않게 한다. 등록 성공 후 호출자가 markQueued 한다. */
 export async function enqueueDelayed(
   queue: Queue<CollectionJobData>,
   data: CollectionJobData,
@@ -71,7 +146,7 @@ export async function enqueueDelayed(
   delayMs: number,
 ): Promise<void> {
   await queue.add('collect', data, {
-    jobId: `req__${safeId(data.requestId)}__${suffix}`,
+    jobId: `${initialJobId(data.requestId)}__${suffix}`,
     delay: Math.max(0, delayMs),
     removeOnComplete: 1000,
     removeOnFail: 1000,

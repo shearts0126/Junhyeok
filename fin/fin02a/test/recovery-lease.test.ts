@@ -63,8 +63,9 @@ describe('복구와 소유권', () => {
       expectedStartedAt: cand!.run.startedAt,
       actor: 'ops',
       reason: '오래됨',
+      verified: 'OWNER_TERMINATED',
     });
-    expect(refused).toEqual({ applied: false, reason: 'OWNER_ALIVE' }); // 소유자 heartbeat 최근 → 종료하지 않음
+    expect(refused).toEqual({ applied: false, reason: 'OWNER_ALIVE' }); // 소유자 heartbeat 최근 → 담당자 확인과 모순, 종료하지 않음
     // heartbeat 가 오래된 경우(worker 사망 확인)에만 마감·해제 가능
     await pool.query(
       "UPDATE fin_run_leases SET heartbeat_at = now() - interval '10 minutes' WHERE source_account_id = $1",
@@ -88,11 +89,31 @@ describe('복구와 소유권', () => {
           'ops',
           '--reason',
           '프로세스 종료 확인',
+          '--verified',
+          'OWNER_TERMINATED',
         ],
         env,
         io,
       ),
     ).toBe(3); // 드라이런
+    expect(
+      await runRecoveryCli(
+        [
+          'release-lease',
+          '--account',
+          acc.id,
+          '--generation',
+          '1',
+          '--actor',
+          'ops',
+          '--reason',
+          'x',
+          '--confirm',
+        ],
+        env,
+        io,
+      ),
+    ).toBe(2); // --verified 없이는 사용법 오류(적용 없음)
     expect(
       (
         await pool.query('SELECT released_at FROM fin_run_leases WHERE source_account_id = $1', [
@@ -112,6 +133,8 @@ describe('복구와 소유권', () => {
           'ops',
           '--reason',
           'x',
+          '--verified',
+          'OWNER_TERMINATED',
           '--confirm',
         ],
         env,
@@ -130,6 +153,8 @@ describe('복구와 소유권', () => {
           'ops',
           '--reason',
           '프로세스 종료 확인',
+          '--verified',
+          'OWNER_TERMINATED',
           '--confirm',
         ],
         env,
@@ -141,6 +166,7 @@ describe('복구와 소유권', () => {
       expectedStartedAt: cand!.run.startedAt,
       actor: 'ops',
       reason: '프로세스 종료·활성 작업 부재 확인',
+      verified: 'NO_ACTIVE_WORK',
     });
     expect(applied.applied).toBe(true);
     const preview = JSON.parse(

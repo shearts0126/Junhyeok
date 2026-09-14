@@ -20,8 +20,38 @@ import type { ObservationInput } from '../records/observe';
  * 필드 확인 전까지 asOfDateBasis='REQUESTED' 로 표시), 통화 단위(JPY(100) 등 100 단위 표기 규칙 원문 미확인 → cur_unit 원문 보존).
  *
  * 환율은 통화·기준일·환율 종류·값·출처로 구분해 저장한다. 대시보드에서 쓸 최종 환율 종류 선택과 은행 현금 환산 연결은 이 범위에 없다.
- * 이 수집기는 다섯 단계를 모두 구현하므로 정기 실행 등록이 가능하지만, 실제 호출은 인증키·허용된 네트워크가 있을 때만 성공한다.
+ *
+ * 명세 확인 수준: specStatus = 'SNIPPET_ONLY'. 다섯 단계가 구현돼 있어도(구현 완전성) 실제 공급자 적합성은 확인되지 않았으므로
+ * 정기(SCHEDULED) 등록·실행은 파이프라인 게이트(SCHEDULED_REQUIRES_CONFIRMED_SPEC)와 enqueue 게이트(NOT_SCHEDULABLE)가
+ * 외부 요청 전에 차단한다. 검증(VERIFICATION) 모드로만 실행된다. 공식 원문 확인 후 SPEC_EVIDENCE 를 갱신하고 specStatus 를
+ * 'OFFICIAL_TEXT_CONFIRMED' 로 바꾸는 것이 해제 조건이며, 인증키만으로 해제되지 않는다(공식 명세·허용 네트워크·인증·파싱·대조 검증 전부 필요).
  */
+
+/** 명세 근거 기록(수집기 메타데이터). 근거가 없는 항목은 추정 구현하지 않고 여기 남긴다. */
+export const SPEC_EVIDENCE = {
+  provider: '한국수출입은행 환율 Open API (AP01)',
+  checkedOn: '2026-09-14',
+  basis: 'SEARCH_SNIPPET' as const, // 공식 페이지·공공데이터포털 검색 발췌. 원문 열람 없음(본 환경 egress 차단)
+  officialTextReviewed: false,
+  officialUrls: [
+    'https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C',
+    'https://www.data.go.kr/data/3068846/openapi.do',
+  ],
+  confirmedBySnippet: [
+    'REQUEST_URL_AND_PARAMS(authkey, searchdate=YYYYMMDD, data=AP01)',
+    'RESPONSE_FIELD_NAMES(result, cur_unit, cur_nm, ttb, tts, deal_bas_r, bkpr, yy_efee_r, ten_dd_efee_r, kftc_deal_bas_r, kftc_bkpr)',
+    'RESULT_CODES(1 성공, 2 DATA 코드 오류, 3 인증코드 오류, 4 일일제한 초과)',
+  ],
+  /** 원문 근거가 없어 확정하지 않은 항목. 값은 원문 보존(cur_unit, rawValue)하고 해석은 후속 확인 대상 */
+  unverified: [
+    'RATE_TYPE_SEMANTICS: ttb/tts/deal_bas_r/bkpr/kftc_* 각 종류의 정의·용도(어느 값을 환산에 쓸지 미결정)',
+    'CURRENCY_UNIT_RULE: JPY(100) 등 100 단위 표기 규칙과 값의 단위',
+    'AS_OF_DATE_FIELD: 응답에 기준일 필드가 있는지(없다고 가정하지 않음, asOfDateBasis=REQUESTED 로 표시)',
+    'EMPTY_RESPONSE_MEANING: 비영업일·11시 이전 빈 배열의 의미(0건으로만 기록, 전 영업일 값 대체 없음)',
+    'RESULT_CODE_SEMANTICS: 코드가 원소마다 오는지·오류 시 배열 형태인지(첫 원소 기준으로만 판정)',
+    'NUMBER_FORMAT: 콤마·소수 자릿수 규칙(콤마 제거 후 십진 문자열로만 보존)',
+  ],
+};
 
 export const KOREAEXIM_SOURCE_SYSTEM = 'FX_KOREAEXIM';
 export const KOREAEXIM_ENDPOINT = 'GET /site/program/financial/exchangeJSON/{searchdate}/AP01';
@@ -80,6 +110,9 @@ const defaultFetch: KoreaeximFetch = async (url) => {
 
 export class KoreaeximFxCollector {
   readonly sourceSystem = KOREAEXIM_SOURCE_SYSTEM;
+  /** 검색 발췌 기준 구현: 정기 실행 불가(검증 모드 전용). 공식 원문 확인 후에만 변경한다 */
+  readonly specStatus = 'SNIPPET_ONLY' as const;
+  readonly specEvidence = SPEC_EVIDENCE;
   readonly endpointTemplates = [KOREAEXIM_ENDPOINT] as const;
   readonly implementedStages = [
     'authenticate',

@@ -1,15 +1,18 @@
 import 'reflect-metadata';
 
-import { mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import type pg from 'pg';
+import pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { ConfigError, loadConfig } from '../src/app/config';
 import { createApp } from '../src/app/main';
+import { migrate } from '../src/db/migrate';
+import { REQUIRED_MIGRATIONS } from '../src/db/migrations';
 import { startRun } from '../src/runs/repo';
 import { runRecoveryCli } from '../scripts/recovery';
 
@@ -137,6 +140,71 @@ describe('liveness / readiness', () => {
   });
 });
 
+describe('readiness 와 마이그레이션 집합', () => {
+  const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'db', 'migrations');
+
+  it('REQUIRED_MIGRATIONS 는 db/migrations 디렉터리와 정확히 일치한다', () => {
+    const files = readdirSync(migrationsDir)
+      .filter((f) => f.endsWith('.sql'))
+      .sort();
+    expect([...REQUIRED_MIGRATIONS]).toEqual(files);
+  });
+
+  it('이전 단계 스키마(0004 까지)만 적용된 DB 는 개수가 같아도 ready 503 SCHEMA_OUTDATED', async () => {
+    const adminUrl = process.env['FIN02A_DATABASE_URL'] ?? '';
+    const dbName = `fin02a_outdated_${process.pid}_${Date.now()}`;
+    const admin = new pg.Client({ connectionString: adminUrl });
+    await admin.connect();
+    await admin.query(`CREATE DATABASE "${dbName}"`);
+    await admin.end();
+    const url = new URL(adminUrl);
+    url.pathname = `/${dbName}`;
+    const oldPool = new pg.Pool({ connectionString: url.toString(), max: 2 });
+    try {
+      // 0001~0004 + 앱이 모르는 파일 하나 → 기록 개수(5)는 REQUIRED_MIGRATIONS(5)와 같지만 집합이 다르다
+      const partial = mkdtempSync(join(tmpdir(), 'fin02a-mig-partial-'));
+      for (const f of REQUIRED_MIGRATIONS.slice(0, 4))
+        copyFileSync(join(migrationsDir, f), join(partial, f));
+      writeFileSync(join(partial, '0099_unknown_to_app.sql'), 'SELECT 1;\n');
+      const applied = await migrate(oldPool, partial);
+      expect(applied).toHaveLength(5);
+      const app = await createApp(
+        loadConfig({ FIN02A_DATABASE_URL: url.toString(), FIN02A_RAW_STORE_DIR: rawDir }),
+      );
+      try {
+        const base = await listen(app);
+        const ready = await fetch(`${base}/health/ready`);
+        expect(ready.status).toBe(503);
+        const body = (await ready.json()) as { checks: Record<string, unknown>[] };
+        expect(body.checks[0]).toEqual({
+          name: 'database',
+          status: 'down',
+          code: 'SCHEMA_OUTDATED',
+          missingMigrations: 1,
+        });
+        expect(JSON.stringify(body)).not.toContain(dbName);
+        expect(JSON.stringify(body)).not.toContain('0005');
+        // 누락분을 적용하면 ready
+        await migrate(oldPool, migrationsDir);
+        const ok = await fetch(`${base}/health/ready`);
+        expect(ok.status).toBe(200);
+        expect(await ok.json()).toEqual({
+          status: 'ready',
+          checks: [{ name: 'database', status: 'ok', migrations: REQUIRED_MIGRATIONS.length }],
+        });
+      } finally {
+        await app.close();
+      }
+    } finally {
+      await oldPool.end();
+      const drop = new pg.Client({ connectionString: adminUrl });
+      await drop.connect();
+      await drop.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
+      await drop.end();
+    }
+  });
+});
+
 describe('수동 복구 CLI', () => {
   it('preview 는 상태를 바꾸지 않고, close 는 --confirm 없이는 드라이런, --confirm 으로만 적용한다', async () => {
     const acc = await seedAccount(pool);
@@ -176,6 +244,8 @@ describe('수동 복구 CLI', () => {
           'ops-a',
           '--reason',
           '프로세스 종료 확인',
+          '--verified',
+          'OWNER_TERMINATED',
         ],
         env,
         io,
@@ -206,6 +276,26 @@ describe('수동 복구 CLI', () => {
         env,
         io,
       ),
+    ).toBe(2); // --verified 없음: 사용법 오류, 변경 없음
+    expect(
+      await runRecoveryCli(
+        [
+          'close',
+          '--run',
+          stale.id,
+          '--started-at',
+          startedAt,
+          '--actor',
+          'ops-a',
+          '--reason',
+          '프로세스 종료 확인',
+          '--verified',
+          'OWNER_TERMINATED',
+          '--confirm',
+        ],
+        env,
+        io,
+      ),
     ).toBe(0);
     const row = await pool.query<{ status: string; closed_by: string; error_code: string }>(
       'SELECT status, closed_by, error_code FROM fin_source_runs WHERE id = $1',
@@ -228,6 +318,8 @@ describe('수동 복구 CLI', () => {
           'ops-a',
           '--reason',
           '재시도',
+          '--verified',
+          'OWNER_TERMINATED',
           '--confirm',
         ],
         env,

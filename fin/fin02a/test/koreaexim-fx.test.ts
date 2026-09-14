@@ -6,20 +6,24 @@ import { fileURLToPath } from 'node:url';
 import type pg from 'pg';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { isSchedulable, runCollection } from '../src/collector/pipeline';
+import { hasAllStages, isSchedulable, runCollection } from '../src/collector/pipeline';
 import {
   KOREAEXIM_ENDPOINT,
   KoreaeximFxCollector,
+  SPEC_EVIDENCE,
   type FxObservationPayload,
 } from '../src/collectors/koreaexim-fx';
+import { enqueueCollection } from '../src/queue/queue';
+import { CollectorRegistry } from '../src/queue/registry';
 import { ensureLegalEntity, ensureSourceSystem, createSourceAccount } from '../src/identity/repo';
 import { FsRawStore } from '../src/raw/store';
 
 import { secretsWith, testPool, truncateAll } from './helpers';
 
 /**
- * 한국수출입은행 환율 수집기: 공식 샘플이 아닌 "발췌 기준 가상 응답" 으로 요청→파싱→정규화→대조→저장 경로를 검증한다.
- * 실수집(실제 인증키·허용된 네트워크)은 미검증이며 이 시험 통과는 실제 연동 성공을 뜻하지 않는다.
+ * 한국수출입은행 환율 수집기 — 가상 응답 기반 내부 시험. 공식 샘플이 아닌 "발췌 기준 가상 응답" 으로
+ * 요청→파싱→정규화→대조→저장 경로가 파이프라인 규칙대로 동작하는지만 검증한다(검증 모드).
+ * 실수집(공식 명세 원문·허용된 네트워크·실제 인증·실응답 파싱·대조)은 미검증이며 이 시험 통과는 실제 연동 성공을 뜻하지 않는다.
  */
 
 const SAMPLE = join(
@@ -30,7 +34,7 @@ const SAMPLE = join(
 );
 let pool: pg.Pool;
 let rawDir: string;
-const period = { periodFrom: '2026-09-11', periodTo: '2026-09-11' };
+const period = { periodFrom: '2026-09-11', periodTo: '2026-09-11', mode: 'VERIFICATION' as const };
 
 function fetchReturning(status: number, body: unknown, seen: string[] = []) {
   return async (url: string) => {
@@ -71,7 +75,56 @@ beforeEach(async () => {
 });
 
 describe('한국수출입은행 환율 수집기(발췌 기준 가상 응답)', () => {
-  it('다섯 단계 구현 → 정기 실행 등록 가능. 가상 응답 3통화 × 6종류 = 18건 정규화·대조·저장, 인증키는 어디에도 남지 않음', async () => {
+  it('명세 미확인(SNIPPET_ONLY): 다섯 단계가 있어도 정기 실행은 외부 요청 전에 거부되고, 정기 enqueue 도 거부된다', async () => {
+    const seen: string[] = [];
+    const c = new KoreaeximFxCollector(fetchReturning(200, [], seen));
+    expect(c.specStatus).toBe('SNIPPET_ONLY');
+    expect(c.specEvidence).toBe(SPEC_EVIDENCE);
+    expect(SPEC_EVIDENCE.officialTextReviewed).toBe(false);
+    expect(SPEC_EVIDENCE.unverified.length).toBeGreaterThanOrEqual(5);
+    expect(hasAllStages(c)).toBe(true); // 구현 완전성
+    expect(isSchedulable(c)).toBe(false); // 실제 공급자 적합성 미확인 → 정기 등록 불가
+    const acc = await fxAccount();
+    const r = await runCollection(deps(), c, {
+      sourceAccountId: acc,
+      periodFrom: period.periodFrom,
+      periodTo: period.periodTo,
+      mode: 'SCHEDULED',
+    });
+    expect([r.run.status, r.run.errorCode, r.run.failureKind]).toEqual([
+      'FAILED',
+      'SCHEDULED_REQUIRES_CONFIRMED_SPEC',
+      'PERMANENT',
+    ]);
+    expect(seen).toHaveLength(0); // 외부 요청 없음
+    expect(Object.values(r.run.stages).every((st) => st?.outcome === 'SKIPPED')).toBe(true);
+    // enqueue 게이트: 레지스트리를 주면 정기 모드 등록 자체를 거부한다(DB 작업 없음)
+    const registry = new CollectorRegistry().register('koreaexim-fx', c);
+    const stubQueue = { add: async () => undefined } as unknown as Parameters<
+      typeof enqueueCollection
+    >[1];
+    expect(
+      await enqueueCollection(
+        pool,
+        stubQueue,
+        {
+          requestId: 'fx-sched-1',
+          sourceAccountId: acc,
+          collectorKey: 'koreaexim-fx',
+          periodFrom: period.periodFrom,
+          periodTo: period.periodTo,
+          mode: 'SCHEDULED',
+        },
+        registry,
+      ),
+    ).toEqual({ enqueued: false, reason: 'NOT_SCHEDULABLE' });
+    expect((await pool.query('SELECT count(*)::int AS n FROM fin_collection_jobs')).rows[0].n).toBe(
+      0,
+    );
+    await pool.query('TRUNCATE fin_collection_jobs CASCADE');
+  });
+
+  it('가상 응답 3통화 × 6종류 = 18건 정규화·대조·저장(검증 모드), 인증키는 어디에도 남지 않음', async () => {
     const sample = JSON.parse(readFileSync(SAMPLE, 'utf8')) as {
       _meta: { synthetic: boolean };
       data: unknown;
@@ -79,7 +132,6 @@ describe('한국수출입은행 환율 수집기(발췌 기준 가상 응답)', 
     expect(sample._meta.synthetic).toBe(true);
     const seen: string[] = [];
     const c = new KoreaeximFxCollector(fetchReturning(200, sample.data, seen));
-    expect(isSchedulable(c)).toBe(true);
     const acc = await fxAccount();
     const r = await runCollection(deps(), c, { sourceAccountId: acc, ...period });
     expect(r.run.status).toBe('SUCCEEDED');
@@ -126,6 +178,7 @@ describe('한국수출입은행 환율 수집기(발췌 기준 가상 응답)', 
       sourceAccountId: acc,
       periodFrom: '2026-09-13',
       periodTo: '2026-09-13',
+      mode: 'VERIFICATION',
     });
     expect(r.run.status).toBe('SUCCEEDED');
     expect(r.run.receivedCount).toBe(0);

@@ -1,16 +1,15 @@
 /**
  * 별도 worker 프로세스. 정기 스케줄 활성화는 하지 않는다(큐에 들어온 작업만 처리).
  *   FIN02A_DATABASE_URL=… FIN02A_REDIS_URL=… pnpm worker
- * 레지스트리에 등록된 수집기 키만 처리한다. 현재 등록: koreaexim-fx(실제 호출은 자격·네트워크 있을 때만).
+ * 레지스트리(src/collectors/index.ts)에 등록된 수집기 키만 처리한다. 현재 등록: koreaexim-fx(검증 모드 전용, 실제 호출은 자격·네트워크 있을 때만).
  */
 import { hostname } from 'node:os';
 
 import { loadConfig } from '../src/app/config';
-import { KoreaeximFxCollector } from '../src/collectors/koreaexim-fx';
+import { defaultRegistry } from '../src/collectors/index';
 import { createPool } from '../src/db/client';
 import { FsRawStore } from '../src/raw/store';
 import { createQueue, createRedis } from '../src/queue/queue';
-import { CollectorRegistry } from '../src/queue/registry';
 import { createCollectionWorker } from '../src/queue/worker';
 
 async function main(): Promise<void> {
@@ -20,7 +19,7 @@ async function main(): Promise<void> {
   const pool = createPool(cfg.databaseUrl);
   const connection = createRedis(redisUrl);
   const queue = createQueue(connection);
-  const registry = new CollectorRegistry().register('koreaexim-fx', new KoreaeximFxCollector());
+  const registry = defaultRegistry();
   const workerId = `${hostname()}:${process.pid}`;
   const worker = createCollectionWorker({
     pool,

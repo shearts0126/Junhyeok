@@ -78,8 +78,17 @@ export interface ReconcileSummary {
   normalizedCount: number;
 }
 
+/**
+ * 공급자 명세 확인 수준. 정기 자동 수집(SCHEDULED)은 OFFICIAL_TEXT_CONFIRMED 또는 TEST_FIXTURE(외부 공급자 없음)만 허용한다.
+ * SNIPPET_ONLY(검색 발췌·2차 자료만으로 구현)는 검증(VERIFICATION) 모드에서만 실행되며, 구현된 단계가 다섯 개여도
+ * "실제 공급자 적합성" 은 확인되지 않은 것으로 취급한다.
+ */
+export type SpecStatus = 'OFFICIAL_TEXT_CONFIRMED' | 'SNIPPET_ONLY' | 'TEST_FIXTURE';
+
 export interface Collector<Auth = unknown, Parsed = unknown> {
   readonly sourceSystem: string;
+  /** 명세 확인 수준(위 SpecStatus). 수집기 메타데이터로 기록하며 파이프라인의 정기 실행 게이트가 검사한다. */
+  readonly specStatus: SpecStatus;
   /**
    * 이 수집기가 영속화에 쓰는 엔드포인트 템플릿 상수 목록. RawResponse.endpoint 는 이 목록의 원소와 정확히 일치해야 한다.
    * 요청 시점에 문자열을 조립하면(값 삽입) 목록과 달라져 거부되므로, 인증키·계정 ID 가 요약에 들어갈 수 없다(구조적 경계).

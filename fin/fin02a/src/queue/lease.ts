@@ -1,4 +1,9 @@
-import type { Queryable } from '../db/client';
+import type pg from 'pg';
+
+import { withTx, type Queryable } from '../db/client';
+
+/** heartbeat 가 이 시간 안이면 소유자가 살아 있다고 본다(기본 2분). 노후는 확인 후보 기준일 뿐 자동 마감·탈취 근거가 아니다. */
+export const DEFAULT_LEASE_STALE_MS = 2 * 60 * 1000;
 
 /**
  * 실행 소유권(잠금 + heartbeat + 세대값).
@@ -92,7 +97,7 @@ export interface LeaseAnomaly {
 /** 소유권 이상 후보: 해제되지 않았고 heartbeat 가 임계(기본 2분) 이상 멈춘 잠금. 조회만 하며 탈취·마감하지 않는다. */
 export async function listLeaseAnomalies(
   db: Queryable,
-  staleMs = 2 * 60 * 1000,
+  staleMs = DEFAULT_LEASE_STALE_MS,
   now = new Date(),
 ): Promise<LeaseAnomaly[]> {
   const cutoff = new Date(now.getTime() - staleMs);
@@ -121,22 +126,105 @@ export async function listLeaseAnomalies(
   }));
 }
 
+/** 담당자가 명시적으로 입력하는 확인 종류. heartbeat 노후는 확인 후보를 만들 뿐 이 입력을 대체하지 않는다. */
+export type ManualVerification = 'OWNER_TERMINATED' | 'NO_ACTIVE_WORK';
+export const MANUAL_VERIFICATIONS: readonly ManualVerification[] = [
+  'OWNER_TERMINATED',
+  'NO_ACTIVE_WORK',
+];
+
+export interface LeaseRow {
+  sourceAccountId: string;
+  generation: number;
+  workerId: string | null;
+  jobId: string | null;
+  runId: string | null;
+  heartbeatAt: Date | null;
+  releasedAt: Date | null;
+}
+
 /**
- * 담당자 확인 후 수동 해제(복구 절차). 이전 소유자가 죽었음을 사람이 확인한 경우에만 호출한다.
- * 세대값을 지정해 조회 시점 이후 바뀐 잠금(다른 worker 가 새로 획득)을 해제하지 않는다.
+ * 잠금 행을 FOR UPDATE 로 잠그고 읽는다. 잠금 순서는 항상 "잠금 행 → 실행 행" 이다:
+ * worker 커밋(assertLeaseHeld → finishRun), 소유권 변경(acquireLease), 수동 복구(closeStaleRunManually)가 같은 순서를 쓴다.
+ */
+export async function lockLease(tx: Queryable, sourceAccountId: string): Promise<LeaseRow | null> {
+  const r = await tx.query<{
+    source_account_id: string;
+    generation: string;
+    worker_id: string | null;
+    job_id: string | null;
+    run_id: string | null;
+    heartbeat_at: Date | null;
+    released_at: Date | null;
+  }>(
+    `SELECT source_account_id, generation::text, worker_id, job_id, run_id, heartbeat_at, released_at
+     FROM fin_run_leases WHERE source_account_id = $1 FOR UPDATE`,
+    [sourceAccountId],
+  );
+  const x = r.rows[0];
+  if (!x) return null;
+  return {
+    sourceAccountId: x.source_account_id,
+    generation: Number(x.generation),
+    workerId: x.worker_id,
+    jobId: x.job_id,
+    runId: x.run_id,
+    heartbeatAt: x.heartbeat_at,
+    releasedAt: x.released_at,
+  };
+}
+
+export type ManualReleaseResult =
+  | { applied: true; generation: number }
+  | {
+      applied: false;
+      reason:
+        | 'CONFIRMATION_REQUIRED'
+        | 'NOT_FOUND'
+        | 'ALREADY_RELEASED'
+        | 'GENERATION_CHANGED'
+        | 'OWNER_ALIVE';
+    };
+
+/**
+ * 담당자 확인 후 수동 해제(복구 절차). 잠금 행을 잠근 채 세대값 일치·미해제·heartbeat 노후를 재확인하고 해제한다.
+ * - verified(담당자의 명시적 확인 입력)가 없으면 아무것도 하지 않는다.
+ * - 조회 시점 이후 다른 worker 가 새로 획득했으면(세대값 변경) 해제하지 않는다.
+ * - heartbeat 가 최근이면 담당자 확인과 모순되므로 해제하지 않는다(OWNER_ALIVE).
  */
 export async function releaseLeaseManually(
-  db: Queryable,
-  input: { sourceAccountId: string; expectedGeneration: number; actor: string; reason: string },
-): Promise<boolean> {
-  const r = await db.query(
-    `UPDATE fin_run_leases SET released_at = now(), release_reason = $3
-     WHERE source_account_id = $1 AND generation = $2 AND released_at IS NULL`,
-    [
-      input.sourceAccountId,
-      input.expectedGeneration,
-      `MANUAL:${input.actor.slice(0, 32)}:${input.reason.slice(0, 24)}`,
-    ],
-  );
-  return (r.rowCount ?? 0) === 1;
+  pool: pg.Pool,
+  input: {
+    sourceAccountId: string;
+    expectedGeneration: number;
+    actor: string;
+    reason: string;
+    verified?: ManualVerification;
+    leaseStaleMs?: number;
+  },
+): Promise<ManualReleaseResult> {
+  if (!input.verified) return { applied: false, reason: 'CONFIRMATION_REQUIRED' };
+  return withTx(pool, async (tx) => {
+    const lease = await lockLease(tx, input.sourceAccountId);
+    if (!lease) return { applied: false, reason: 'NOT_FOUND' };
+    if (lease.generation !== input.expectedGeneration)
+      return { applied: false, reason: 'GENERATION_CHANGED' };
+    if (lease.releasedAt) return { applied: false, reason: 'ALREADY_RELEASED' };
+    if (
+      lease.heartbeatAt &&
+      Date.now() - lease.heartbeatAt.getTime() < (input.leaseStaleMs ?? DEFAULT_LEASE_STALE_MS)
+    )
+      return { applied: false, reason: 'OWNER_ALIVE' };
+    const r = await tx.query(
+      `UPDATE fin_run_leases SET released_at = now(), release_reason = $3
+       WHERE source_account_id = $1 AND generation = $2 AND released_at IS NULL`,
+      [
+        input.sourceAccountId,
+        input.expectedGeneration,
+        `MANUAL:${input.verified}:${input.actor.slice(0, 24)}:${input.reason.slice(0, 16)}`,
+      ],
+    );
+    if ((r.rowCount ?? 0) !== 1) return { applied: false, reason: 'GENERATION_CHANGED' };
+    return { applied: true, generation: lease.generation };
+  });
 }

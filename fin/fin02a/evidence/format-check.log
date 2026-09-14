@@ -1,11 +1,1 @@
-# cwd: /home/user/Junhyeok/fin/fin02a
-# command: pnpm format:check
-# started: 2026-09-14T13:08:22Z
-
-> fin-dashboard-core@0.0.1 format:check /home/user/Junhyeok/fin/fin02a
-> prettier --check .
-
-Checking formatting...
 All matched files use Prettier code style!
-# exit code: 0
-# finished: 2026-09-14T13:08:24Z

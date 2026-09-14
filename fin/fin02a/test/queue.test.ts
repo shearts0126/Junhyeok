@@ -17,11 +17,14 @@ import {
 import { FsRawStore } from '../src/raw/store';
 import { getJob, listAttempts } from '../src/queue/jobs';
 import { acquireLease, listLeaseAnomalies, releaseLeaseManually } from '../src/queue/lease';
+import type { CollectionJob } from '../src/queue/jobs';
 import {
   createQueue,
   createRedis,
   enqueueCollection,
   type CollectionJobData,
+  type EnqueueInput,
+  type EnqueueResult,
 } from '../src/queue/queue';
 import { CollectorRegistry } from '../src/queue/registry';
 import { decide, DEFAULT_RETRY_POLICY } from '../src/queue/retry';
@@ -80,6 +83,14 @@ beforeEach(async () => {
 afterEach(async () => {
   for (const w of workers.splice(0)) await w.close(true);
 });
+
+type EnqueuedOrDuplicate = Extract<EnqueueResult, { job: CollectionJob }>;
+/** 시험 편의: 등록 또는 같은 요청 ID 재전송 결과만 기대한다(충돌·등록 실패는 시험 실패). */
+async function enq(input: EnqueueInput): Promise<EnqueuedOrDuplicate> {
+  const r = await enqueueCollection(pool, queue, input);
+  if (!('job' in r)) throw new Error(`unexpected enqueue result: ${r.reason}`);
+  return r;
+}
 
 function deps(registry: CollectorRegistry, over: Partial<WorkerDeps> = {}): WorkerDeps {
   return {
@@ -170,14 +181,14 @@ describe('FIN-02C 검증 기준', () => {
   it('1. 같은 요청 ID 를 두 번 넣어도 중복 처리되지 않는다', async () => {
     const acc = await seedAccount(pool);
     const registry = new CollectorRegistry().register('fx', new FixtureCollector({ items }));
-    const a = await enqueueCollection(pool, queue, {
+    const a = await enq({
       requestId: 'req-1',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
       ...period,
       mode: 'SCHEDULED',
     });
-    const b = await enqueueCollection(pool, queue, {
+    const b = await enq({
       requestId: 'req-1',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -202,14 +213,14 @@ describe('FIN-02C 검증 기준', () => {
   it('2. 새 요청 ID 를 사용한 의도적 재수집은 허용된다', async () => {
     const acc = await seedAccount(pool);
     const registry = new CollectorRegistry().register('fx', new FixtureCollector({ items }));
-    const a = await enqueueCollection(pool, queue, {
+    const a = await enq({
       requestId: 'req-2a',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
       ...period,
       mode: 'SCHEDULED',
     });
-    const b = await enqueueCollection(pool, queue, {
+    const b = await enq({
       requestId: 'req-2b',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -233,14 +244,14 @@ describe('FIN-02C 검증 기준', () => {
     const acc = await seedAccount(pool);
     const slow = new SlowCollector(250);
     const registry = new CollectorRegistry().register('slow', slow);
-    const a = await enqueueCollection(pool, queue, {
+    const a = await enq({
       requestId: 'req-3a',
       sourceAccountId: acc.id,
       collectorKey: 'slow',
       ...period,
       mode: 'SCHEDULED',
     });
-    const b = await enqueueCollection(pool, queue, {
+    const b = await enq({
       requestId: 'req-3b',
       sourceAccountId: acc.id,
       collectorKey: 'slow',
@@ -271,14 +282,14 @@ describe('FIN-02C 검증 기준', () => {
     const b = await seedAccount(pool, { entity: 'TEST_ENTITY_B', alias: 'B' });
     const slow = new SlowCollector(300);
     const registry = new CollectorRegistry().register('slow', slow);
-    const ja = await enqueueCollection(pool, queue, {
+    const ja = await enq({
       requestId: 'req-4a',
       sourceAccountId: a.id,
       collectorKey: 'slow',
       ...period,
       mode: 'SCHEDULED',
     });
-    const jb = await enqueueCollection(pool, queue, {
+    const jb = await enq({
       requestId: 'req-4b',
       sourceAccountId: b.id,
       collectorKey: 'slow',
@@ -344,7 +355,7 @@ describe('FIN-02C 검증 기준', () => {
       ).rows[0].released_at,
     ).toBeNull();
     const registry = new CollectorRegistry().register('fx', new FixtureCollector({ items }));
-    const j = await enqueueCollection(pool, queue, {
+    const j = await enq({
       requestId: 'req-5b',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -383,20 +394,25 @@ describe('FIN-02C 검증 기준', () => {
       jobId: jobA.rows[0]!.id,
     });
     await new Promise((r) => setTimeout(r, 50));
-    // 담당자가 이전 worker 사망을 확인하고 잠금을 수동 해제 → 새 worker 가 세대 2 로 획득해 정상 처리
+    // 담당자가 이전 worker 사망(heartbeat 정지)을 확인하고 잠금을 수동 해제 → 새 worker 가 세대 2 로 획득해 정상 처리
+    await pool.query(
+      "UPDATE fin_run_leases SET heartbeat_at = now() - interval '10 minutes' WHERE source_account_id = $1",
+      [acc.id],
+    );
     expect(
       await releaseLeaseManually(pool, {
         sourceAccountId: acc.id,
         expectedGeneration: 1,
         actor: 'ops',
         reason: 'dead',
+        verified: 'OWNER_TERMINATED',
       }),
-    ).toBe(true);
+    ).toMatchObject({ applied: true, generation: 1 });
     const registry = new CollectorRegistry().register(
       'fx',
       new FixtureCollector({ items: [{ key: 'TX-1', data: { amount: 'NEW' } }] }),
     );
-    const jobB = await enqueueCollection(pool, queue, {
+    const jobB = await enq({
       requestId: 'req-6b',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -442,7 +458,7 @@ describe('FIN-02C 검증 기준', () => {
     const acc = await seedAccount(pool);
     const flaky = new FlakyCollector(2);
     const registry = new CollectorRegistry().register('flaky', flaky);
-    const j = await enqueueCollection(pool, queue, {
+    const j = await enq({
       requestId: 'req-7',
       sourceAccountId: acc.id,
       collectorKey: 'flaky',
@@ -460,7 +476,7 @@ describe('FIN-02C 검증 기준', () => {
     // 4회 실패면 3회에서 멈춘다
     const always = new FlakyCollector(99);
     registry.register('always', always);
-    const j2 = await enqueueCollection(pool, queue, {
+    const j2 = await enq({
       requestId: 'req-7b',
       sourceAccountId: acc.id,
       collectorKey: 'always',
@@ -509,7 +525,7 @@ describe('FIN-02C 검증 기준', () => {
       .register('fx', counting)
       .register('ni', new FixtureCollector({ items, validateNotImplemented: true }));
     const d = deps(registry, { secrets: secretsWith({}) }); // 자격 없음
-    const j1 = await enqueueCollection(pool, queue, {
+    const j1 = await enq({
       requestId: 'req-8a',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -523,7 +539,7 @@ describe('FIN-02C 검증 기준', () => {
     });
     expect(await listAttempts(pool, j1.job.id)).toHaveLength(1);
     expect(counting.calls).toBe(0); // 외부 요청 없음
-    const j2 = await enqueueCollection(pool, queue, {
+    const j2 = await enq({
       requestId: 'req-8b',
       sourceAccountId: acc.id,
       collectorKey: 'ni',
@@ -540,7 +556,7 @@ describe('FIN-02C 검증 기준', () => {
   it('9. 로그 장애가 작업 성공 결과를 변경하지 않는다', async () => {
     const acc = await seedAccount(pool);
     const registry = new CollectorRegistry().register('fx', new FixtureCollector({ items }));
-    const j = await enqueueCollection(pool, queue, {
+    const j = await enq({
       requestId: 'req-9',
       sourceAccountId: acc.id,
       collectorKey: 'fx',
@@ -573,7 +589,7 @@ describe('FIN-02C 검증 기준', () => {
       implementedStages: ['authenticate', 'request', 'validate', 'normalize'],
     }); // 대조 미구현 선언
     const registry = new CollectorRegistry().register('partial', partial);
-    const j = await enqueueCollection(pool, queue, {
+    const j = await enq({
       requestId: 'req-10',
       sourceAccountId: acc.id,
       collectorKey: 'partial',
@@ -590,7 +606,7 @@ describe('FIN-02C 검증 기준', () => {
     expect(run.rows[0]!.error_code).toBe('SCHEDULED_REQUIRES_COMPLETE_COLLECTOR');
     expect(run.rows[0]!.stages['request']!.outcome).toBe('SKIPPED');
     // 등록되지 않은 수집기 키도 외부 요청 없이 거부
-    const j2 = await enqueueCollection(pool, queue, {
+    const j2 = await enq({
       requestId: 'req-10b',
       sourceAccountId: acc.id,
       collectorKey: 'nope',

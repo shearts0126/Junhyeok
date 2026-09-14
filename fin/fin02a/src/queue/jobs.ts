@@ -32,10 +32,12 @@ export interface CollectionJob {
   maxAttempts: number;
   currentRunId: string | null;
   nextAttemptAt: Date | null;
+  /** 큐(Redis) 등록이 실제로 성공한 시각. null 이면 "DB 에만 있는 작업" 후보(resyncUnqueuedJobs 대상) */
+  queuedAt: Date | null;
 }
 
 const COLS =
-  'id, request_id, source_account_id, collector_key, period_from::text, period_to::text, mode, status, attempt_count, max_attempts, current_run_id, next_attempt_at';
+  'id, request_id, source_account_id, collector_key, period_from::text, period_to::text, mode, status, attempt_count, max_attempts, current_run_id, next_attempt_at, queued_at';
 
 interface Row {
   id: string;
@@ -50,6 +52,7 @@ interface Row {
   max_attempts: number;
   current_run_id: string | null;
   next_attempt_at: Date | null;
+  queued_at: Date | null;
 }
 const toJob = (r: Row): CollectionJob => ({
   id: r.id,
@@ -64,6 +67,7 @@ const toJob = (r: Row): CollectionJob => ({
   maxAttempts: r.max_attempts,
   currentRunId: r.current_run_id,
   nextAttemptAt: r.next_attempt_at,
+  queuedAt: r.queued_at,
 });
 
 export type CreateJobResult =
@@ -167,24 +171,43 @@ export async function finishAttempt(
 /**
  * 작업 상태 갱신(펜스): current_run_id 가 이 시도의 실행 ID 일 때만 반영된다.
  * 오래된 worker(다른 실행 ID)의 늦은 결과는 0행 갱신으로 무시된다.
+ * RETRY_SCHEDULED 로 바꿀 때는 queued_at 을 비운다(지연 재투입 등록이 성공하면 markQueued 로 채운다).
  */
 export async function setJobStatusFenced(
   db: Queryable,
   input: { jobId: string; expectedRunId: string; status: JobStatus; nextAttemptAt?: Date | null },
 ): Promise<boolean> {
   const r = await db.query(
-    `UPDATE fin_collection_jobs SET status = $3, next_attempt_at = $4, updated_at = now() WHERE id = $1 AND current_run_id = $2`,
+    `UPDATE fin_collection_jobs SET status = $3, next_attempt_at = $4, updated_at = now(),
+       queued_at = CASE WHEN $3 = 'RETRY_SCHEDULED' THEN NULL ELSE queued_at END
+     WHERE id = $1 AND current_run_id = $2`,
     [input.jobId, input.expectedRunId, input.status, input.nextAttemptAt ?? null],
   );
   return (r.rowCount ?? 0) === 1;
 }
 
-/** 잠금을 얻지 못해 시도를 시작하지 못한 경우(시도 수 미포함). */
+/** 잠금을 얻지 못해 시도를 시작하지 못한 경우(시도 수 미포함). queued_at 을 비우고 재투입 등록 후 markQueued 로 채운다. */
 export async function requeueJob(db: Queryable, jobId: string, nextAttemptAt: Date): Promise<void> {
   await db.query(
-    `UPDATE fin_collection_jobs SET status = 'QUEUED', next_attempt_at = $2, updated_at = now() WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED')`,
+    `UPDATE fin_collection_jobs SET status = 'QUEUED', next_attempt_at = $2, queued_at = NULL, updated_at = now() WHERE id = $1 AND status IN ('QUEUED', 'RETRY_SCHEDULED')`,
     [jobId, nextAttemptAt],
   );
+}
+
+/** 큐 등록 성공 기록. 등록 성공 응답을 받은 뒤에만 호출한다. */
+export async function markQueued(db: Queryable, jobId: string): Promise<void> {
+  await db.query(
+    'UPDATE fin_collection_jobs SET queued_at = now(), updated_at = now() WHERE id = $1',
+    [jobId],
+  );
+}
+
+/** DB 에는 있으나 큐 등록 기록이 없는 작업(등록 실패·응답 유실·지연 재투입 실패). 상태를 바꾸지 않는다. */
+export async function listUnqueuedJobs(db: Queryable): Promise<CollectionJob[]> {
+  const r = await db.query<Row>(
+    `SELECT ${COLS} FROM fin_collection_jobs WHERE queued_at IS NULL AND status IN ('QUEUED', 'RETRY_SCHEDULED') ORDER BY created_at`,
+  );
+  return r.rows.map(toJob);
 }
 
 export async function listAttempts(

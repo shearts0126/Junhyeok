@@ -1,5 +1,7 @@
 # FIN-02C 제출: 큐·worker·실행 소유권 기반
 
+> 4차 검토 보완(수동 복구 경합·큐 등록 경계·readiness 집합 검사·환율 수집기 명세 게이트)은 `FIN-02ABC_보완결과.md` 에 있다. 이 문서의 상태 전이·잠금 규칙은 그 보완을 반영해 읽어야 한다(작업 상태에 `queued_at`, 복구 마감 시 NEEDS_REVIEW/MANUAL_CLOSE 추가).
+
 - 상태: **READY_FOR_REVIEW** (FIN-02C 에 한함). FIN-02A/B 최종 승인과 별개. 실제 외부 수집 스케줄은 활성화하지 않았다.
 - 검증: 시험용 일회용 PostgreSQL + 전용 Redis(로컬 `redis-server` 7.0, 포트 6380, CI 는 `redis:7-alpine` 서비스) + 시험용 수집기. **외부 연동 성공을 뜻하지 않는다.**
 - 설계 결정(설계 담당자 확정) 준수: 정기 실행은 스케줄러→큐→worker, 수동 실행은 같은 큐에 넣는 CLI, HTTP 수집 실행 API 없음, SCHEDULED/VERIFICATION 유지. 복구는 heartbeat·잠금 우선, 자동 실패 마감·잠금 탈취 없음.

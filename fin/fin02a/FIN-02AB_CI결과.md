@@ -12,4 +12,4 @@
 | `1079d66` | FIN-02B | https://github.com/shearts0126/Junhyeok/actions/runs/34844674866 | success | `verify` 잡 성공 + 신규 `fin02a (independent checks)` 잡 성공(typecheck·lint·format·test 전부 success) |
 | `b99578e`, `eb393bc`, `608f0ac` | FIN-02A/B 증빙 · FIN-01 환율 · FIN-02C | https://github.com/shearts0126/Junhyeok/actions/runs/34847502100 | success | 세 커밋을 연속 푸시해 Actions 는 HEAD `608f0ac0941a47c08ca164555fc65841907dd910` 기준 실행 1건만 생성됨(중간 커밋 개별 실행 없음). `verify` 잡 13단계 전부 success(DB 통합 시험 포함, 13:09:38–13:12:20 UTC), `fin02a (independent checks)` 잡 success(Redis 서비스 포함, Tests 단계 13:10:12–13:10:20 UTC). 조회 시각 2026-09-14 13:2x UTC |
 
-판단: 실패 2건은 모두 제 변경 범위 밖의 기존 SCM/WMS DB 시험(같은 시험이 동일 SCM 코드로 `591ad87`·`ee3a30a`·`1079d66` 에서는 통과)이며, 지시(기존 SCM/WMS 업무 코드·DB 미변경)에 따라 수정하지 않았다. 설계 담당자 확인 대상으로 남긴다. FIN-02C·환율 커밋의 Actions 결과는 위 표 마지막 행(실행 34847502100)에 추가했다.
+판단(4차 검토 표현 정정): 실패 2건은 **기존 간헐 실패로 추정**하며, 이번 변경과의 인과관계는 **미확정**이다. 같은 시험이 동일 SCM 코드로 `591ad87`·`ee3a30a`·`1079d66`·`608f0ac` 에서 통과한 것은 참고 근거이지 원인 확정이 아니다. 지시(기존 SCM/WMS 업무 코드·DB 미변경)에 따라 수정·반복 실행하지 않았고 관찰 사항으로 남긴다. FIN-02C·환율 커밋의 Actions 결과는 위 표 마지막 행(실행 34847502100)에 추가했다.

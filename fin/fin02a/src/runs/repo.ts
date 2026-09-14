@@ -58,6 +58,8 @@ const ERROR_CATALOG: Record<string, string> = {
   OWNERSHIP_LOST: '실행 소유권(잠금 세대) 상실로 관측 커밋 거부. 새 소유자의 결과를 덮어쓰지 않음',
   SCHEDULED_REQUIRES_COMPLETE_COLLECTOR:
     '정기 실행에는 다섯 단계가 전부 구현된 수집기만 허용(외부 요청 전 거부)',
+  SCHEDULED_REQUIRES_CONFIRMED_SPEC:
+    '정기 실행에는 공식 명세 원문으로 확인된 수집기만 허용(발췌 기준 수집기는 검증 모드 전용, 외부 요청 전 거부)',
 };
 
 export function catalogMessage(code: string): string {

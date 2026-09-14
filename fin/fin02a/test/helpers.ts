@@ -4,6 +4,7 @@ import type {
   Collector,
   CollectorContext,
   RawResponse,
+  SpecStatus,
   StageResult,
   ValidatedResponse,
 } from '../src/collector/types';
@@ -82,13 +83,17 @@ export const secretsWith = (map: Record<string, string>) => ({ get: (n: string) 
 /** 시험용 수집기. 실제 공급자 응답을 흉내내지 않으며 내부 규칙 검증에만 쓴다. 토큰은 ctx.secrets 에서만 읽는다. */
 export class FixtureCollector implements Collector<{ token: string }, FixtureItem[]> {
   readonly sourceSystem: string;
+  /** 외부 공급자가 없는 시험 수집기. 정기 실행 게이트 시험용으로 생성자에서 바꿀 수 있다 */
+  readonly specStatus: SpecStatus;
   readonly endpointTemplates: readonly string[];
   readonly implementedStages: readonly StageName[];
   constructor(
     private readonly opt: FixtureOptions,
     sourceSystem = 'TEST_SYSTEM',
+    specStatus: SpecStatus = 'TEST_FIXTURE',
   ) {
     this.sourceSystem = sourceSystem;
+    this.specStatus = specStatus;
     this.endpointTemplates = opt.declaredTemplates ?? ['GET /api/list/{date}'];
     // 선언은 옵션에 따라 정직하게: 미구현 옵션이 켜진 단계는 선언에서 뺀다.
     const st: StageName[] = ['authenticate'];

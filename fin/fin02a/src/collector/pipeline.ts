@@ -65,11 +65,18 @@ const ALL_STAGES: readonly StageName[] = [
   'reconcile',
 ];
 
-/** 정기 자동 수집에 등록 가능한지: 다섯 단계가 전부 선언된 수집기만. */
-export function isSchedulable(
+/** 다섯 단계가 전부 선언됐는지(구현 완전성). 명세 확인 수준과는 별개다. */
+export function hasAllStages(
   collector: Pick<Collector<unknown, unknown>, 'implementedStages'>,
 ): boolean {
   return ALL_STAGES.every((st) => collector.implementedStages.includes(st));
+}
+
+/** 정기 자동 수집에 등록·실행 가능한지: 다섯 단계 전부 선언 + 명세가 공식 원문으로 확인됨(또는 외부 공급자 없는 시험 수집기). */
+export function isSchedulable(
+  collector: Pick<Collector<unknown, unknown>, 'implementedStages' | 'specStatus'>,
+): boolean {
+  return hasAllStages(collector) && collector.specStatus !== 'SNIPPET_ONLY';
 }
 
 /**
@@ -220,12 +227,21 @@ export async function runCollection<Auth, Parsed>(
 
   try {
     // 0) 정기 실행 게이트: 미구현 수집기는 외부 요청 전에 거부한다(검증 모드에서만 부분 구현 허용).
-    if (mode === 'SCHEDULED' && !isSchedulable(collector)) {
+    if (mode === 'SCHEDULED' && !hasAllStages(collector)) {
       skip(...ALL_STAGES);
       return finish(
         'PARTIAL',
         { code: 'SCHEDULED_REQUIRES_COMPLETE_COLLECTOR', kind: 'NOT_IMPLEMENTED' },
         '정기 실행 거부: 미구현 단계가 있는 수집기(외부 요청 없음)',
+      );
+    }
+    // 0b) 명세 게이트: 발췌 기준 수집기는 정기 실행에서 외부 요청 전에 거부한다(검증 모드에서만 실행).
+    if (mode === 'SCHEDULED' && collector.specStatus === 'SNIPPET_ONLY') {
+      skip(...ALL_STAGES);
+      return finish(
+        'FAILED',
+        { code: 'SCHEDULED_REQUIRES_CONFIRMED_SPEC', kind: 'PERMANENT' },
+        '정기 실행 거부: 공식 명세 미확인 수집기(외부 요청 없음, 검증 모드로만 실행)',
       );
     }
 
@@ -404,7 +420,8 @@ export async function runCollection<Auth, Parsed>(
     let finished: SourceRun;
     try {
       const committed = await withTx(deps.pool, async (tx) => {
-        // 소유권 펜스: 잠금 세대가 바뀌었으면(다른 worker 가 넘겨받음) 커밋하지 않는다.
+        // 소유권 펜스: 잠금 행(FOR UPDATE) → 실행 행(finishRun UPDATE) 순서. 수동 복구(closeStaleRunManually)도 같은 순서로 잠그므로
+        // 둘은 직렬화된다. 잠금 세대가 바뀌었거나 해제됐으면(다른 worker 인수, 또는 확인된 수동 복구가 먼저 확정) 커밋하지 않는다.
         if (input.lease) await assertLeaseHeld(tx, input.lease);
         const obs = await observe(
           tx,
