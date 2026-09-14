@@ -92,11 +92,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # FIN-02C 큐·worker 시험용 Redis(BullMQ). SCM/WMS 와 무관.
+      redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: fin/fin02a
     env:
       FIN02A_DATABASE_URL: postgresql://fin02a:fin02a-ci-only@127.0.0.1:5433/postgres
+      FIN02A_REDIS_URL: redis://127.0.0.1:6380
     steps:
       - name: Checkout
         uses: actions/checkout@v4

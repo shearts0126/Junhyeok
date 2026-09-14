@@ -4,12 +4,14 @@
  *   pnpm recovery preview [--minutes 60]
  *   pnpm recovery close --run <id> --started-at <ISO> --actor <담당자> --reason <확인 내용>          # 드라이런(변경 없음, 종료 코드 3)
  *   pnpm recovery close --run <id> --started-at <ISO> --actor <담당자> --reason <확인 내용> --confirm  # 적용
+ *   pnpm recovery release-lease --account <id> --generation <n> --actor <담당자> --reason <확인 내용> [--confirm]  # 죽은 worker 의 잠금 해제(담당자 확인 후)
  *
  * 자동 마감 없음. --confirm 없이는 아무것도 바꾸지 않는다. 적용 직전에 상태·시작 시각을 재확인한다.
  * 출력에는 실행 ID·상태·코드·시각만 담는다.
  */
 import { createPool } from '../src/db/client';
 import { FsRawStore } from '../src/raw/store';
+import { releaseLeaseManually } from '../src/queue/lease';
 import { closeStaleRunManually, previewRecovery } from '../src/recovery';
 
 export interface CliIo {
@@ -82,8 +84,36 @@ export async function runRecoveryCli(
       io.out(`미적용: ${r.reason} (후보 조회 이후 상태가 바뀌었거나 입력이 유효하지 않음)`);
       return 4;
     }
+    if (cmd === 'release-lease') {
+      const account = arg(argv, '--account');
+      const generation = Number(arg(argv, '--generation'));
+      const actor = arg(argv, '--actor');
+      const reason = arg(argv, '--reason');
+      if (!account || !Number.isInteger(generation) || !actor || !reason) {
+        io.err('release-lease 에는 --account, --generation, --actor, --reason 이 필요합니다');
+        return 2;
+      }
+      if (!argv.includes('--confirm')) {
+        io.out(
+          `드라이런: 계정 ${account} 잠금(세대 ${generation})을 담당자 ${actor} 확인으로 해제할 예정입니다. --confirm 필요. 변경 없음.`,
+        );
+        return 3;
+      }
+      const ok = await releaseLeaseManually(pool, {
+        sourceAccountId: account,
+        expectedGeneration: generation,
+        actor,
+        reason,
+      });
+      io.out(
+        ok
+          ? `적용: 계정 ${account} 잠금 세대 ${generation} 해제`
+          : '미적용: 세대가 바뀌었거나 이미 해제됨',
+      );
+      return ok ? 0 : 4;
+    }
     io.err(
-      '사용법: recovery preview [--minutes N] | close --run <id> --started-at <ISO> --actor <name> --reason <text> [--confirm]',
+      '사용법: recovery preview [--minutes N] | close --run … [--confirm] | release-lease --account <id> --generation <n> --actor <name> --reason <text> [--confirm]',
     );
     return 2;
   } finally {

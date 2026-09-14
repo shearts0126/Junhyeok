@@ -1,8 +1,8 @@
-# FIN-02A/02B: 원천 데이터 추적·수집 실행 기반과 NestJS 실행 기반
+# FIN-02A/02B/02C: 원천 데이터 추적·수집 실행 기반, NestJS 실행 기반, 큐·worker·소유권
 
 경영대시보드(딥포인트·디스트로바) 공통 기반의 첫 조각. 계획서 §5 의 `legal_entities` / `source_accounts` / `external_mappings` / `source_runs` / `raw_objects` / `source_records` 에 해당하며, 외부 API 형식과 무관한 부분만 구현한다.
 
-**이 범위는 FIN-02 전체가 아니다.** FIN-02B 로 NestJS 실행 기반(설정 검증·DB 모듈·liveness/readiness·복구 CLI·독립 검사·CI)을 추가했다. 로그인·작업 큐·스케줄러·금융 데이터 조회 API·실제 공급자 수집기·금액/손익 계산·화면·배포는 미착수다. 앱은 루프백에만 바인딩한다. FIN-01 최종 승인과도 별개다. FIN-02B 상세는 `FIN-02B_제출.md`.
+**이 범위는 FIN-02 전체가 아니다.** FIN-02C 로 BullMQ 큐·별도 worker·수동 enqueue CLI·실행 잠금/heartbeat/세대 펜스·재시도 정책·정기 실행 설정 구조(비활성)를 추가했다(`FIN-02C_제출.md`). FIN-02B 로 NestJS 실행 기반(설정 검증·DB 모듈·liveness/readiness·복구 CLI·독립 검사·CI)을 추가했다. 로그인·작업 큐·스케줄러·금융 데이터 조회 API·실제 공급자 수집기·금액/손익 계산·화면·배포는 미착수다. 앱은 루프백에만 바인딩한다. FIN-01 최종 승인과도 별개다. FIN-02B 상세는 `FIN-02B_제출.md`.
 
 ## 위치와 독립성
 
@@ -26,7 +26,11 @@ export FIN02A_DATABASE_URL=postgresql://fin02a@127.0.0.1:5433/postgres
 pnpm verify          # typecheck → lint → format:check → test(일회용 DB fin02a_test_<pid> 생성 → 마이그레이션 → 32건 → 삭제)
 pnpm db:migrate      # 개발 DB 에 마이그레이션 적용
 pnpm start:dev       # NestJS 앱, 127.0.0.1:3400 (루프백만). /health/live, /health/ready
-pnpm recovery preview                     # 수동 복구 미리보기(상태 불변)
+scripts/dev-redis.sh start                # 전용 Redis 6380 (FIN-02C)
+export FIN02A_REDIS_URL=redis://127.0.0.1:6380
+pnpm enqueue --account <uuid> --collector koreaexim-fx --from 2026-09-11 --to 2026-09-11 --request-id fx-1 [--mode VERIFICATION]
+pnpm worker                               # 별도 worker 프로세스(스케줄러 비활성)
+pnpm recovery preview                     # 수동 복구 미리보기(상태 불변, heartbeat 이상 후보 포함)
 pnpm recovery close --run <id> --started-at <ISO> --actor <name> --reason <text> [--confirm]
 ```
 

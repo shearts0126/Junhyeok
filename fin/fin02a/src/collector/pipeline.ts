@@ -5,6 +5,7 @@ import { getSourceAccount } from '../identity/repo';
 import { insertRawObject, putRawBytes } from '../raw/repo';
 import type { RawStore } from '../raw/store';
 import { observe, type ObserveSummary } from '../records/observe';
+import { assertLeaseHeld, type Lease, LeaseLostError } from '../queue/lease';
 import { buildRequestSummary, findTokenField, isCode, reflectsCredential } from '../redact';
 import {
   finishRun,
@@ -38,6 +39,8 @@ export interface CollectionOutcome {
   run: SourceRun;
   rawObjectId: string | null;
   observations: ObserveSummary | null;
+  /** 실패 단계가 공식 대기 조건(Retry-After 등)을 줬을 때만 설정 */
+  retryAfterMs?: number;
 }
 
 /** 이번 실행에서 읽은 비밀값을 메모리에만 기억한다(응답 반사·템플릿 검사용). 저장·로그하지 않는다. */
@@ -87,7 +90,17 @@ export function isSchedulable(
 export async function runCollection<Auth, Parsed>(
   deps: PipelineDeps,
   collector: Collector<Auth, Parsed>,
-  input: { sourceAccountId: string; periodFrom: string; periodTo: string; mode?: RunMode },
+  input: {
+    sourceAccountId: string;
+    periodFrom: string;
+    periodTo: string;
+    mode?: RunMode;
+    /** worker 가 획득한 실행 소유권. 있으면 관측 커밋 트랜잭션에서 펜스(assertLeaseHeld)를 건다 */
+    lease?: Lease;
+    jobId?: string;
+    /** 실행 ID 가 생긴 직후(외부 요청 전) 호출. 큐 시도·잠금에 실행 ID 를 연결하는 용도 */
+    onRunStarted?: (runId: string) => Promise<void>;
+  },
 ): Promise<CollectionOutcome> {
   const account = await getSourceAccount(deps.pool, input.sourceAccountId);
   if (!account) throw new Error(`원천 계정 없음: ${input.sourceAccountId}`);
@@ -102,7 +115,12 @@ export async function runCollection<Auth, Parsed>(
     periodFrom: input.periodFrom,
     periodTo: input.periodTo,
     mode,
+    ...(input.lease
+      ? { workerId: input.lease.workerId, leaseGeneration: input.lease.generation }
+      : {}),
+    ...(input.jobId ? { jobId: input.jobId } : {}),
   });
+  if (input.onRunStarted) await input.onRunStarted(run.id);
   const secrets = new TrackingSecrets(deps.secrets);
   const ctx = { run, account, secrets };
   const stages: Stages = {};
@@ -110,6 +128,7 @@ export async function runCollection<Auth, Parsed>(
   let sourceAsOf: Date | null = null;
   let receivedCount: number | null = null;
   let logFailed = false;
+  let retryAfterMs: number | undefined;
 
   // 로그 경계: 로그 콜백 예외는 업무 결과·DB 상태를 바꾸지 않으며, 같은 로그 함수로 다시 출력하지 않는다.
   const safeLog = (line: string): void => {
@@ -163,6 +182,7 @@ export async function runCollection<Auth, Parsed>(
       run: finished,
       rawObjectId,
       observations: null,
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }),
     };
   };
 
@@ -179,11 +199,13 @@ export async function runCollection<Auth, Parsed>(
           outcome: 'NOT_IMPLEMENTED',
           code: isCode(r.code) ? r.code : 'INVALID_CODE',
         };
-      else
+      else {
         stages[name] = {
           outcome: 'FAILED',
           code: isCode(r.errorCode) ? r.errorCode : 'INVALID_ERROR_CODE',
         };
+        if (r.retryAfterMs !== undefined && r.retryAfterMs >= 0) retryAfterMs = r.retryAfterMs;
+      }
       return r;
     } catch (e) {
       // 외부 예외 메시지는 영속화·로그하지 않는다. 클래스 이름만 남긴다. 원인은 UNKNOWN(단계만으로 추정하지 않음).
@@ -382,6 +404,8 @@ export async function runCollection<Auth, Parsed>(
     let finished: SourceRun;
     try {
       const committed = await withTx(deps.pool, async (tx) => {
+        // 소유권 펜스: 잠금 세대가 바뀌었으면(다른 worker 가 넘겨받음) 커밋하지 않는다.
+        if (input.lease) await assertLeaseHeld(tx, input.lease);
         const obs = await observe(
           tx,
           { sourceAccountId: account.id, sourceRunId: run.id, rawObjectId: storedRawObjectId },
@@ -399,6 +423,13 @@ export async function runCollection<Auth, Parsed>(
       observations = committed.obs;
       finished = committed.fin;
     } catch (e) {
+      if (e instanceof LeaseLostError) {
+        return finish(
+          'FAILED',
+          { code: 'OWNERSHIP_LOST', kind: 'PERMANENT' },
+          '소유권 상실: 관측 커밋 거부(새 소유자 결과 보존)',
+        );
+      }
       return finish(
         'FAILED',
         { code: 'OBSERVE_STORE_FAILED', kind: 'STORAGE', errorClass: className(e) },

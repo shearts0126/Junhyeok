@@ -55,6 +55,7 @@ const ERROR_CATALOG: Record<string, string> = {
   RAW_META_FAILED: '원본 메타데이터 저장 실패(고아 원본 가능)',
   OBSERVE_STORE_FAILED: '관측 저장 트랜잭션 실패',
   RECOVERY_MANUAL_CLOSE: '담당자가 복구 절차로 미종료 실행을 실패로 마감',
+  OWNERSHIP_LOST: '실행 소유권(잠금 세대) 상실로 관측 커밋 거부. 새 소유자의 결과를 덮어쓰지 않음',
   SCHEDULED_REQUIRES_COMPLETE_COLLECTOR:
     '정기 실행에는 다섯 단계가 전부 구현된 수집기만 허용(외부 요청 전 거부)',
 };
@@ -65,12 +66,28 @@ export function catalogMessage(code: string): string {
 
 export async function startRun(
   db: Queryable,
-  input: { sourceAccountId: string; periodFrom: string; periodTo: string; mode?: RunMode },
+  input: {
+    sourceAccountId: string;
+    periodFrom: string;
+    periodTo: string;
+    mode?: RunMode;
+    workerId?: string;
+    leaseGeneration?: number;
+    jobId?: string;
+  },
 ): Promise<SourceRun> {
   const r = await db.query<RunRow>(
-    `INSERT INTO fin_source_runs (source_account_id, period_from, period_to, status, mode)
-     VALUES ($1, $2, $3, 'RUNNING', $4) RETURNING ${RUN_COLS}`,
-    [input.sourceAccountId, input.periodFrom, input.periodTo, input.mode ?? 'SCHEDULED'],
+    `INSERT INTO fin_source_runs (source_account_id, period_from, period_to, status, mode, worker_id, lease_generation, job_id)
+     VALUES ($1, $2, $3, 'RUNNING', $4, $5, $6, $7) RETURNING ${RUN_COLS}`,
+    [
+      input.sourceAccountId,
+      input.periodFrom,
+      input.periodTo,
+      input.mode ?? 'SCHEDULED',
+      input.workerId ?? null,
+      input.leaseGeneration ?? null,
+      input.jobId ?? null,
+    ],
   );
   const row = r.rows[0];
   if (!row) throw new Error('실행 이력 생성 실패');

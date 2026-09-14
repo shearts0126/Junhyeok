@@ -20,7 +20,13 @@ export type StageResult<T> =
   /** code: 식별자(예: VALIDATE_NOT_IMPLEMENTED). 자유 문장 금지 */
   | { status: 'NOT_IMPLEMENTED'; code: string }
   /** errorCode: 식별자. kind: 원인 분류. 외부 메시지는 포함하지 않는다 */
-  | { status: 'FAILED'; errorCode: string; kind: Exclude<FailureKind, 'NOT_IMPLEMENTED'> };
+  /** retryAfterMs: 공급자가 Retry-After 등 공식 대기 조건을 주면 설정. 재시도 정책이 기본 대기보다 우선 적용한다 */
+  | {
+      status: 'FAILED';
+      errorCode: string;
+      kind: Exclude<FailureKind, 'NOT_IMPLEMENTED'>;
+      retryAfterMs?: number;
+    };
 
 export const notImplemented = (code: string): StageResult<never> => ({
   status: 'NOT_IMPLEMENTED',
@@ -29,7 +35,11 @@ export const notImplemented = (code: string): StageResult<never> => ({
 export const failed = (
   errorCode: string,
   kind: Exclude<FailureKind, 'NOT_IMPLEMENTED'>,
-): StageResult<never> => ({ status: 'FAILED', errorCode, kind });
+  retryAfterMs?: number,
+): StageResult<never> =>
+  retryAfterMs === undefined
+    ? { status: 'FAILED', errorCode, kind }
+    : { status: 'FAILED', errorCode, kind, retryAfterMs };
 export const ok = <T>(value: T): StageResult<T> => ({ status: 'OK', value });
 
 /** 비밀값 제공자. 값은 호출 시점에만 메모리에 있으며 파이프라인은 값을 저장·로그하지 않는다. */

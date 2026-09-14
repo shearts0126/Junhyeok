@@ -1,4 +1,5 @@
 import type { Queryable } from './db/client';
+import { listLeaseAnomalies, type LeaseAnomaly } from './queue/lease';
 import type { RawStore } from './raw/store';
 import { redactText } from './redact';
 import { RUN_COLS, toRun, type RunRow, type SourceRun } from './runs/repo';
@@ -45,13 +46,15 @@ export interface ManualCloseInput {
   actor: string;
   /** 확인 내용(프로세스 종료·활성 작업 부재 확인 등) */
   reason: string;
+  /** 이 시간 안에 heartbeat 가 있으면 소유자가 살아 있다고 보고 마감을 거부(기본 2분) */
+  leaseStaleMs?: number;
 }
 
 export type ManualCloseResult =
   | { applied: true; run: SourceRun }
   | {
       applied: false;
-      reason: 'NOT_RUNNING' | 'STARTED_AT_CHANGED' | 'NOT_FOUND' | 'INVALID_INPUT';
+      reason: 'NOT_RUNNING' | 'STARTED_AT_CHANGED' | 'NOT_FOUND' | 'INVALID_INPUT' | 'OWNER_ALIVE';
     };
 
 /**
@@ -74,6 +77,14 @@ export async function closeStaleRunManually(
   if (row.status !== 'RUNNING') return { applied: false, reason: 'NOT_RUNNING' };
   if (row.started_at.getTime() !== input.expectedStartedAt.getTime())
     return { applied: false, reason: 'STARTED_AT_CHANGED' };
+  // 실행 소유권 확인: 이 실행을 잡은 잠금이 살아 있고 heartbeat 가 최근이면 정상 처리 중일 수 있으므로 마감하지 않는다.
+  const owner = await db.query<{ heartbeat_at: Date | null }>(
+    'SELECT heartbeat_at FROM fin_run_leases WHERE run_id = $1 AND released_at IS NULL',
+    [input.runId],
+  );
+  const hb = owner.rows[0]?.heartbeat_at ?? null;
+  if (hb && Date.now() - hb.getTime() < (input.leaseStaleMs ?? DEFAULT_LEASE_STALE_MS))
+    return { applied: false, reason: 'OWNER_ALIVE' };
   const r = await db.query<RunRow>(
     `UPDATE fin_source_runs
      SET finished_at = now(), status = 'FAILED', error_code = 'RECOVERY_MANUAL_CLOSE',
@@ -120,13 +131,19 @@ export interface RecoveryPreview {
   }[];
   orphanRawKeys: string[];
   rawRowsMissingBytes: string[];
+  /** heartbeat 가 임계(기본 2분) 이상 멈춘 실행 잠금. 조회만이며 탈취·마감 근거가 아니다 */
+  leaseAnomalies: LeaseAnomaly[];
+  leaseStaleMinutes: number;
 }
 
 /** 미리보기: 상태를 바꾸지 않는다. */
+export const DEFAULT_LEASE_STALE_MS = 2 * 60 * 1000;
+
 export async function previewRecovery(
   db: Queryable,
   store: RawStore,
   olderThanMs = DEFAULT_CANDIDATE_AGE_MS,
+  leaseStaleMs = DEFAULT_LEASE_STALE_MS,
 ): Promise<RecoveryPreview> {
   const candidates = await listStaleRunCandidates(db, olderThanMs);
   return {
@@ -142,5 +159,7 @@ export async function previewRecovery(
     })),
     orphanRawKeys: await findOrphanRawKeys(db, store),
     rawRowsMissingBytes: await findRawRowsMissingBytes(db, store),
+    leaseAnomalies: await listLeaseAnomalies(db, leaseStaleMs),
+    leaseStaleMinutes: Math.floor(leaseStaleMs / 60_000),
   };
 }
