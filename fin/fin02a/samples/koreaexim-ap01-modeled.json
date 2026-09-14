@@ -1,0 +1,48 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 한국수출입은행 환율 API(AP01) 응답 필드명을 공식 페이지·공공데이터포털 검색 발췌 기준으로 본뜬 시험용 값. 실제 응답이 아니며 값도 실제 환율이 아님. 원문 미열람.",
+    "modeledOn": "https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C, https://www.data.go.kr/data/3068846/openapi.do (검색 발췌, 확인일 2026-09-14)"
+  },
+  "data": [
+    {
+      "result": 1,
+      "cur_unit": "USD",
+      "cur_nm": "미국 달러",
+      "ttb": "1,321.9",
+      "tts": "1,348.3",
+      "deal_bas_r": "1,335.1",
+      "bkpr": "1,335",
+      "yy_efee_r": "0",
+      "ten_dd_efee_r": "0",
+      "kftc_deal_bas_r": "1,335.1",
+      "kftc_bkpr": "1,335"
+    },
+    {
+      "result": 1,
+      "cur_unit": "JPY(100)",
+      "cur_nm": "일본 옌",
+      "ttb": "893.12",
+      "tts": "911.17",
+      "deal_bas_r": "902.15",
+      "bkpr": "902",
+      "yy_efee_r": "0",
+      "ten_dd_efee_r": "0",
+      "kftc_deal_bas_r": "902.15",
+      "kftc_bkpr": "902"
+    },
+    {
+      "result": 1,
+      "cur_unit": "EUR",
+      "cur_nm": "유로",
+      "ttb": "1,455.01",
+      "tts": "1,484.4",
+      "deal_bas_r": "1,469.7",
+      "bkpr": "1,469",
+      "yy_efee_r": "0",
+      "ten_dd_efee_r": "0",
+      "kftc_deal_bas_r": "1,469.7",
+      "kftc_bkpr": "1,469"
+    }
+  ]
+}
