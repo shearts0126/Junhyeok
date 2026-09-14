@@ -1,0 +1,16 @@
+{
+  "mode": "live",
+  "targetDate": "2026-09-12",
+  "startedAtUtc": "2026-09-14T10:45:53.090Z",
+  "finishedAtUtc": "2026-09-14T10:45:53.774Z",
+  "results": [
+    {
+      "source": "fx-exim",
+      "status": "BLOCKED_NETWORK",
+      "startedAtUtc": "2026-09-14T10:45:53.090Z",
+      "finishedAtUtc": "2026-09-14T10:45:53.774Z",
+      "summary": "https://oapi.koreaexim.go.kr/site/program/financial/exchangeJSON → HTTP 403 (egress proxy: host_not_allowed), bytes 107, sha256:c08fa417dfc6533d, items -1",
+      "verified": false
+    }
+  ]
+}

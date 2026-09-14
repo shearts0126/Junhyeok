@@ -1,0 +1,70 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 카페24 Admin API orders 응답의 필드명은 원문 미열람 상태의 자리표시자. 실제 주문·구매자 정보 없음.",
+    "modeledOn": "https://developers.cafe24.com/docs/api/admin/ (차단, 미열람). 필드명은 확인 후 교체"
+  },
+  "data": {
+    "mallAlias": "DP-CAFE24-OWNMALL",
+    "legalEntity": "DEEPPOINT",
+    "cancelStatuses": ["C40"],
+    "orders": [
+      {
+        "order_id": "SYN-OM-20260912-0001",
+        "order_date": "2026-09-12T22:00:00+09:00",
+        "payment_date": "2026-09-12T22:01:00+09:00",
+        "paid": "T",
+        "canceled": "F",
+        "items": [
+          {
+            "order_item_code": "SYN-OM-20260912-0001-01",
+            "product_code": "SKU-C-100",
+            "quantity": "1",
+            "product_price": "25000",
+            "order_status": "N10"
+          }
+        ]
+      },
+      {
+        "order_id": "SYN-OM-20260912-0002",
+        "order_date": "2026-09-12T23:10:00+09:00",
+        "payment_date": "2026-09-12T23:11:00+09:00",
+        "paid": "T",
+        "canceled": "F",
+        "items": [
+          {
+            "order_item_code": "SYN-OM-20260912-0002-01",
+            "product_code": "SKU-A-001",
+            "quantity": "2",
+            "product_price": "19000",
+            "order_status": "N20"
+          },
+          {
+            "order_item_code": "SYN-OM-20260912-0002-02",
+            "product_code": "SKU-B-010",
+            "quantity": "1",
+            "product_price": "59000",
+            "order_status": "C40"
+          }
+        ]
+      },
+      {
+        "order_id": "SYN-OM-20260912-0003",
+        "order_date": "2026-09-12T23:50:00+09:00",
+        "payment_date": null,
+        "paid": "F",
+        "canceled": "F",
+        "items": [
+          {
+            "order_item_code": "SYN-OM-20260912-0003-01",
+            "product_code": "SKU-A-001",
+            "quantity": "1",
+            "product_price": "19000",
+            "order_status": "N00"
+          }
+        ]
+      }
+    ],
+    "alsoInSabangnet": ["SYN-OM-20260912-0001"]
+  }
+}

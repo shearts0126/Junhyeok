@@ -1,0 +1,52 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 메타·구글·네이버·틱톡 응답의 대표 필드명을 검색 발췌 기준으로 본뜬 검증용 값. 실제 계정·금액 아님.",
+    "modeledOn": "Meta insights(spend, date_start, account_currency) / Google GAQL(metrics.cost_micros, segments.date) / Naver stats(salesAmt) / TikTok report(stat_time_day, spend)"
+  },
+  "data": {
+    "legalEntity": "DEEPPOINT",
+    "meta": {
+      "account_id": "act_SYN000001",
+      "account_currency": "USD",
+      "timezone": "America/Los_Angeles",
+      "rows": [
+        { "date_start": "2026-09-10", "date_stop": "2026-09-10", "spend": "120.55" },
+        { "date_start": "2026-09-11", "date_stop": "2026-09-11", "spend": "98.10" },
+        { "date_start": "2026-09-12", "date_stop": "2026-09-12", "spend": "131.00" }
+      ],
+      "revisedRows": [
+        { "date_start": "2026-09-10", "date_stop": "2026-09-10", "spend": "120.55" },
+        { "date_start": "2026-09-11", "date_stop": "2026-09-11", "spend": "97.80" },
+        { "date_start": "2026-09-12", "date_stop": "2026-09-12", "spend": "131.00" }
+      ]
+    },
+    "google": {
+      "customerId": "SYN-123-456-7890",
+      "currency_code": "KRW",
+      "time_zone": "Asia/Seoul",
+      "rows": [
+        { "date": "2026-09-12", "cost_micros": "154000000000" },
+        { "date": "2026-09-13", "cost_micros": "98750000000" }
+      ]
+    },
+    "naver": {
+      "customerId": "SYN-NAVER-1",
+      "rows": [
+        { "statDt": "2026-09-12", "salesAmt": "210000" },
+        { "statDt": "2026-09-13", "salesAmt": "185000" }
+      ],
+      "bizmoney": { "balance": "1250000", "observedAtUtc": "2026-09-13T21:00:00Z" }
+    },
+    "tiktok": {
+      "advertiser_id": "SYN-TT-1",
+      "currency": "USD",
+      "timezone": "Asia/Seoul",
+      "rows": [
+        { "stat_time_day": "2026-09-12 00:00:00", "spend": "45.20" },
+        { "stat_time_day": "2026-09-13 00:00:00", "spend": "51.00" }
+      ],
+      "requestedDays": 90
+    }
+  }
+}

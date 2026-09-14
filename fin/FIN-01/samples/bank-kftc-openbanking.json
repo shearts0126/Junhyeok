@@ -1,0 +1,169 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 금융결제원 오픈뱅킹 거래내역조회 응답 구조를 검색 발췌 기준으로 본뜬 검증용 샘플. 실제 계좌·거래 아님.",
+    "modeledOn": "https://developers.kftc.or.kr/dev/openapi/open-banking/transaction (검색 발췌, 원문 미열람, 확인일 2026-09-14)"
+  },
+  "data": {
+    "accountMapping": {
+      "199900000000000000000001": {
+        "legalEntity": "DEEPPOINT",
+        "accountAlias": "DP-KB-001",
+        "currency": "KRW",
+        "bank": "KB"
+      }
+    },
+    "pages": [
+      {
+        "api_tran_id": "SYN-API-0001",
+        "rsp_code": "A0000",
+        "bank_tran_id": "T991234567U000000001",
+        "fintech_use_num": "199900000000000000000001",
+        "balance_amt": "1430000",
+        "page_record_cnt": "3",
+        "next_page_yn": "Y",
+        "befor_inquiry_trace_info": "SYN-TRACE-1",
+        "res_list": [
+          {
+            "tran_date": "20260912",
+            "tran_time": "091500",
+            "inout_type": "입금",
+            "tran_type": "대체",
+            "print_content": "쿠팡정산",
+            "tran_amt": "450000",
+            "after_balance_amt": "1450000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260912",
+            "tran_time": "101000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "네이버광고충전",
+            "tran_amt": "120000",
+            "after_balance_amt": "1330000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260912",
+            "tran_time": "143000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "택배비",
+            "tran_amt": "50000",
+            "after_balance_amt": "1280000",
+            "branch_name": "가상지점"
+          }
+        ]
+      },
+      {
+        "api_tran_id": "SYN-API-0002",
+        "rsp_code": "A0000",
+        "bank_tran_id": "T991234567U000000002",
+        "fintech_use_num": "199900000000000000000001",
+        "balance_amt": "1430000",
+        "page_record_cnt": "2",
+        "next_page_yn": "N",
+        "befor_inquiry_trace_info": "",
+        "res_list": [
+          {
+            "tran_date": "20260912",
+            "tran_time": "143000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "택배비",
+            "tran_amt": "50000",
+            "after_balance_amt": "1230000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260913",
+            "tran_time": "090000",
+            "inout_type": "입금",
+            "tran_type": "대체",
+            "print_content": "무신사정산",
+            "tran_amt": "200000",
+            "after_balance_amt": "1430000",
+            "branch_name": "가상지점"
+          }
+        ]
+      }
+    ],
+    "recollectPages": [
+      {
+        "api_tran_id": "SYN-API-0003",
+        "rsp_code": "A0000",
+        "bank_tran_id": "T991234567U000000003",
+        "fintech_use_num": "199900000000000000000001",
+        "balance_amt": "1430000",
+        "page_record_cnt": "3",
+        "next_page_yn": "Y",
+        "befor_inquiry_trace_info": "SYN-TRACE-2",
+        "res_list": [
+          {
+            "tran_date": "20260912",
+            "tran_time": "091500",
+            "inout_type": "입금",
+            "tran_type": "대체",
+            "print_content": "쿠팡정산",
+            "tran_amt": "450000",
+            "after_balance_amt": "1450000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260912",
+            "tran_time": "101000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "네이버광고충전(적요정정)",
+            "tran_amt": "120000",
+            "after_balance_amt": "1330000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260912",
+            "tran_time": "143000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "택배비",
+            "tran_amt": "50000",
+            "after_balance_amt": "1280000",
+            "branch_name": "가상지점"
+          }
+        ]
+      },
+      {
+        "api_tran_id": "SYN-API-0004",
+        "rsp_code": "A0000",
+        "bank_tran_id": "T991234567U000000004",
+        "fintech_use_num": "199900000000000000000001",
+        "balance_amt": "1430000",
+        "page_record_cnt": "2",
+        "next_page_yn": "N",
+        "befor_inquiry_trace_info": "",
+        "res_list": [
+          {
+            "tran_date": "20260912",
+            "tran_time": "143000",
+            "inout_type": "출금",
+            "tran_type": "대체",
+            "print_content": "택배비",
+            "tran_amt": "50000",
+            "after_balance_amt": "1230000",
+            "branch_name": "가상지점"
+          },
+          {
+            "tran_date": "20260913",
+            "tran_time": "090000",
+            "inout_type": "입금",
+            "tran_type": "대체",
+            "print_content": "무신사정산",
+            "tran_amt": "200000",
+            "after_balance_amt": "1430000",
+            "branch_name": "가상지점"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 웹케시 브랜치/CODEF 등 다은행 중계 응답 필드명을 확인하지 못해 자리표시자 컬럼명을 사용한 설정 기반 매핑 검증용 샘플. 실제 원천 명세가 아님.",
+    "modeledOn": "없음(컬럼명은 자리표시자). 실제 샘플 확보 후 columns 값만 교체"
+  },
+  "data": {
+    "columns": {
+      "accountId": "acct_no",
+      "currency": "ccy",
+      "date": "tr_date",
+      "time": "tr_time",
+      "inAmount": "in_amt",
+      "outAmount": "out_amt",
+      "balanceAfter": "bal_after",
+      "description": "memo"
+    },
+    "accountMapping": {
+      "SYN-ACCT-KRW-1": { "legalEntity": "DISTROVA", "accountAlias": "DV-SH-001" },
+      "SYN-ACCT-USD-1": { "legalEntity": "DISTROVA", "accountAlias": "DV-SH-USD-001" }
+    },
+    "rows": [
+      {
+        "acct_no": "SYN-ACCT-KRW-1",
+        "ccy": "KRW",
+        "tr_date": "2026-09-12",
+        "tr_time": "10:05:00",
+        "in_amt": "300000",
+        "out_amt": "0",
+        "bal_after": "2300000",
+        "memo": "올리브영정산"
+      },
+      {
+        "acct_no": "SYN-ACCT-KRW-1",
+        "ccy": "KRW",
+        "tr_date": "2026-09-12",
+        "tr_time": "15:40:00",
+        "in_amt": "0",
+        "out_amt": "80000",
+        "bal_after": "2220000",
+        "memo": "임차료"
+      },
+      {
+        "acct_no": "SYN-ACCT-USD-1",
+        "ccy": "USD",
+        "tr_date": "2026-09-12",
+        "tr_time": "11:00:00",
+        "in_amt": "1250.50",
+        "out_amt": "0",
+        "bal_after": "5250.50",
+        "memo": "해외매출입금"
+      },
+      {
+        "acct_no": "SYN-ACCT-USD-1",
+        "ccy": "USD",
+        "tr_date": "2026-09-13",
+        "tr_time": "09:30:00",
+        "in_amt": "0",
+        "out_amt": "200.00",
+        "bal_after": "5050.50",
+        "memo": "해외광고비"
+      }
+    ]
+  }
+}

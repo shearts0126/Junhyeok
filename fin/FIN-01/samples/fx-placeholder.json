@@ -1,0 +1,25 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 수출입은행 환율 API 응답 필드명(cur_unit, deal_bas_r, ttb, tts)을 검색 발췌 기준으로 본뜬 값. 실제 환율 아님.",
+    "modeledOn": "https://www.koreaexim.go.kr/ir/HPHKIR020M01?apino=2&viewtype=C (검색 발췌, 원문 미열람)"
+  },
+  "data": {
+    "exim": [
+      {
+        "searchdate": "20260910",
+        "rows": [
+          { "cur_unit": "USD", "deal_bas_r": "1,333.40", "ttb": "1,320.20", "tts": "1,346.60" }
+        ]
+      },
+      {
+        "searchdate": "20260911",
+        "rows": [
+          { "cur_unit": "USD", "deal_bas_r": "1,335.10", "ttb": "1,321.90", "tts": "1,348.30" }
+        ]
+      },
+      { "searchdate": "20260912", "rows": [] },
+      { "searchdate": "20260913", "rows": [] }
+    ]
+  }
+}

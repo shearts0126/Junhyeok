@@ -1,0 +1,64 @@
+{
+  "mode": "live",
+  "targetDate": "2026-09-12",
+  "startedAtUtc": "2026-09-14T10:45:54.616Z",
+  "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+  "results": [
+    {
+      "source": "fx-exim",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_KOREAEXIM_AUTHKEY → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "fx-ecos",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_ECOS_API_KEY → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "bank-kftc",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_KFTC_ACCESS_TOKEN, FIN01_KFTC_FINTECH_USE_NUM, FIN01_KFTC_BASE_URL → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "ads-meta",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_META_ACCESS_TOKEN, FIN01_META_AD_ACCOUNT_ID → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "ads-tiktok",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_TIKTOK_ACCESS_TOKEN, FIN01_TIKTOK_ADVERTISER_ID → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "ads-naver",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_NAVER_API_KEY, FIN01_NAVER_SECRET_KEY, FIN01_NAVER_CUSTOMER_ID → 실제 수집 미검증",
+      "verified": false
+    },
+    {
+      "source": "sales-cafe24",
+      "status": "BLOCKED_NO_CREDENTIALS",
+      "startedAtUtc": "2026-09-14T10:45:54.616Z",
+      "finishedAtUtc": "2026-09-14T10:45:54.616Z",
+      "summary": "환경변수 미설정: FIN01_CAFE24_MALL_ID, FIN01_CAFE24_ACCESS_TOKEN → 실제 수집 미검증",
+      "verified": false
+    }
+  ]
+}

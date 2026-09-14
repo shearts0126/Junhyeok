@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 위하고 읽기 경로 미확인 상태에서 월간/누적 전환 규칙만 검증하는 값. 실제 회계 자료 아님.",
+    "modeledOn": "계획서 §7 월 마감 흐름, §12-12"
+  },
+  "data": {
+    "legalEntity": "DISTROVA",
+    "lines": [
+      {
+        "fiscalPeriod": "2026-07",
+        "accountCode": "401",
+        "amount": "7500000",
+        "dataShape": "CUMULATIVE"
+      },
+      {
+        "fiscalPeriod": "2026-08",
+        "accountCode": "401",
+        "amount": "10500000",
+        "dataShape": "CUMULATIVE"
+      },
+      {
+        "fiscalPeriod": "2026-08",
+        "accountCode": "501",
+        "amount": "450000",
+        "dataShape": "MONTHLY"
+      }
+    ]
+  }
+}

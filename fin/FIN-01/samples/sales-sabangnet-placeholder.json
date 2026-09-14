@@ -1,0 +1,103 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 사방넷 주문 API 필드명·상태코드를 확인하지 못해 자리표시자 필드로 구성한 검증용 샘플. 실제 주문·구매자 정보 없음.",
+    "modeledOn": "없음(자리표시자). 사방넷 API 명세 확보 후 필드명·statusMapping 교체"
+  },
+  "data": {
+    "accountAlias": "DP-SABANGNET-MAIN",
+    "legalEntity": "DEEPPOINT",
+    "channelMapping": {
+      "M-CPNG": "COUPANG",
+      "M-MUSINSA": "MUSINSA",
+      "M-SMARTSTORE": "SMARTSTORE",
+      "M-OWNMALL": "OWNMALL_CAFE24"
+    },
+    "companyChannels": [],
+    "sabangnetCoveredChannels": ["COUPANG", "MUSINSA", "SMARTSTORE", "OWNMALL_CAFE24"],
+    "statusMapping": {
+      "PAID": "PAID",
+      "PARTIAL_CANCEL": "CANCELLED",
+      "REFUNDED": "REFUNDED",
+      "PURCHASE_CONFIRMED": "IGNORE"
+    },
+    "lines": [
+      {
+        "sabangnet_order_no": "SYN-SBN-1001",
+        "mall_id": "M-CPNG",
+        "mall_order_id": "SYN-CP-90001",
+        "order_line_id": "SYN-CP-90001-1",
+        "order_date": "2026-09-12 09:10:00",
+        "pay_date": "2026-09-12 09:11:00",
+        "order_status": "PAID",
+        "product_code": "SKU-A-001",
+        "qty": "2",
+        "pay_amount": "38000"
+      },
+      {
+        "sabangnet_order_no": "SYN-SBN-1002",
+        "mall_id": "M-MUSINSA",
+        "mall_order_id": "SYN-MS-70001",
+        "order_line_id": "SYN-MS-70001-1",
+        "order_date": "2026-09-12 12:00:00",
+        "pay_date": "2026-09-12 12:00:30",
+        "order_status": "PAID",
+        "product_code": "SKU-B-010",
+        "qty": "1",
+        "pay_amount": "59000"
+      },
+      {
+        "sabangnet_order_no": "SYN-SBN-1003",
+        "mall_id": "M-SMARTSTORE",
+        "mall_order_id": "SYN-SS-50001",
+        "order_line_id": "SYN-SS-50001-1",
+        "order_date": "2026-09-12 20:30:00",
+        "pay_date": "2026-09-12 20:31:00",
+        "order_status": "PAID",
+        "product_code": "SKU-A-001",
+        "qty": "3",
+        "pay_amount": "57000"
+      },
+      {
+        "sabangnet_order_no": "SYN-SBN-1003",
+        "mall_id": "M-SMARTSTORE",
+        "mall_order_id": "SYN-SS-50001",
+        "order_line_id": "SYN-SS-50001-1",
+        "order_date": "2026-09-12 20:30:00",
+        "pay_date": "2026-09-13 08:00:00",
+        "order_status": "PARTIAL_CANCEL",
+        "product_code": "SKU-A-001",
+        "qty": "1",
+        "pay_amount": "19000"
+      },
+      {
+        "sabangnet_order_no": "SYN-SBN-1004",
+        "mall_id": "M-OWNMALL",
+        "mall_order_id": "SYN-OM-20260912-0001",
+        "order_line_id": "SYN-OM-20260912-0001-1",
+        "order_date": "2026-09-12 22:00:00",
+        "pay_date": "2026-09-12 22:01:00",
+        "order_status": "PAID",
+        "product_code": "SKU-C-100",
+        "qty": "1",
+        "pay_amount": "25000"
+      },
+      {
+        "sabangnet_order_no": "SYN-SBN-0999",
+        "mall_id": "M-CPNG",
+        "mall_order_id": "SYN-CP-89990",
+        "order_line_id": "SYN-CP-89990-1",
+        "order_date": "2026-09-05 10:00:00",
+        "pay_date": "2026-09-05 10:00:10",
+        "order_status": "PURCHASE_CONFIRMED",
+        "product_code": "SKU-A-001",
+        "qty": "1",
+        "pay_amount": "19000"
+      }
+    ],
+    "directApiOrders": [
+      { "channel": "OWNMALL_CAFE24", "orderId": "SYN-OM-20260912-0001" },
+      { "channel": "COUPANG", "orderId": "SYN-CP-90001" }
+    ]
+  }
+}

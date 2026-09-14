@@ -1,0 +1,44 @@
+{
+  "_meta": {
+    "synthetic": true,
+    "description": "가상 데이터. 출처 간 중복 집계 방지 규칙 검증용.",
+    "modeledOn": "계획서 §5·§6·§7·§12"
+  },
+  "data": {
+    "bankTransactions": [
+      {
+        "description": "쿠팡정산",
+        "direction": "IN",
+        "amount": "450000",
+        "classification": "SETTLEMENT_RECEIPT"
+      },
+      {
+        "description": "무신사정산",
+        "direction": "IN",
+        "amount": "200000",
+        "classification": "SETTLEMENT_RECEIPT"
+      },
+      {
+        "description": "네이버광고충전",
+        "direction": "OUT",
+        "amount": "120000",
+        "classification": "AD_PREPAY"
+      }
+    ],
+    "salesNet": "180000",
+    "adPrepaid": { "charge": "100", "spend": "60", "taxAndFee": "0" },
+    "channelOwners": {
+      "COUPANG": "SABANGNET",
+      "OWNMALL_CAFE24": "SABANGNET",
+      "B2B:SYN-B2B-A": "DELIVERY_EXCEL"
+    },
+    "eventsByOwner": [
+      { "channel": "COUPANG", "source": "SABANGNET", "amount": "38000" },
+      { "channel": "COUPANG", "source": "DIRECT_API", "amount": "38000" },
+      { "channel": "OWNMALL_CAFE24", "source": "SABANGNET", "amount": "25000" },
+      { "channel": "OWNMALL_CAFE24", "source": "DIRECT_API", "amount": "25000" },
+      { "channel": "B2B:SYN-B2B-A", "source": "DELIVERY_EXCEL", "amount": "2300000" },
+      { "channel": "OLIVEYOUNG", "source": "DIRECT_API", "amount": "99000" }
+    ]
+  }
+}
